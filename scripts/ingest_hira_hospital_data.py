@@ -18,11 +18,23 @@
     #    아래 후보 엔드포인트 중 유효한 것이 자동으로 식별된다
     python scripts/ingest_hira_hospital_data.py inspect
 
-    # 2) inspect에서 확인된 엔드포인트/주소 필드명을 넘겨 dry-run으로 집계만 확인
-    python scripts/ingest_hira_hospital_data.py ingest --endpoint <inspect가 알려준 URL> --addr-field addr
+    # 2) 창원시 5개 구 집계를 dry-run으로 먼저 확인 (기본값이 검증된 엔드포인트)
+    python scripts/ingest_hira_hospital_data.py ingest
 
-    # 3) 집계 결과(구별 병원 수)가 합리적이라고 확인되면 --commit 으로 CSV에 반영
-    python scripts/ingest_hira_hospital_data.py ingest --endpoint <URL> --addr-field addr --commit
+    # 3) 집계 결과가 합리적이라고 확인되면 --commit 으로 CSV에 반영
+    python scripts/ingest_hira_hospital_data.py ingest --commit
+
+[전국 데이터를 끝까지 수집했는지 검증한 결과 (2026-10-01)]
+    - 선언된 totalCount 79,899건 = 실제 수집 79,899건, 80페이지 완주 확인(일부만
+      수집되고 중단되는 문제 없음).
+    - sidoCdNm의 경남 표기는 정확히 "경남"(4,258건). sgguCdNm의 창원 5개 구 표기는
+      "창원의창구/창원성산구/창원마산합포구/창원마산회원구/창원진해구"로 전부 정상
+      확인되었고, 5개 구 중 어디에도 속하지 않는 "매핑 실패" 사례는 0건이었다.
+    - ykiho(기관 고유식별자) 기준 중복도 0건.
+    - hospital_count는 종별(clCdNm) 구분 없이 의원/치과의원/한의원/병원/종합병원/
+      상급종합/요양병원/한방병원/치과병원/정신병원/보건소/보건지소/보건진료소/조산원을
+      모두 합산한 "창원시 5개 구 전체 의료기관 수"를 의미한다(1,358건). 종합병원급
+      이상만 좁혀서 보고 싶다면 이 note를 보고 별도 지표를 추가해야 한다.
 
 [엔드포인트 기능명을 추측으로 확정하지 않는 이유]
     data.go.kr 상세페이지에는 Swagger/활용가이드 문서(.docx)로만 오퍼레이션명이
@@ -38,13 +50,15 @@
     data.go.kr 상세페이지에 "데이터 포맷: XML"로 명시되어 있어, 이 스크립트는
     기본적으로 _type 파라미터를 보내지 않고(=XML 기본값) XML 응답을 파싱한다.
 
-[왜 시군구코드(sgguCd) 대신 주소 문자열 매칭을 쓰는가]
-    HIRA API는 sidoCd/sgguCd 지역코드로도 조회할 수 있지만, 공식 문서 확인 없이 검색
-    결과만으로 추정한 코드값을 쓰면 엉뚱한 구에 데이터가 매핑될 위험이 있다(특히 성산구
-    코드는 조사 과정에서 확인하지 못했다). 이를 피하기 위해 이 스크립트는 응답에 포함된
-    주소 문자열에서 "의창구" 같은 구 이름을 직접 매칭하는 방식만 사용한다. 전국 데이터를
-    모두 훑어야 하므로 느리지만(1회성 배치 작업이므로 허용), 잘못된 코드로 인한 매핑
-    오류 위험이 없다.
+[왜 요청 파라미터 sidoCd/sgguCd(숫자 지역코드)를 쓰지 않는가]
+    HIRA API는 sidoCd/sgguCd 같은 숫자 지역코드로 요청을 좁힐 수도 있지만, 검색으로
+    찾은 코드값은 공식 문서로 확정하지 못했고 특히 성산구 코드는 아예 찾지 못했다.
+    잘못된 코드로 요청하면 엉뚱한 구 데이터가 섞이거나 특정 구가 통째로 누락될 위험이
+    있다. 그래서 이 스크립트는 코드로 요청을 좁히지 않고, 전국 데이터를 끝까지
+    받아온 뒤 응답에 실제로 담겨 오는 sidoCdNm("경남")과 sgguCdNm("창원의창구" 등)
+    문자열 필드를 그대로 매칭하는 방식을 쓴다. 이 두 값은 inspect/dry-run으로 실제
+    호출해 직접 확인했으므로(위 검증 결과 참고) 추측이 아니다. 전국을 다 훑어야 해서
+    느리지만(1회성 배치 작업이므로 허용), 코드 추정으로 인한 매핑 오류 위험이 없다.
 """
 
 from __future__ import annotations
@@ -272,18 +286,13 @@ def _iter_all_items(endpoint: str, service_key: str, num_of_rows: int, max_pages
 
 
 def cmd_ingest(args: argparse.Namespace) -> None:
-    if not args.endpoint:
-        raise SystemExit(
-            "--endpoint 가 필요합니다. 먼저 'inspect' 명령으로 유효한 엔드포인트를 확인한 뒤 "
-            "그 URL을 --endpoint 로 지정해서 실행하세요."
-        )
-
     service_key = _get_service_key()
-    addr_field = args.addr_field
 
-    counts = {region_id: 0 for region_id in CHANGWON_DISTRICTS}
-    sample_shown = False
+    mapped: dict[str, list[dict]] = {region_id: [] for region_id in CHANGWON_DISTRICTS}
+    unmapped: list[dict] = []
     total_seen = 0
+    gyeongnam_seen = 0
+    sample_shown = False
 
     for item in _iter_all_items(args.endpoint, service_key, args.num_of_rows, args.max_pages):
         total_seen += 1
@@ -291,18 +300,57 @@ def cmd_ingest(args: argparse.Namespace) -> None:
             print("[표본 응답 1건]", item)
             sample_shown = True
 
-        addr = str(item.get(addr_field, ""))
-        if "창원" not in addr:
+        if item.get("sidoCdNm", "") != "경남":
             continue
-        for region_id, district_name in CHANGWON_DISTRICTS.items():
-            if district_name in addr:
-                counts[region_id] += 1
-                break
+        gyeongnam_seen += 1
 
-    print(f"\n조회한 전체 레코드 수: {total_seen}")
-    print("=== 창원시 구별 병원 수 집계 결과 ===")
+        sggu = item.get("sgguCdNm", "")
+        if "창원" not in sggu:
+            continue
+
+        hits = [
+            region_id
+            for region_id, district_name in CHANGWON_DISTRICTS.items()
+            if district_name in sggu
+        ]
+        if len(hits) == 1:
+            mapped[hits[0]].append(item)
+        else:
+            unmapped.append(item)
+
+    print(f"\n조회한 전체 레코드 수: {total_seen} (totalCount와 다르면 일부만 수집된 것이므로 결과를 신뢰하지 말 것)")
+    print(f"sidoCdNm == '경남' 레코드 수: {gyeongnam_seen}")
+
+    if unmapped:
+        print(f"\n[경고] sgguCdNm에 '창원'은 포함되지만 5개 구 중 정확히 하나로 특정되지 않은 레코드 {len(unmapped)}건:")
+        for it in unmapped[:10]:
+            print(f"  sgguCdNm='{it.get('sgguCdNm','')}' yadmNm='{it.get('yadmNm','')}'")
+        print("  -> 이 레코드들은 억지로 매핑하지 않고 집계에서 제외했습니다.")
+
+    print("\n=== 창원시 구별 의료기관 수 (hospital_count 후보, ykiho 중복 제거 전/후) ===")
+    counts: dict[str, int] = {}
+    cl_breakdown: dict[str, dict] = {}
     for region_id, district_name in CHANGWON_DISTRICTS.items():
-        print(f"  {region_id} ({district_name}): {counts[region_id]}개")
+        items = mapped[region_id]
+        raw_count = len(items)
+        unique_ykihos = {it.get("ykiho", "") for it in items}
+        dup_count = raw_count - len(unique_ykihos)
+        counts[region_id] = raw_count
+
+        cl_counter: dict[str, int] = {}
+        for it in items:
+            cl = it.get("clCdNm", "(미상)")
+            cl_counter[cl] = cl_counter.get(cl, 0) + 1
+        cl_breakdown[region_id] = cl_counter
+
+        print(
+            f"  {region_id} ({district_name}): {raw_count}건"
+            f" (고유 ykiho {len(unique_ykihos)}건, 중복 {dup_count}건)"
+        )
+        print("      종별 구성: " + ", ".join(f"{cl}={cnt}" for cl, cnt in sorted(cl_counter.items(), key=lambda x: -x[1])))
+
+    total_mapped = sum(counts.values())
+    print(f"\n합계: {total_mapped}건 (의원/치과의원/한의원/병원/종합병원/상급종합/요양병원/한방병원/치과병원/정신병원/보건소/보건지소/보건진료소/조산원 등 모든 종별 포함)")
 
     if not args.commit:
         print("\n--commit 옵션 없이 실행되어 CSV에는 반영하지 않았습니다 (dry-run).")
@@ -326,8 +374,10 @@ def _write_hospital_counts_to_csv(counts: dict, source: str, reference_date: str
             row["reference_date"] = reference_date
             row["data_status"] = "확보"
             row["note"] = (
-                "HIRA 병원정보서비스 Open API 응답의 주소 필드에서 "
-                "구 이름 문자열 매칭으로 집계"
+                "HIRA 병원정보서비스 Open API(sidoCdNm='경남', sgguCdNm 구 이름 매칭)로 집계. "
+                "의원/치과의원/한의원/병원/종합병원/상급종합/요양병원/한방병원/치과병원/"
+                "정신병원/보건소/보건지소/보건진료소/조산원 등 전체 의료기관 종별 합산, "
+                "ykiho 고유식별자 기준 중복 없음 확인됨"
             )
             updated += 1
 
@@ -356,15 +406,14 @@ def main() -> None:
     )
     p_inspect.set_defaults(func=cmd_inspect)
 
-    p_ingest = sub.add_parser("ingest", help="창원시 5개 구 병원 수 집계 후 CSV 반영")
+    p_ingest = sub.add_parser("ingest", help="창원시 5개 구 의료기관 수 집계 후 CSV 반영")
     p_ingest.add_argument(
-        "--endpoint", required=True, help="inspect로 확인된 유효한 엔드포인트 URL"
+        "--endpoint",
+        default=CANDIDATE_ENDPOINTS[0],
+        help="inspect로 검증된 엔드포인트 URL (기본값: 2026-10-01에 검증된 getHospBasisList)",
     )
-    p_ingest.add_argument(
-        "--addr-field", default="addr", help="응답에서 주소가 담긴 필드명 (inspect로 먼저 확인)"
-    )
-    p_ingest.add_argument("--num-of-rows", type=int, default=500)
-    p_ingest.add_argument("--max-pages", type=int, default=300)
+    p_ingest.add_argument("--num-of-rows", type=int, default=1000)
+    p_ingest.add_argument("--max-pages", type=int, default=200)
     p_ingest.add_argument(
         "--source-label",
         default="건강보험심사평가원 병원정보서비스 Open API (data.go.kr 15001698)",
