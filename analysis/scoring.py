@@ -56,7 +56,13 @@ INDICATOR_CATEGORY: dict[str, str] = {
 # 매번 실제 데이터로 다시 확인하며, 이 목록은 "후보"일 뿐 확정이 아니다).
 ALL_SCORABLE_CONDITIONS: tuple[str, ...] = tuple(CONDITION_TO_INDICATOR_CODE)
 
+# 가중치를 직접 조정하는 피드백 화면에서 "조정 가능한 지표"로 노출하는 전부.
+# 이 3개 외의 지표는(교육/안전/주거비 등) 가중치 슬라이더 자체를 만들지 않으므로
+# 구조적으로 점수 계산에 섞여 들어올 수 없다.
+VALID_SCORABLE_INDICATOR_CODES: tuple[str, ...] = tuple(CONDITION_TO_INDICATOR_CODE.values())
+
 NO_DATA_MESSAGE = "현재 비교 가능한 데이터가 없습니다."
+ALL_WEIGHTS_ZERO_MESSAGE = "모든 가중치가 0입니다. 하나 이상의 조건에 가중치를 주세요."
 
 CAVEATS: list[str] = [
     "현재 시설 수는 인구·면적을 보정한 접근성 지표가 아닙니다.",
@@ -107,13 +113,99 @@ def _collect_confirmed_indicator(
     return raw_values, indicator_name
 
 
+def _build_ok_result(
+    regions: list[dict],
+    used_meta: list[dict],
+    excluded_conditions: list[dict],
+    candidate_count: int,
+) -> dict:
+    """
+    used_meta(각 항목에 최소 indicator_code/indicator_name/weight가 있어야 함, "condition"은
+    선택)로 min-max 정규화 + 가중합 + 5개 구 정렬/동점 판정까지 공통 처리한다.
+    compute_region_scores()와 compute_region_scores_from_weights() 둘 다 이 함수로
+    귀결되므로, 정규화 방식과 집계 로직은 호출 경로와 무관하게 완전히 동일하다.
+    """
+    region_name_by_id = {r["region_id"]: r["region_name"] for r in regions}
+
+    indicator_raw_values: dict[str, dict[str, float]] = {}
+    normalization: dict[str, dict] = {}
+    normalized_by_indicator: dict[str, dict[str, float]] = {}
+    for meta in used_meta:
+        code = meta["indicator_code"]
+        raw_values, _name = _collect_confirmed_indicator(regions, code)
+        indicator_raw_values[code] = raw_values
+        normalized, formula = _normalize_min_max(raw_values)
+        normalized_by_indicator[code] = normalized
+        normalization[code] = {"formula": formula, "raw_values": raw_values, "normalized": normalized}
+
+    # 점수 계산에 실제로 쓰였는지와 무관하게, 화면에서 후보지역의 "실제 수치"를
+    # 보여줄 때 참고하도록 확보된 3개 지표를 전부 모아둔다.
+    reference_data: dict[str, dict] = {}
+    for code in CONDITION_TO_INDICATOR_CODE.values():
+        collected = _collect_confirmed_indicator(regions, code)
+        if collected is not None:
+            raw_values, indicator_name = collected
+            reference_data[code] = {"indicator_name": indicator_name, "raw_values": raw_values}
+
+    region_rows = []
+    for region in regions:
+        rid = region["region_id"]
+        component_scores = {}
+        total = 0.0
+        for meta in used_meta:
+            code = meta["indicator_code"]
+            raw_value = indicator_raw_values[code][rid]
+            norm_score = normalized_by_indicator[code][rid]
+            weighted = norm_score * meta["weight"]
+            total += weighted
+            component_scores[code] = {
+                "raw_value": raw_value,
+                "normalized_score": norm_score,
+                "weight": meta["weight"],
+                "weighted_score": weighted,
+            }
+        reference_indicators = {
+            code: {"indicator_name": info["indicator_name"], "raw_value": info["raw_values"][rid]}
+            for code, info in reference_data.items()
+        }
+        region_rows.append(
+            {
+                "region_id": rid,
+                "region_name": region_name_by_id[rid],
+                "total_score": total,
+                "component_scores": component_scores,
+                "reference_indicators": reference_indicators,
+            }
+        )
+
+    # 내림차순 정렬. 동점이면 region_id로 안정적으로 순서를 고정(일관성 보장).
+    region_rows.sort(key=lambda r: (-round(r["total_score"], 6), r["region_id"]))
+
+    rounded_totals = [round(r["total_score"], 6) for r in region_rows]
+    for idx, row in enumerate(region_rows):
+        row["rank"] = idx + 1
+        row["tied"] = rounded_totals.count(rounded_totals[idx]) > 1
+
+    candidate_count = max(1, int(candidate_count or 1))
+
+    return {
+        "status": "ok",
+        "used_conditions": used_meta,
+        "excluded_conditions": excluded_conditions,
+        "caveats": CAVEATS,
+        "normalization": normalization,
+        "region_scores": region_rows,
+        "top_candidates": region_rows[:candidate_count],
+    }
+
+
 def compute_region_scores(
     user_conditions: list[str] | None = None,
     candidate_count: int = 5,
 ) -> dict:
     """
     창원시 5개 구를 사용자가 선택한 "중요 생활조건" 중 실제 데이터가 확보된 것만으로
-    상대 비교한다.
+    상대 비교한다(최초 추천용 - 조건 기반, 동일 가중치).
 
     Args:
         user_conditions: app.py의 "중요 생활조건" multiselect 선택값. None/빈 리스트면
@@ -141,14 +233,12 @@ def compute_region_scores(
             top_candidates: region_scores[:candidate_count]
     """
     regions = get_all_changwon_regions()
-    region_name_by_id = {r["region_id"]: r["region_name"] for r in regions}
 
     conditions = list(user_conditions) if user_conditions else []
     target_conditions = conditions if conditions else list(ALL_SCORABLE_CONDITIONS)
 
     used_conditions: list[dict] = []
     excluded_conditions: list[dict] = []
-    indicator_raw_values: dict[str, dict[str, float]] = {}
 
     for condition in target_conditions:
         indicator_code = CONDITION_TO_INDICATOR_CODE.get(condition)
@@ -165,7 +255,7 @@ def compute_region_scores(
             )
             continue
 
-        raw_values, indicator_name = collected
+        _raw_values, indicator_name = collected
         used_conditions.append(
             {
                 "condition": condition,
@@ -174,7 +264,6 @@ def compute_region_scores(
                 "category": INDICATOR_CATEGORY[indicator_code],
             }
         )
-        indicator_raw_values[indicator_code] = raw_values
 
     if not used_conditions:
         return {
@@ -189,73 +278,86 @@ def compute_region_scores(
     for uc in used_conditions:
         uc["weight"] = weight
 
-    normalization: dict[str, dict] = {}
-    normalized_by_indicator: dict[str, dict[str, float]] = {}
-    for uc in used_conditions:
-        code = uc["indicator_code"]
-        raw_values = indicator_raw_values[code]
-        normalized, formula = _normalize_min_max(raw_values)
-        normalized_by_indicator[code] = normalized
-        normalization[code] = {"formula": formula, "raw_values": raw_values, "normalized": normalized}
+    return _build_ok_result(regions, used_conditions, excluded_conditions, candidate_count)
 
-    # 점수 계산에 실제로 쓰였는지와 무관하게, 화면에서 후보지역의 "실제 수치"를
-    # 보여줄 때 참고하도록 확보된 3개 지표를 전부 모아둔다(요구사항: 각 후보지역의
-    # 실제 의료기관 수·버스정류장 수·편의점 수 표시).
-    reference_data: dict[str, dict] = {}
-    for code in CONDITION_TO_INDICATOR_CODE.values():
-        collected = _collect_confirmed_indicator(regions, code)
-        if collected is not None:
-            raw_values, indicator_name = collected
-            reference_data[code] = {"indicator_name": indicator_name, "raw_values": raw_values}
 
-    region_rows = []
-    for region in regions:
-        rid = region["region_id"]
-        component_scores = {}
-        total = 0.0
-        for uc in used_conditions:
-            code = uc["indicator_code"]
-            raw_value = indicator_raw_values[code][rid]
-            norm_score = normalized_by_indicator[code][rid]
-            weighted = norm_score * uc["weight"]
-            total += weighted
-            component_scores[code] = {
-                "raw_value": raw_value,
-                "normalized_score": norm_score,
-                "weight": uc["weight"],
-                "weighted_score": weighted,
-            }
-        reference_indicators = {
-            code: {"indicator_name": info["indicator_name"], "raw_value": info["raw_values"][rid]}
-            for code, info in reference_data.items()
+def initial_feedback_weights(scoring_result: dict) -> dict[str, float]:
+    """
+    피드백(가중치 조정) 슬라이더의 초기값을 만든다. 최초 추천(compute_region_scores)
+    결과에서 실제로 쓰인 지표는 그 가중치를, 쓰이지 않은 나머지 확보 지표는 0을
+    percent(0~100) 단위로 돌려준다. 요구사항: "초기 가중치는 최초 추천 계산에
+    사용된 가중치와 동일하게 설정".
+    """
+    used_weight_by_code = {
+        uc["indicator_code"]: uc["weight"] for uc in scoring_result.get("used_conditions", [])
+    }
+    return {
+        code: round(used_weight_by_code.get(code, 0.0) * 100, 1)
+        for code in VALID_SCORABLE_INDICATOR_CODES
+    }
+
+
+def compute_region_scores_from_weights(
+    indicator_weights: dict[str, float],
+    candidate_count: int = 5,
+) -> dict:
+    """
+    사용자가 "조건 조정 후 다시 비교하기"에서 직접 지정한 가중치로 5개 구를
+    재평가한다(피드백 전용 경로). min-max 정규화와 지표값 자체는
+    compute_region_scores()와 완전히 동일한 내부 함수(_normalize_min_max,
+    _collect_confirmed_indicator)를 그대로 쓴다 - 바뀌는 건 가중치뿐이다.
+
+    Args:
+        indicator_weights: {indicator_code: 0~100 사이의 상대 가중치, ...}.
+            키는 VALID_SCORABLE_INDICATOR_CODES(교통/의료/생활편의 3개)만 유효하고,
+            그 외 키나 값이 0 이하인 항목은 무시한다. 합계가 100이 아니어도 되며
+            내부에서 합계 100%로 정규화한다.
+        candidate_count: 최종 후보 개수.
+
+    Returns:
+        compute_region_scores()와 동일한 형식. 유효한 가중치가 하나도 없으면
+        (전부 0 이하이거나, 가리키는 지표가 아직 확보되지 않았으면)
+        status="no_usable_conditions"를 반환하고 계산하지 않는다.
+    """
+    regions = get_all_changwon_regions()
+
+    positive_weights = {
+        code: w
+        for code, w in (indicator_weights or {}).items()
+        if code in VALID_SCORABLE_INDICATOR_CODES and w and w > 0
+    }
+    if not positive_weights:
+        return {
+            "status": "no_usable_conditions",
+            "message": ALL_WEIGHTS_ZERO_MESSAGE,
+            "used_conditions": [],
+            "excluded_conditions": [],
+            "caveats": CAVEATS,
         }
-        region_rows.append(
+
+    weight_sum = sum(positive_weights.values())
+    used_meta: list[dict] = []
+    for code, w in positive_weights.items():
+        collected = _collect_confirmed_indicator(regions, code)
+        if collected is None:
+            continue  # 방어적 처리 - 현재는 3개 다 확보 상태라 실제로는 거의 발생하지 않음
+        _raw_values, indicator_name = collected
+        used_meta.append(
             {
-                "region_id": rid,
-                "region_name": region_name_by_id[rid],
-                "total_score": total,
-                "component_scores": component_scores,
-                "reference_indicators": reference_indicators,
+                "indicator_code": code,
+                "indicator_name": indicator_name,
+                "category": INDICATOR_CATEGORY[code],
+                "weight": w / weight_sum,
             }
         )
 
-    # 내림차순 정렬. 동점이면 region_id로 안정적으로 순서를 고정(일관성 보장).
-    region_rows.sort(key=lambda r: (-round(r["total_score"], 6), r["region_id"]))
+    if not used_meta:
+        return {
+            "status": "no_usable_conditions",
+            "message": NO_DATA_MESSAGE,
+            "used_conditions": [],
+            "excluded_conditions": [],
+            "caveats": CAVEATS,
+        }
 
-    rounded_totals = [round(r["total_score"], 6) for r in region_rows]
-    for idx, row in enumerate(region_rows):
-        row["rank"] = idx + 1
-        row["tied"] = rounded_totals.count(rounded_totals[idx]) > 1
-
-    candidate_count = max(1, int(candidate_count or 1))
-    top_candidates = region_rows[:candidate_count]
-
-    return {
-        "status": "ok",
-        "used_conditions": used_conditions,
-        "excluded_conditions": excluded_conditions,
-        "caveats": CAVEATS,
-        "normalization": normalization,
-        "region_scores": region_rows,
-        "top_candidates": top_candidates,
-    }
+    return _build_ok_result(regions, used_meta, excluded_conditions=[], candidate_count=candidate_count)
