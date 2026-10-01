@@ -227,5 +227,92 @@ class WeightNumericValidationTest(unittest.TestCase):
         self.assertEqual(result["status"], "invalid_response")
 
 
+class PlanWeightQuestionTest(unittest.TestCase):
+    """plan_weight_question()은 Ollama를 호출하지 않는 결정적 로직이므로 ollama.chat을
+    모킹할 필요 없이 바로 검증한다."""
+
+    def test_two_computable_conditions_generates_weight_question(self):
+        plan = ollama_agent.plan_weight_question({"중요 생활조건": ["교통", "의료"]})
+        self.assertIsNotNone(plan)
+        self.assertEqual(plan["conditions"], ["교통", "의료"])
+        self.assertEqual(plan["indicator_codes"], ["bus_stop_count", "hospital_count"])
+        self.assertIn("교통", plan["text"])
+        self.assertIn("의료", plan["text"])
+        self.assertIn("100%", plan["text"])
+
+    def test_three_computable_conditions_example_sums_to_100(self):
+        plan = ollama_agent.plan_weight_question(
+            {"중요 생활조건": ["교통", "의료", "생활편의(마트/편의점)"]}
+        )
+        self.assertIsNotNone(plan)
+        self.assertEqual(len(plan["conditions"]), 3)
+        self.assertEqual(len(plan["indicator_codes"]), 3)
+
+    def test_single_computable_condition_returns_none(self):
+        plan = ollama_agent.plan_weight_question({"중요 생활조건": ["교통"]})
+        self.assertIsNone(plan)
+
+    def test_zero_computable_conditions_returns_none(self):
+        plan = ollama_agent.plan_weight_question({"중요 생활조건": ["교육", "안전"]})
+        self.assertIsNone(plan)
+
+    def test_no_selected_conditions_returns_none(self):
+        plan = ollama_agent.plan_weight_question({"중요 생활조건": []})
+        self.assertIsNone(plan)
+
+    def test_explicit_ratio_already_in_extra_request_skips_question(self):
+        plan = ollama_agent.plan_weight_question(
+            {"중요 생활조건": ["교통", "의료"], "추가 요청사항": "교통 70%, 의료 30%로 해주세요"}
+        )
+        self.assertIsNone(plan)
+
+    def test_single_percent_mention_still_asks(self):
+        """퍼센트 표현이 하나뿐이면(두 조건 사이 비율로 보기 부족) 그대로 질문한다."""
+        plan = ollama_agent.plan_weight_question(
+            {"중요 생활조건": ["교통", "의료"], "추가 요청사항": "교통 70% 정도면 좋겠어요"}
+        )
+        self.assertIsNotNone(plan)
+
+
+class PlanFollowupQuestionsTest(unittest.TestCase):
+    """plan_followup_questions()는 plan_weight_question()(Ollama 미호출) +
+    generate_followup_questions()(Ollama 호출, 모킹)를 합친다."""
+
+    @mock.patch("agent.ollama_agent.ollama.chat")
+    def test_weight_question_takes_first_slot_and_leaves_one_for_ai(self, mock_chat):
+        mock_chat.return_value = _fake_response(
+            '{"questions": ["창원시 내에서 선호하는 주거 형태가 있으신가요?"]}'
+        )
+        plan = ollama_agent.plan_followup_questions({"중요 생활조건": ["교통", "의료"]})
+        self.assertIsNotNone(plan["weight_question"])
+        self.assertEqual(plan["questions"][0], plan["weight_question"]["text"])
+        self.assertEqual(len(plan["questions"]), 2)
+        mock_chat.assert_called_once()
+
+    @mock.patch("agent.ollama_agent.ollama.chat")
+    def test_groundless_ai_question_is_omitted_not_replaced(self, mock_chat):
+        mock_chat.return_value = _fake_response(
+            '{"questions": ["가족 구성이 어떻게 되시나요?", "최대 통근시간은 어느 정도인가요?"]}'
+        )
+        plan = ollama_agent.plan_followup_questions({"중요 생활조건": ["교통", "의료"]})
+        # 가중치 질문 1개만 남고, 근거 없는 AI 질문 2개는 생략된다(대체 문구로 바꿔치기하지 않음).
+        self.assertEqual(plan["questions"], [plan["weight_question"]["text"]])
+
+    @mock.patch("agent.ollama_agent.ollama.chat")
+    def test_single_condition_has_no_weight_question_but_can_still_ask_ai_questions(self, mock_chat):
+        mock_chat.return_value = _fake_response(
+            '{"questions": ["창원시 내 어느 구를 가장 선호하시나요?"]}'
+        )
+        plan = ollama_agent.plan_followup_questions({"중요 생활조건": ["교통"]})
+        self.assertIsNone(plan["weight_question"])
+        self.assertEqual(plan["questions"], ["창원시 내 어느 구를 가장 선호하시나요?"])
+
+    @mock.patch("agent.ollama_agent.ollama.chat")
+    def test_ollama_failure_propagates_as_runtime_error(self, mock_chat):
+        mock_chat.side_effect = ConnectionError("서버 없음")
+        with self.assertRaises(RuntimeError):
+            ollama_agent.plan_followup_questions({"중요 생활조건": ["교통"]})
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -5,6 +5,8 @@ import re
 
 import ollama
 
+from analysis.scoring import CONDITION_TO_INDICATOR_CODE
+
 OLLAMA_MODEL = "qwen3.5:4b"
 
 SYSTEM_PROMPT = """당신은 경남 이주자의 생활권 탐색을 돕는 AI 상담사입니다.
@@ -12,13 +14,119 @@ SYSTEM_PROMPT = """당신은 경남 이주자의 생활권 탐색을 돕는 AI �
 
 규칙:
 - 이미 사용자가 입력한 항목은 절대 다시 묻지 마세요.
-- 추천에 실질적으로 영향을 주는 핵심 정보만 질문하세요(예: 가족 구성, 통근 수단 선호, 반려동물 유무, 자녀 교육 환경 등).
+- 가족 구성, 자녀 유무, 반려동물 유무, 최대 통근시간, 구체적인 주거비 금액처럼 현재
+  추천 점수 계산에 쓰이는 지표(교통/의료/생활편의 시설 수)와 전혀 연결되지 않는
+  질문은 만들지 마세요 - 이런 질문은 저장만 되고 실제 계산에 반영되지 않습니다.
+- 중요하게 생각하는 생활조건들 사이의 우선순위(비율/가중치)를 묻는 질문은 별도
+  로직에서 결정적으로 처리하므로, 당신은 그런 질문을 만들 필요가 없습니다.
 - 질문은 최대 2개까지만 생성하세요. 부족한 정보가 없다면 질문을 0개 생성해도 됩니다.
 - 질문은 한국어로, 간결하고 구체적으로 작성하세요.
 - 반드시 아래 JSON 형식으로만 응답하세요. 다른 설명이나 markdown은 포함하지 마세요.
 
 {"questions": ["질문1", "질문2"]}
 """
+
+# AI가 프롬프트를 무시하고 만들어낼 수 있는, 현재 계산에 쓸 수 없는 질문을 걸러내는
+# 키워드 목록. 하나라도 포함되면 그 질문은 화면에 보여주지 않는다("실제 계산 가능한
+# 질문으로 대체하거나 생략" 중 "생략" 방식 - 억지로 다른 문장으로 바꿔치기하지 않는다).
+_GROUNDLESS_QUESTION_KEYWORDS = [
+    "가족", "자녀", "자녀분", "아이", "반려동물", "애완", "통근 시간", "통근시간",
+    "출퇴근 시간", "출퇴근시간", "최대 통근", "주거비", "월세", "전세", "보증금",
+    "예산",
+]
+
+
+def _is_groundless_question(question: str) -> bool:
+    return any(keyword in question for keyword in _GROUNDLESS_QUESTION_KEYWORDS)
+
+
+# app.py의 "중요 생활조건" 선택지를 가중치 질문 문장에 쓸 짧은 표현으로 바꾼다.
+# analysis.scoring.CONDITION_TO_INDICATOR_CODE와 같은 키 집합을 쓰되, 질문
+# 문장에는 지표 코드가 아니라 사람이 읽을 짧은 조건 이름만 필요하다.
+_CONDITION_DISPLAY_LABEL = {
+    "교통": "교통",
+    "의료": "의료",
+    "생활편의(마트/편의점)": "생활편의",
+}
+
+_EXPLICIT_PERCENT_PATTERN = re.compile(r"\d{1,3}\s*%")
+
+
+def _already_has_explicit_weights(text: str) -> bool:
+    """추가 요청사항 등에 이미 명확한 숫자 비율(예: '교통 70%, 의료 30%')이 적혀
+    있는지 가볍게 확인한다. 정밀한 해석은 interpret_weight_feedback()의 몫이고,
+    여기서는 "가중치 질문을 또 할 필요가 있는가"만 판단한다."""
+    if not text:
+        return False
+    return len(_EXPLICIT_PERCENT_PATTERN.findall(text)) >= 2
+
+
+def plan_weight_question(user_input: dict) -> dict | None:
+    """
+    사용자가 선택한 "중요 생활조건" 중 실제 계산 가능한 지표(교통/의료/생활편의)가
+    2개 이상이고 비율이 아직 명확하지 않다면, "어느 쪽을 더 중요하게 생각하는지"
+    묻는 질문을 결정적으로(고정된 워딩으로) 만든다. Ollama를 호출하지 않는다 -
+    이 질문은 나중에 사용자가 답하면 interpret_weight_feedback()으로 정확히
+    파싱할 수 있어야 하므로, 표현을 AI에게 맡기지 않는다.
+
+    - 계산 가능한 조건이 1개 이하면 가중치를 나눌 필요가 없으므로 None(질문 불필요).
+    - 추가 요청사항에 이미 명확한 비율이 적혀 있으면 같은 내용을 다시 묻지 않고 None.
+
+    Returns: {"text": str, "conditions": [...], "indicator_codes": [...]} | None
+    """
+    conditions = user_input.get("중요 생활조건") or []
+    computable_conditions = [c for c in conditions if c in CONDITION_TO_INDICATOR_CODE]
+
+    if len(computable_conditions) < 2:
+        return None
+
+    if _already_has_explicit_weights(user_input.get("추가 요청사항") or ""):
+        return None
+
+    indicator_codes = [CONDITION_TO_INDICATOR_CODE[c] for c in computable_conditions]
+    labels = [_CONDITION_DISPLAY_LABEL.get(c, c) for c in computable_conditions]
+
+    if len(labels) == 2:
+        example = f"{labels[0]} 70%, {labels[1]} 30%"
+    else:
+        share = round(100 / len(labels))
+        example = ", ".join(f"{label} {share}%" for label in labels[:-1])
+        example += f", {labels[-1]} {100 - share * (len(labels) - 1)}%"
+
+    question_text = (
+        f"{', '.join(labels)} 중 어느 것을 더 중요하게 생각하시나요? 합계 100%로 "
+        f"입력해 주세요. 예: {example}"
+    )
+    return {"text": question_text, "conditions": computable_conditions, "indicator_codes": indicator_codes}
+
+
+def plan_followup_questions(user_input: dict) -> dict:
+    """
+    generate_followup_questions()(Ollama 호출)와 plan_weight_question()(결정적,
+    Ollama 미호출)을 합쳐서 app.py가 쓸 최종 질문 목록을 만든다.
+
+    - 가중치 질문이 필요하면 항상 첫 번째 질문으로 포함시킨다(랜덤하게 AI가
+      비슷한 걸 물어주길 기대하지 않는다).
+    - 남은 자리(최대 2개 한도 안에서)만 Ollama의 generate_followup_questions()로
+      채우되, _is_groundless_question()에 걸리는 질문(가족/통근시간 등)은
+      생략한다(억지로 다른 문장으로 바꿔치기하지 않는다).
+
+    Returns:
+        {
+            "questions": [str, ...],                 # 화면에 보여줄 질문(최대 2개)
+            "weight_question": {"text","conditions","indicator_codes"} | None,
+        }
+    """
+    weight_question = plan_weight_question(user_input)
+    remaining_slots = 2 - (1 if weight_question else 0)
+
+    ai_questions: list[str] = []
+    if remaining_slots > 0:
+        candidates = generate_followup_questions(user_input)
+        ai_questions = [q for q in candidates if not _is_groundless_question(q)][:remaining_slots]
+
+    questions = ([weight_question["text"]] if weight_question else []) + ai_questions
+    return {"questions": questions, "weight_question": weight_question}
 
 
 def _build_user_prompt(user_input: dict) -> str:
