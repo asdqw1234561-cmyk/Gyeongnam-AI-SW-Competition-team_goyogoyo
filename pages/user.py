@@ -296,21 +296,9 @@ elif location_mode == "위도·경도 직접 입력":
             )
 
 else:  # "지도 클릭으로 위치 선택"
-    st.caption("아래 지도를 클릭해 위치를 선택한 뒤, '이 위치에서 주변 시설 검색' 버튼을 눌러 확정하세요.")
-    if st.session_state.map_click_candidate is not None:
-        c_lat, c_lon = st.session_state.map_click_candidate
-        st.info(f"🖱️ 지도에서 클릭한 위치(아직 미확정): 위도 {c_lat:.6f}, 경도 {c_lon:.6f}")
-        if _is_outside_changwon(c_lat, c_lon):
-            st.warning(
-                "⚠️ 클릭한 위치가 창원시 범위를 벗어난 것으로 보입니다. 확정해도 조회는 "
-                "진행되지만 창원시 5개 구 데이터만 포함되어 0건으로 나올 수 있습니다."
-            )
-        if st.button("📍 이 위치에서 주변 시설 검색", type="primary"):
-            st.session_state.search_center = (c_lat, c_lon)
-            st.session_state.map_click_candidate = None
-            st.rerun()
-    else:
-        st.caption("아직 클릭한 위치가 없습니다. 아래 지도를 클릭해 주세요.")
+    # 클릭 위치 확인·확정(승인)·취소 UI는 아래 "3. 지도로 보기" 섹션에서 지도
+    # 바로 밑에 렌더링한다(사용성 개선: 클릭 -> 스크롤 없이 바로 아래에서 확정).
+    st.caption("아래 지도를 클릭해 위치를 선택한 뒤, 지도 바로 아래에서 확정하세요.")
 
 cur_lat, cur_lon = st.session_state.search_center
 st.caption(f"현재 확정된 검색 중심: 위도 {cur_lat:.6f}, 경도 {cur_lon:.6f}")
@@ -375,6 +363,12 @@ else:
             st.warning(f"⚠️ 지도를 표시하는 중 문제가 발생했습니다: {exc}")
             map_data = None
 
+        # 새로 들어온 클릭만 후보로 받아들인다 - st_folium()은 재실행될 때마다 마지막
+        # 클릭 좌표를 그대로 돌려주므로, 이미 처리한 좌표(map_click_seen)와 같으면
+        # 무시한다(과거 클릭 반복 적용 방지). 여기서는 일부러 st.rerun()을 호출하지
+        # 않는다 - 클릭 자체가 이미 streamlit-folium 컴포넌트의 재실행을 한 번
+        # 일으키므로, 바로 아래에서 같은 실행 흐름 안에 candidate를 읽어 승인 UI를
+        # 그리면 추가 재실행 없이 즉시 보인다(불필요한 재실행·스크롤 최소화).
         if map_data and location_mode == "지도 클릭으로 위치 선택":
             clicked = map_data.get("last_clicked")
             if clicked and clicked.get("lat") is not None and clicked.get("lng") is not None:
@@ -382,7 +376,35 @@ else:
                 if click_sig != st.session_state.map_click_seen:
                     st.session_state.map_click_seen = click_sig
                     st.session_state.map_click_candidate = (clicked["lat"], clicked["lng"])
-                    st.rerun()
+
+        # 클릭 확인·확정·취소 UI - 지도 바로 아래에 둬서 스크롤 없이 바로 이어서
+        # 조작할 수 있게 한다(요구사항: 승인 UI를 지도 아래로 이동).
+        if location_mode == "지도 클릭으로 위치 선택":
+            candidate = st.session_state.map_click_candidate
+            if candidate is not None:
+                c_lat, c_lon = candidate
+                st.info(f"🖱️ 새로 클릭한 위치(아직 미확정): 위도 {c_lat:.6f}, 경도 {c_lon:.6f}")
+                if _is_outside_changwon(c_lat, c_lon):
+                    st.warning(
+                        "⚠️ 클릭한 위치가 창원시 범위를 벗어난 것으로 보입니다. 확정해도 "
+                        "조회는 진행되지만 창원시 5개 구 데이터만 포함되어 0건으로 나올 수 "
+                        "있습니다."
+                    )
+                col_confirm, col_cancel = st.columns(2)
+                with col_confirm:
+                    if st.button("📍 이 위치에서 주변 시설 검색", type="primary", width="stretch"):
+                        st.session_state.search_center = (c_lat, c_lon)
+                        st.session_state.map_click_candidate = None
+                        # map_click_seen은 그대로 둔다 - 초기화하면 컴포넌트가 계속
+                        # 돌려주는 "같은" 마지막 클릭 좌표가 다음 실행에서 다시
+                        # 새 클릭처럼 재처리돼 버린다(아래 "선택 취소"도 동일).
+                        st.rerun()
+                with col_cancel:
+                    if st.button("선택 취소", width="stretch"):
+                        st.session_state.map_click_candidate = None
+                        st.rerun()
+            else:
+                st.caption("아직 클릭한 위치가 없습니다. 위 지도를 클릭해 주세요.")
 
     st.divider()
     st.subheader("4. 주변 버스정류장·편의점 수 (반경별 비교)")
