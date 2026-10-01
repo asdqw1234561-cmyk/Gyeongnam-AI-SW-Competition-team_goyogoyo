@@ -3,6 +3,7 @@ import pandas as pd
 import streamlit as st
 
 from agent.ollama_agent import interpret_weight_feedback, plan_followup_questions
+from agent.planner import TOOL_LABELS, run_agent_plan
 from analysis import scoring
 from services.region_data import get_all_changwon_regions, is_supported_region
 
@@ -178,6 +179,102 @@ def _render_top_candidates(result: dict, heading: str = "추천 후보지역") -
             for uc in result["used_conditions"]
         ]
         st.caption("계산 근거: " + " + ".join(explanation_parts) + f" = {row['total_score']:.1f}점")
+
+
+def render_agent_execution_log() -> None:
+    """
+    'AI 분석 실행 과정 보기' 접기 영역의 내용을 렌더링한다.
+    agent.planner.run_agent_plan()의 반환값(st.session_state.agent_execution_log)을
+    그대로 보여줄 뿐, 여기서 새로 판단하거나 숫자를 만들지 않는다.
+
+    "AI가 계획한 작업"(planned_tool_calls, 검증 전 원본)과 "Python이 실제 실행한
+    작업"(executed_tool_calls, run_agent_plan()이 실제로 호출한 도구만) 을 항상
+    분리해서 보여준다 - 호출하지 않은 도구를 호출한 것처럼 표시하지 않기 위함이다.
+    """
+    log = st.session_state.agent_execution_log
+    if not log:
+        st.info("실행 기록이 없습니다.")
+        return
+
+    if log["mode"] == "ai_planned":
+        st.success("✅ AI가 계획한 작업을 Python이 검증한 뒤 그대로 실행했습니다.")
+    elif log["planner_error"]:
+        st.warning(f"⚠️ AI 분석 계획 호출에 실패해 기본 분석 절차로 진행했습니다: {log['planner_error']}")
+    else:
+        st.warning("⚠️ AI가 제안한 계획이 검증을 통과하지 못해 기본 분석 절차로 진행했습니다.")
+
+    if log.get("goals"):
+        st.markdown("**AI가 식별한 분석 목표**")
+        for g in log["goals"]:
+            st.caption(f"· {g}")
+
+    weights_source_label = "사용자가 승인한 가중치" if log["weights_source"] == "user_confirmed" else "조건별 동일 가중치(고정 규칙)"
+    st.markdown(f"**분석에 사용한 가중치** ({weights_source_label})")
+    if log["approved_weights"]:
+        st.dataframe(
+            pd.DataFrame(
+                [
+                    {"지표": FEEDBACK_INDICATOR_LABELS.get(c, c), "가중치": f"{w:.1f}%"}
+                    for c, w in log["approved_weights"].items()
+                ]
+            ),
+            hide_index=True,
+            width="stretch",
+        )
+    else:
+        st.caption("승인된 가중치가 없습니다(계산 가능한 조건이 선택되지 않았습니다).")
+
+    if log.get("unsupported_requests"):
+        st.markdown("**AI가 '지원 불가'로 분류한 요청**")
+        for item in log["unsupported_requests"]:
+            st.caption(f"· {item['request']} - {item['reason']}")
+
+    if log.get("planned_tool_calls"):
+        expander_title = (
+            "AI가 제안한 작업 계획 (검증 후 그대로 실행됨)"
+            if log["mode"] == "ai_planned"
+            else "AI가 제안했지만 검증에 실패해 사용하지 않은 계획"
+        )
+        with st.expander(expander_title):
+            for call in log["planned_tool_calls"]:
+                tool_name = call.get("tool") if isinstance(call, dict) else None
+                reason = call.get("reason", "") if isinstance(call, dict) else ""
+                st.caption(f"· {TOOL_LABELS.get(tool_name, tool_name)} — {reason}")
+    elif log["mode"] == "fallback_default" and log["planner_error"]:
+        st.caption("AI 계획 자체를 호출하지 못해 제안된 계획이 없습니다.")
+
+    st.markdown("**Python이 실제로 실행한 작업**")
+    for i, entry in enumerate(log["executed_tool_calls"], start=1):
+        label = TOOL_LABELS.get(entry["tool"], entry["tool"])
+        status_icon = "✅" if entry["executed"] else "❌"
+        st.markdown(f"{status_icon} **{i}. {label}**")
+        if entry.get("reason"):
+            st.caption(entry["reason"])
+
+        if entry["tool"] == "get_available_indicators" and entry.get("result"):
+            avail_text = ", ".join(
+                f"{FEEDBACK_INDICATOR_LABELS.get(c, c)}({'확보' if ok else '미확보'})"
+                for c, ok in entry["result"].items()
+            )
+            st.caption(f"조회 결과: {avail_text}")
+        elif entry["tool"] == "get_region_indicators":
+            confirmed = entry.get("confirmed_indicator_codes") or []
+            requested = entry.get("indicator_codes") or []
+            missing = [c for c in requested if c not in confirmed]
+            if confirmed:
+                st.caption(f"조회 성공: {', '.join(FEEDBACK_INDICATOR_LABELS.get(c, c) for c in confirmed)}")
+            if missing:
+                st.caption(f"미확보로 제외: {', '.join(FEEDBACK_INDICATOR_LABELS.get(c, c) for c in missing)}")
+        elif entry["tool"] == "calculate_region_scores" and entry.get("result"):
+            st.caption(f"점수 계산 실행 결과 상태: {entry['result'].get('status', '-')}")
+
+        if entry.get("error"):
+            st.caption(f"⚠️ 오류: {entry['error']}")
+
+    if log.get("notes"):
+        st.markdown("**Python의 보완/안내**")
+        for n in log["notes"]:
+            st.caption(f"· {n}")
 
 
 def render_recommendation_section() -> None:
@@ -666,6 +763,12 @@ if "followup_ai_error" not in st.session_state:
     # 가중치 확인 질문(결정적)이나 추가 요청사항 해석과는 별개 경로라 이 실패가
     # 나머지 흐름을 막지 않는다(화면에는 안내만 한다).
     st.session_state.followup_ai_error = None
+if "agent_execution_log" not in st.session_state:
+    # _finalize_initial_recommendation()이 run_agent_plan()을 호출할 때마다 그
+    # 결과(계획/실행 로그/오류)를 통째로 저장한다. "완료" 화면이 다시 렌더링될 때마다
+    # Agent를 재실행하지 않도록, 이 값은 _finalize_initial_recommendation() 호출
+    # 시점에만 갱신한다.
+    st.session_state.agent_execution_log = None
 
 
 def reset_all():
@@ -683,6 +786,7 @@ def reset_all():
     st.session_state.weight_interpretation_source = None
     st.session_state.weight_confirmation = None
     st.session_state.followup_ai_error = None
+    st.session_state.agent_execution_log = None
     for key in FEEDBACK_SLIDER_KEYS.values():
         st.session_state.pop(key, None)
     st.session_state.pop("nl_feedback_input", None)
@@ -695,21 +799,23 @@ def _finalize_initial_recommendation(confirmed_weights: dict[str, float] | None 
     않고 그대로 '최초 추천'으로 남아, 변경 전후 비교의 기준점 역할을 한다.
 
     confirmed_weights가 주어지면(AI 추가질문의 가중치 확인 질문에 사용자가 답하고
-    승인한 경우) compute_region_scores_from_weights()로 그 가중치를 그대로 써서
-    계산한다. None이면(가중치 확인 질문이 없었거나, 답변을 적용하지 못해 동일
-    가중치로 진행하기로 한 경우) 기존처럼 선택된 조건 기준 compute_region_scores()
-    (조건별 동일 가중치)를 쓴다.
+    승인한 경우) 그 가중치를 "승인된 가중치"로 agent.planner.run_agent_plan()에
+    넘긴다. None이면(가중치 확인 질문이 없었거나, 답변을 적용하지 못해 동일
+    가중치로 진행하기로 한 경우) run_agent_plan()이 내부적으로 기존 compute_region_
+    scores()와 동일한 조건별 동일 가중치를 유도해서 쓴다 - 최종 계산 결과는 이전과
+    같다. run_agent_plan()은 AI가 세운 분석 계획을 검증된 도구로 실행하거나(Ollama
+    실패/검증 실패 시) 기존과 동일한 기본 절차로 폴백하며, 실행 기록은
+    agent_execution_log에 저장해 완료 화면의 'AI 분석 실행 과정 보기'에서 보여준다.
     """
-    if confirmed_weights:
-        candidate_count = st.session_state.initial_input.get("원하는 후보 개수") or 3
-        st.session_state.initial_recommendation = scoring.compute_region_scores_from_weights(
-            confirmed_weights, candidate_count
+    with st.spinner("Agent가 분석 계획을 세우고 실제 데이터로 점수를 계산하는 중입니다..."):
+        run_result = run_agent_plan(
+            selected_conditions=st.session_state.initial_input.get("중요 생활조건") or [],
+            confirmed_weights=confirmed_weights,
+            desired_region=st.session_state.initial_input.get("희망지역", ""),
+            candidate_count=st.session_state.initial_input.get("원하는 후보 개수") or 3,
         )
-    else:
-        st.session_state.initial_recommendation = scoring.compute_region_scores(
-            st.session_state.initial_input.get("중요 생활조건") or [],
-            st.session_state.initial_input.get("원하는 후보 개수") or 3,
-        )
+    st.session_state.agent_execution_log = run_result
+    st.session_state.initial_recommendation = run_result["score_result"]
     st.session_state.feedback_initial_weights = scoring.initial_feedback_weights(
         st.session_state.initial_recommendation
     )
@@ -1064,6 +1170,10 @@ elif st.session_state.stage == "done":
 
     st.divider()
     render_recommendation_section()
+
+    with st.expander("🤖 AI 분석 실행 과정 보기"):
+        render_agent_execution_log()
+
     render_feedback_section()
 
     st.divider()
