@@ -15,20 +15,28 @@
 
 [사용 순서]
     # 1) 실제 응답 구조를 먼저 눈으로 확인한다 (CSV는 전혀 건드리지 않음)
+    #    아래 후보 엔드포인트 중 유효한 것이 자동으로 식별된다
     python scripts/ingest_hira_hospital_data.py inspect
 
-    # 2) inspect 결과에서 주소 필드명을 확인한 뒤 dry-run으로 집계만 확인
-    python scripts/ingest_hira_hospital_data.py ingest --addr-field addr
+    # 2) inspect에서 확인된 엔드포인트/주소 필드명을 넘겨 dry-run으로 집계만 확인
+    python scripts/ingest_hira_hospital_data.py ingest --endpoint <inspect가 알려준 URL> --addr-field addr
 
     # 3) 집계 결과(구별 병원 수)가 합리적이라고 확인되면 --commit 으로 CSV에 반영
-    python scripts/ingest_hira_hospital_data.py ingest --addr-field addr --commit
+    python scripts/ingest_hira_hospital_data.py ingest --endpoint <URL> --addr-field addr --commit
 
-[검증되지 않은 부분 - 주의]
-    - API_BASE(엔드포인트 URL)는 HIRA 병원정보서비스의 일반적인 명명 규칙을 따른
-      "best effort" 값이며, 실제 인증키로 inspect를 실행하기 전까지는 확정이 아니다.
-      404/오류가 나면 data.go.kr 상세페이지의 "OpenAPI활용가이드" 문서나 Swagger에서
-      정확한 경로를 확인해 HIRA_API_URL 환경변수로 덮어쓰면 된다.
-    - 응답의 주소 필드명(addr 등)도 inspect로 직접 확인 후 --addr-field 로 지정해야 한다.
+[엔드포인트 기능명을 추측으로 확정하지 않는 이유]
+    data.go.kr 상세페이지에는 Swagger/활용가이드 문서(.docx)로만 오퍼레이션명이
+    제공되어 이 환경에서는 열람할 수 없었다. 검색으로는 getHospBasisList(v1),
+    getHospBasisList(v2, 접미사 없음), getHospBasisList1(v2, "1" 접미사) 세 가지
+    후보가 섞여서 나왔고, 어느 쪽이 맞는지 신뢰 가능한 1차 자료로 확정하지 못했다.
+    그래서 inspect 모드는 이 세 후보를 실제 보유한 인증키로 "직접 호출"해 보고
+    각각의 실제 HTTP 상태 / 응답 내용을 그대로 보여준다. 응답이 정상 데이터면
+    그 엔드포인트가 맞는 것이고, 공공데이터포털 공통 오류 포맷이 오면 어떤 오류인지
+    (서비스 주소 오류 / 인증키 오류 / 활용승인 미완료 등)를 구분해서 알려준다.
+
+[데이터 포맷]
+    data.go.kr 상세페이지에 "데이터 포맷: XML"로 명시되어 있어, 이 스크립트는
+    기본적으로 _type 파라미터를 보내지 않고(=XML 기본값) XML 응답을 파싱한다.
 
 [왜 시군구코드(sgguCd) 대신 주소 문자열 매칭을 쓰는가]
     HIRA API는 sidoCd/sgguCd 지역코드로도 조회할 수 있지만, 공식 문서 확인 없이 검색
@@ -45,6 +53,7 @@ import argparse
 import csv
 import os
 import time
+import xml.etree.ElementTree as ET
 from datetime import date
 
 import requests
@@ -53,10 +62,14 @@ from dotenv import load_dotenv
 load_dotenv()
 
 SERVICE_KEY_ENV = "HIRA_SERVICE_KEY"
-API_BASE = os.environ.get(
-    "HIRA_API_URL",
+
+# 신뢰할 수 있는 1차 자료로 단일 엔드포인트를 확정하지 못해, inspect에서 실제로
+# 호출해 비교할 후보들. HIRA_API_URL 환경변수를 지정하면 그 값 하나만 시도한다.
+CANDIDATE_ENDPOINTS = [
+    "https://apis.data.go.kr/B551182/hospInfoServicev2/getHospBasisList",
     "https://apis.data.go.kr/B551182/hospInfoServicev2/getHospBasisList1",
-)
+    "https://apis.data.go.kr/B551182/hospInfoService/getHospBasisList",
+]
 
 _THIS_DIR = os.path.dirname(os.path.abspath(__file__))
 _ROOT_DIR = os.path.dirname(_THIS_DIR)
@@ -70,6 +83,28 @@ CHANGWON_DISTRICTS = {
     "CW-JINHAE": "진해구",
 }
 
+# 공공데이터포털(data.go.kr) 공통 OpenAPI 오류코드 (모든 포털 API가 공유하는 게이트웨이
+# 레벨 오류 체계). 서비스 자체 오류가 아니라 포털 차원의 인증/요청 오류일 때 내려온다.
+PORTAL_ERROR_CODES = {
+    "00": "정상",
+    "01": "APPLICATION_ERROR (어플리케이션 오류)",
+    "02": "DB_ERROR",
+    "03": "NODATA_ERROR (데이터 없음)",
+    "04": "HTTP_ERROR",
+    "05": "SERVICETIMEOUT_ERROR",
+    "10": "INVALID_REQUEST_PARAMETER_ERROR (요청 파라미터 오류)",
+    "11": "NO_MANDATORY_REQUEST_PARAMETERS_ERROR (필수 파라미터 누락)",
+    "12": "NO_OPENAPI_SERVICE_ERROR (해당 서비스/엔드포인트를 찾을 수 없음 -> 주소 오류 가능성)",
+    "20": "SERVICE_ACCESS_DENIED_ERROR (활용신청은 했으나 접근 거부 -> 승인 상태 확인 필요)",
+    "21": "TEMPORARILY_DISABLE_THE_SERVICEKEY_ERROR (인증키 일시 비활성화)",
+    "22": "LIMITED_NUMBER_OF_SERVICE_REQUESTS_EXCEEDS_ERROR (일일 트래픽 초과)",
+    "30": "SERVICE_KEY_IS_NOT_REGISTERED_ERROR (등록되지 않은 인증키 -> 활용신청/승인 필요)",
+    "31": "DEADLINE_HAS_EXPIRED_ERROR (활용기간 만료)",
+    "32": "UNREGISTERED_IP_ERROR (등록되지 않은 IP)",
+    "33": "UNSIGNED_CALL_ERROR (서명되지 않은 요청)",
+    "99": "UNKNOWN_ERROR",
+}
+
 
 def _get_service_key() -> str:
     key = os.environ.get(SERVICE_KEY_ENV)
@@ -81,50 +116,155 @@ def _get_service_key() -> str:
     return key
 
 
-def _fetch_page(service_key: str, page_no: int, num_of_rows: int) -> requests.Response:
+def _mask(text: str, secret: str) -> str:
+    if not secret:
+        return text
+    return text.replace(secret, "****(masked)****")
+
+
+def _fetch(endpoint: str, service_key: str, page_no: int, num_of_rows: int) -> requests.Response:
     params = {
         "serviceKey": service_key,
         "pageNo": page_no,
         "numOfRows": num_of_rows,
-        "_type": "json",
     }
-    resp = requests.get(API_BASE, params=params, timeout=15)
-    resp.raise_for_status()
-    return resp
+    return requests.get(endpoint, params=params, timeout=15)
+
+
+def _parse_envelope(xml_text: str) -> dict:
+    """
+    data.go.kr 응답은 크게 두 가지 XML 형태를 쓴다.
+      1) 정상/서비스레벨 오류: <response><header>...<body>...
+      2) 포털 게이트웨이 레벨 오류: <OpenAPI_ServiceResponse><cmmMsgHeader>...
+
+    둘 다 아니면 kind="unknown"으로 원문을 그대로 돌려준다(HTML 오류 페이지 등).
+    """
+    try:
+        root = ET.fromstring(xml_text)
+    except ET.ParseError:
+        return {"kind": "not_xml"}
+
+    tag = root.tag
+
+    if tag == "OpenAPI_ServiceResponse":
+        header = root.find("cmmMsgHeader")
+        reason_code = (header.findtext("returnReasonCode") if header is not None else None) or ""
+        err_msg = (header.findtext("errMsg") if header is not None else None) or ""
+        auth_msg = (header.findtext("returnAuthMsg") if header is not None else None) or ""
+        return {
+            "kind": "gateway_error",
+            "reasonCode": reason_code,
+            "reasonMeaning": PORTAL_ERROR_CODES.get(reason_code, "(알 수 없는 코드)"),
+            "errMsg": err_msg,
+            "authMsg": auth_msg,
+        }
+
+    if tag == "response":
+        header = root.find("header")
+        body = root.find("body")
+        result_code = (header.findtext("resultCode") if header is not None else None) or ""
+        result_msg = (header.findtext("resultMsg") if header is not None else None) or ""
+
+        items: list[dict] = []
+        total_count = None
+        if body is not None:
+            total_count_text = body.findtext("totalCount")
+            total_count = int(total_count_text) if total_count_text and total_count_text.isdigit() else None
+            for item_el in body.findall("./items/item"):
+                items.append({child.tag: (child.text or "") for child in item_el})
+
+        return {
+            "kind": "success" if result_code == "00" else "service_error",
+            "resultCode": result_code,
+            "resultMeaning": PORTAL_ERROR_CODES.get(result_code, result_msg or "(알 수 없음)"),
+            "resultMsg": result_msg,
+            "items": items,
+            "totalCount": total_count,
+        }
+
+    return {"kind": "unknown_xml", "rootTag": tag}
 
 
 def cmd_inspect(args: argparse.Namespace) -> None:
     service_key = _get_service_key()
-    resp = _fetch_page(service_key, page_no=1, num_of_rows=5)
-    print("요청 URL:", resp.url)
-    print("HTTP 상태코드:", resp.status_code)
-    print("Content-Type:", resp.headers.get("Content-Type"))
-    print("--- 응답 본문(앞부분) ---")
-    print(resp.text[:3000])
+    endpoints = [args.endpoint] if args.endpoint else CANDIDATE_ENDPOINTS
+
+    print(f"후보 엔드포인트 {len(endpoints)}개를 실제 인증키로 호출해 비교합니다.\n")
+
+    any_success = False
+    for endpoint in endpoints:
+        print(f"--- 후보: {endpoint} ---")
+        try:
+            resp = _fetch(endpoint, service_key, page_no=1, num_of_rows=3)
+        except requests.RequestException as exc:
+            print(f"요청 자체가 실패했습니다: {_mask(str(exc), service_key)}")
+            print()
+            continue
+
+        print(f"HTTP 상태코드: {resp.status_code}")
+        print(f"Content-Type: {resp.headers.get('Content-Type')}")
+
+        envelope = _parse_envelope(resp.text)
+        kind = envelope["kind"]
+
+        if kind == "success":
+            print("판정: 정상 응답 (이 엔드포인트가 유효합니다)")
+            print(f"  totalCount: {envelope['totalCount']}")
+            if envelope["items"]:
+                print(f"  표본 1건 필드: {list(envelope['items'][0].keys())}")
+                print(f"  표본 1건 내용: {envelope['items'][0]}")
+            else:
+                print("  item이 비어 있습니다(파라미터/페이지를 확인하세요).")
+            any_success = True
+        elif kind == "service_error":
+            print(f"판정: 서비스 레벨 오류 (resultCode={envelope['resultCode']})")
+            print(f"  의미: {envelope['resultMeaning']}")
+            print(f"  resultMsg: {envelope['resultMsg']}")
+        elif kind == "gateway_error":
+            print(f"판정: 공공데이터포털 게이트웨이 오류 (returnReasonCode={envelope['reasonCode']})")
+            print(f"  의미: {envelope['reasonMeaning']}")
+            print(f"  errMsg: {envelope['errMsg']} / returnAuthMsg: {envelope['authMsg']}")
+        elif kind == "unknown_xml":
+            print(f"판정: 알 수 없는 XML 구조 (root tag={envelope['rootTag']})")
+            print(_mask(resp.text[:1000], service_key))
+        else:  # not_xml
+            print("판정: XML이 아닌 응답(HTML 오류 페이지 등) -> 엔드포인트 경로 자체가 잘못되었을 가능성")
+            print(_mask(resp.text[:1000], service_key))
+        print()
+
+    if not any_success:
+        print(
+            "모든 후보가 실패했습니다. 아래를 순서대로 점검해 주세요:\n"
+            "  1) data.go.kr 마이페이지 > 데이터활용 > Open API > 활용신청 현황에서\n"
+            "     이 서비스의 '승인' 상태인지 확인 (대기중이면 아직 호출 불가)\n"
+            "  2) 같은 화면에서 인증키가 '일반 인증키(Decoding)'로 올바르게 복사되었는지 확인\n"
+            "     (URL 인코딩된 키를 그대로 .env에 넣으면 이중 인코딩되어 오류가 날 수 있음)\n"
+            "  3) 신청 직후라면 키 활성화까지 다소 시간이 걸릴 수 있어 잠시 후 재시도\n"
+            "  4) 위 세 후보 모두 아니라면 data.go.kr 상세페이지의 Swagger/활용가이드\n"
+            "     문서에서 정확한 엔드포인트를 확인해 --endpoint 옵션으로 직접 지정"
+        )
 
 
-def _iter_all_items(service_key: str, num_of_rows: int, max_pages: int):
+def _iter_all_items(endpoint: str, service_key: str, num_of_rows: int, max_pages: int):
     page_no = 1
     while page_no <= max_pages:
-        resp = _fetch_page(service_key, page_no, num_of_rows)
-        data = resp.json()
-        try:
-            body = data["response"]["body"]
-        except (KeyError, TypeError):
-            print("예상치 못한 응답 구조입니다. 'inspect' 명령으로 먼저 구조를 확인하세요.")
-            print(data)
-            return
+        resp = _fetch(endpoint, service_key, page_no, num_of_rows)
+        envelope = _parse_envelope(resp.text)
 
-        item_list = (body.get("items") or {}).get("item") or []
-        if isinstance(item_list, dict):
-            item_list = [item_list]
-        if not item_list:
+        if envelope["kind"] != "success":
+            raise SystemExit(
+                f"페이지 {page_no}에서 정상 응답을 받지 못했습니다 (kind={envelope['kind']}). "
+                "'inspect' 명령으로 먼저 엔드포인트와 상태를 확인하세요."
+            )
+
+        items = envelope["items"]
+        if not items:
             break
 
-        for item in item_list:
+        for item in items:
             yield item
 
-        total_count = int(body.get("totalCount", 0) or 0)
+        total_count = envelope["totalCount"] or 0
         if page_no * num_of_rows >= total_count:
             break
         page_no += 1
@@ -132,6 +272,12 @@ def _iter_all_items(service_key: str, num_of_rows: int, max_pages: int):
 
 
 def cmd_ingest(args: argparse.Namespace) -> None:
+    if not args.endpoint:
+        raise SystemExit(
+            "--endpoint 가 필요합니다. 먼저 'inspect' 명령으로 유효한 엔드포인트를 확인한 뒤 "
+            "그 URL을 --endpoint 로 지정해서 실행하세요."
+        )
+
     service_key = _get_service_key()
     addr_field = args.addr_field
 
@@ -139,7 +285,7 @@ def cmd_ingest(args: argparse.Namespace) -> None:
     sample_shown = False
     total_seen = 0
 
-    for item in _iter_all_items(service_key, args.num_of_rows, args.max_pages):
+    for item in _iter_all_items(args.endpoint, service_key, args.num_of_rows, args.max_pages):
         total_seen += 1
         if not sample_shown:
             print("[표본 응답 1건]", item)
@@ -202,11 +348,18 @@ def main() -> None:
     sub = parser.add_subparsers(dest="command", required=True)
 
     p_inspect = sub.add_parser(
-        "inspect", help="API 원본 응답을 그대로 출력(필드명 확인용, CSV 미변경)"
+        "inspect",
+        help="후보 엔드포인트들을 실제로 호출해 상태/오류를 비교 출력(CSV 미변경)",
+    )
+    p_inspect.add_argument(
+        "--endpoint", default=None, help="이 URL 하나만 시도(생략 시 후보 3개 모두 시도)"
     )
     p_inspect.set_defaults(func=cmd_inspect)
 
     p_ingest = sub.add_parser("ingest", help="창원시 5개 구 병원 수 집계 후 CSV 반영")
+    p_ingest.add_argument(
+        "--endpoint", required=True, help="inspect로 확인된 유효한 엔드포인트 URL"
+    )
     p_ingest.add_argument(
         "--addr-field", default="addr", help="응답에서 주소가 담긴 필드명 (inspect로 먼저 확인)"
     )
