@@ -235,9 +235,12 @@ def render_recommendation_section() -> None:
 
     wc = st.session_state.weight_confirmation
     if wc and wc["asked"]:
+        origin_label = (
+            "최초 입력의 '추가 요청사항'" if wc.get("answer_source") == "initial_extra_request" else "AI 추가질문 답변"
+        )
         if wc["source"] == "ai_approved":
             st.success(
-                f"✅ AI 추가질문 답변(\"{wc['answer_text']}\")을 승인해 이 가중치를 "
+                f"✅ {origin_label}(\"{wc['answer_text']}\")을 승인해 이 가중치를 "
                 "최초 추천 계산에 사용했습니다."
             )
         elif wc["source"] == "ai_rejected_by_user":
@@ -246,7 +249,7 @@ def render_recommendation_section() -> None:
                 for c, v in (wc["ai_confirmed_weights"] or {}).items()
             )
             st.info(
-                f"ℹ️ AI는 답변(\"{wc['answer_text']}\")에서 {ai_weights_text}을(를) 읽었지만, "
+                f"ℹ️ AI는 {origin_label}(\"{wc['answer_text']}\")에서 {ai_weights_text}을(를) 읽었지만, "
                 "적용하지 않기로 선택해 선택하신 조건에 동일 가중치를 사용했습니다."
             )
         else:  # equal_fallback, skipped_blank 등
@@ -305,6 +308,20 @@ def render_recommendation_section() -> None:
         not_used_inputs.append(
             f"자가용 보유 여부('{initial_input['자가용 보유 여부']}') - 대응하는 지표가 없어 반영하지 않음"
         )
+    extra_request_text = initial_input.get("추가 요청사항")
+    extra_request_was_approved = (
+        wc and wc.get("answer_source") == "initial_extra_request" and wc["source"] == "ai_approved"
+    )
+    if extra_request_text and not extra_request_was_approved:
+        if wc and wc.get("answer_source") == "initial_extra_request":
+            not_used_inputs.append(
+                f"추가 요청사항('{extra_request_text}') - 비율 해석 결과는 위에 안내된 대로 "
+                "처리되었고, 그 외 서술 내용은 대응하는 지표가 없어 반영하지 않음"
+            )
+        else:
+            not_used_inputs.append(
+                f"추가 요청사항('{extra_request_text}') - 대응하는 지표가 없어 반영하지 않음"
+            )
     weight_question = st.session_state.weight_question_plan
     weight_question_text = weight_question["text"] if weight_question else None
     non_weight_answers = {
@@ -635,8 +652,20 @@ if "weight_question_plan" not in st.session_state:
     st.session_state.weight_question_plan = None
 if "weight_interpretation" not in st.session_state:
     st.session_state.weight_interpretation = None
+if "weight_interpretation_source" not in st.session_state:
+    # "initial_extra_request"(최초 입력의 '추가 요청사항'에서 비율을 읽음) 또는
+    # "followup_answer"(AI 추가질문의 가중치 확인 질문에 답함) 또는 None. 두 출처가
+    # 동시에 weight_interpretation을 채우는 경로가 구조적으로 없으므로(아래
+    # plan_followup_questions 호출부 참고) 가중치 충돌 걱정 없이 "지금 보고 있는
+    # 해석 결과가 어디서 왔는지"만 추적하면 된다.
+    st.session_state.weight_interpretation_source = None
 if "weight_confirmation" not in st.session_state:
     st.session_state.weight_confirmation = None
+if "followup_ai_error" not in st.session_state:
+    # AI 추가질문(가중치 확인 질문 제외) 생성이 Ollama 실패로 불가능했을 때의 사유.
+    # 가중치 확인 질문(결정적)이나 추가 요청사항 해석과는 별개 경로라 이 실패가
+    # 나머지 흐름을 막지 않는다(화면에는 안내만 한다).
+    st.session_state.followup_ai_error = None
 
 
 def reset_all():
@@ -651,7 +680,9 @@ def reset_all():
     st.session_state.nl_feedback_proposal_text = None
     st.session_state.weight_question_plan = None
     st.session_state.weight_interpretation = None
+    st.session_state.weight_interpretation_source = None
     st.session_state.weight_confirmation = None
+    st.session_state.followup_ai_error = None
     for key in FEEDBACK_SLIDER_KEYS.values():
         st.session_state.pop(key, None)
     st.session_state.pop("nl_feedback_input", None)
@@ -705,12 +736,17 @@ def _apply_weight_confirmation(
     동일 가중치 계산으로 안전하게 폴백한다 - 근거 없는 가중치를 만들어내지 않는다.
     """
     weight_question = st.session_state.weight_question_plan
-    answer_text = ""
-    if weight_question:
+    interp_source = st.session_state.weight_interpretation_source
+    if interp_source == "initial_extra_request":
+        answer_text = st.session_state.initial_input.get("추가 요청사항", "")
+    elif weight_question:
         answer_text = st.session_state.followup_answers.get(weight_question["text"], "")
+    else:
+        answer_text = ""
     st.session_state.weight_confirmation = {
         "asked": True,
         "answer_text": answer_text,
+        "answer_source": interp_source,
         "ai_confirmed_weights": ai_confirmed_weights,
         "applied_weights": confirmed_weights,
         "source": source,
@@ -722,19 +758,44 @@ def _apply_weight_confirmation(
 
 # 1단계: 최초 입력 ------------------------------------------------------
 if st.session_state.stage == "input":
+    # weight_confirm 단계에서 "다시 답변 입력하기"로 돌아온 경우 이전 입력을 그대로
+    # 복원한다(처음 진입 시에는 initial_input이 비어 있어 전부 기본값으로 보인다).
+    prev = st.session_state.initial_input
+    prev_car_options = ["보유", "미보유"]
+    prev_conditions_options = ["교통", "의료", "교육", "생활편의(마트/편의점)", "안전", "자연환경", "문화시설"]
+
     with st.form("initial_input_form"):
-        region = st.text_input("희망 지역 (예: 창원시, 창원시 의창구 등 - 현재는 창원시만 지원합니다)")
-        workplace = st.text_input("직장 또는 학교 위치")
-        has_car = st.radio("자가용 보유 여부", ["보유", "미보유"], horizontal=True)
-        budget = st.text_input("주거비 예산 (예: 월세 50만원 이하)")
+        region = st.text_input(
+            "희망 지역 (예: 창원시, 창원시 의창구 등 - 현재는 창원시만 지원합니다)",
+            value=prev.get("희망지역", ""),
+        )
+        workplace = st.text_input("직장 또는 학교 위치", value=prev.get("직장/학교 위치", ""))
+        has_car = st.radio(
+            "자가용 보유 여부",
+            prev_car_options,
+            horizontal=True,
+            index=prev_car_options.index(prev["자가용 보유 여부"])
+            if prev.get("자가용 보유 여부") in prev_car_options
+            else 0,
+        )
+        budget = st.text_input("주거비 예산 (예: 월세 50만원 이하)", value=prev.get("주거비 예산", ""))
         important_conditions = st.multiselect(
             "중요하게 생각하는 생활 조건",
-            ["교통", "의료", "교육", "생활편의(마트/편의점)", "안전", "자연환경", "문화시설"],
+            prev_conditions_options,
+            default=[c for c in (prev.get("중요 생활조건") or []) if c in prev_conditions_options],
         )
         candidate_count = st.number_input(
-            "원하는 후보 지역 개수", min_value=1, max_value=MAX_CANDIDATE_COUNT, value=3, step=1
+            "원하는 후보 지역 개수",
+            min_value=1,
+            max_value=MAX_CANDIDATE_COUNT,
+            value=int(prev.get("원하는 후보 개수") or 3),
+            step=1,
         )
-        extra_request = st.text_area("추가 요청사항 (선택)")
+        extra_request = st.text_area(
+            "추가 요청사항 (선택, 예: '교통 70%, 의료 30%'처럼 비율을 적으면 AI가 해석해 "
+            "최초 추천에 반영할 수 있습니다)",
+            value=prev.get("추가 요청사항", ""),
+        )
 
         submitted = st.form_submit_button("다음 단계로")
 
@@ -759,21 +820,26 @@ if st.session_state.stage == "input":
                 "추가 요청사항": extra_request,
             }
 
+            # plan_followup_questions()는 Ollama 호출(추가질문 생성)이 실패해도 예외를
+            # 던지지 않는다 - 가중치 확인 질문(결정적)과 추가 요청사항 비율 해석은
+            # 별도 경로라 AI 추가질문 생성 실패가 전체 흐름을 막지 않는다.
             with st.spinner("AI가 입력 정보를 분석하고 있습니다..."):
-                try:
-                    plan = plan_followup_questions(st.session_state.initial_input)
-                except RuntimeError as exc:
-                    st.error(str(exc))
-                    st.stop()
+                plan = plan_followup_questions(st.session_state.initial_input)
 
             st.session_state.followup_questions = plan["questions"]
             st.session_state.weight_question_plan = plan["weight_question"]
-            if plan["questions"]:
+            st.session_state.followup_ai_error = plan["ai_questions_error"]
+
+            if plan["initial_weight_interpretation"] is not None:
+                st.session_state.weight_interpretation = plan["initial_weight_interpretation"]
+                st.session_state.weight_interpretation_source = "initial_extra_request"
+                st.session_state.stage = "followup" if plan["questions"] else "weight_confirm"
+            elif plan["questions"]:
                 st.session_state.stage = "followup"
             else:
                 st.session_state.weight_confirmation = {
-                    "asked": False, "answer_text": None, "ai_confirmed_weights": None,
-                    "applied_weights": None, "source": "not_asked",
+                    "asked": False, "answer_text": None, "answer_source": None,
+                    "ai_confirmed_weights": None, "applied_weights": None, "source": "not_asked",
                     "reason": "확인할 생활조건 우선순위 질문이 없었습니다.",
                 }
                 st.session_state.stage = "done"
@@ -784,6 +850,15 @@ if st.session_state.stage == "input":
 elif st.session_state.stage == "followup":
     st.subheader("📝 AI의 추가 질문")
     weight_question = st.session_state.weight_question_plan
+    initial_ratio_pending = (
+        weight_question is None and st.session_state.weight_interpretation_source == "initial_extra_request"
+    )
+    if st.session_state.followup_ai_error:
+        st.info(
+            f"ℹ️ AI 추가질문 생성 중 문제가 발생해 일부 질문은 만들지 못했습니다"
+            f"({st.session_state.followup_ai_error}). 아래 남은 항목만으로 계속 "
+            "진행할 수 있습니다."
+        )
     if weight_question:
         st.write(
             "선택하신 생활조건 중 비율이 아직 명확하지 않은 항목이 있어 확인 질문을 "
@@ -791,6 +866,12 @@ elif st.session_state.stage == "followup":
             "**실제 최초 추천 계산의 가중치**로 사용됩니다. 그 외 질문의 답변은 "
             "참고용으로만 저장되며, 현재 구현상 시설 수 기반 비교 점수 계산에는 "
             "반영되지 않습니다."
+        )
+    elif initial_ratio_pending:
+        st.write(
+            "입력하신 '추가 요청사항'의 비율은 다음 화면에서 AI 해석 결과를 보여드리고 "
+            "승인을 받습니다. 아래 질문들의 답변은 참고용으로만 저장되며, 현재 구현상 "
+            "시설 수 기반 비교 점수 계산에는 반영되지 않습니다."
         )
     else:
         st.write(
@@ -814,11 +895,16 @@ elif st.session_state.stage == "followup":
             weight_answer = answers.get(weight_question["text"], "")
             with st.spinner("Ollama가 답변을 해석하고 있습니다..."):
                 st.session_state.weight_interpretation = interpret_weight_feedback(weight_answer)
+            st.session_state.weight_interpretation_source = "followup_answer"
+            st.session_state.stage = "weight_confirm"
+        elif initial_ratio_pending:
+            # 최초 입력의 '추가 요청사항'에서 이미 해석해 둔 가중치가 있다 - 그대로
+            # weight_confirm 단계로 넘어가 승인받는다(여기서 다시 해석하지 않는다).
             st.session_state.stage = "weight_confirm"
         else:
             st.session_state.weight_confirmation = {
-                "asked": False, "answer_text": None, "ai_confirmed_weights": None,
-                "applied_weights": None, "source": "not_asked",
+                "asked": False, "answer_text": None, "answer_source": None,
+                "ai_confirmed_weights": None, "applied_weights": None, "source": "not_asked",
                 "reason": "확인할 생활조건 우선순위 질문이 없었습니다.",
             }
             st.session_state.stage = "done"
@@ -829,16 +915,30 @@ elif st.session_state.stage == "followup":
         reset_all()
         st.rerun()
 
-# 2.5단계: AI 추가질문의 가중치 확인 질문 답변 승인 --------------------------
+# 2.5단계: 가중치(최초 입력의 추가 요청사항 또는 AI 추가질문 답변) 승인 -------
 elif st.session_state.stage == "weight_confirm":
     st.subheader("⚖️ 가중치 확인")
     weight_question = st.session_state.weight_question_plan
     interpretation = st.session_state.weight_interpretation
-    answer_text = st.session_state.followup_answers.get(weight_question["text"], "")
+    source = st.session_state.weight_interpretation_source
+
+    if source == "initial_extra_request":
+        answer_text = st.session_state.initial_input.get("추가 요청사항", "")
+        origin_label = "최초 입력의 '추가 요청사항'"
+        retry_stage = "input"
+    else:
+        answer_text = st.session_state.followup_answers.get(weight_question["text"], "") if weight_question else ""
+        origin_label = "AI 추가질문 답변"
+        retry_stage = "followup"
+
+    def _retry() -> None:
+        st.session_state.weight_interpretation = None
+        st.session_state.weight_interpretation_source = None
+        st.session_state.stage = retry_stage
 
     st.write(
-        f"방금 '{weight_question['text']}'에 \"{answer_text}\"라고 답하셨습니다. "
-        "AI가 해석한 결과를 승인하시면 **이 가중치로 최초 추천을 계산**합니다. "
+        f"{origin_label}(\"{answer_text}\")을 AI가 해석한 결과입니다. "
+        "승인하시면 **이 가중치로 최초 추천을 계산**합니다. "
         "승인하지 않으면 선택하신 조건에 동일 가중치를 적용합니다."
     )
 
@@ -855,8 +955,7 @@ elif st.session_state.stage == "weight_confirm":
         col_a, col_b = st.columns(2)
         with col_a:
             if st.button("다시 답변 입력하기"):
-                st.session_state.weight_interpretation = None
-                st.session_state.stage = "followup"
+                _retry()
                 st.rerun()
         with col_b:
             if st.button("동일 가중치로 진행하기", type="primary"):
@@ -870,8 +969,7 @@ elif st.session_state.stage == "weight_confirm":
         col_a, col_b = st.columns(2)
         with col_a:
             if st.button("다시 답변 입력하기"):
-                st.session_state.weight_interpretation = None
-                st.session_state.stage = "followup"
+                _retry()
                 st.rerun()
         with col_b:
             if st.button("동일 가중치로 진행하기", type="primary"):
@@ -883,8 +981,7 @@ elif st.session_state.stage == "weight_confirm":
         col_a, col_b = st.columns(2)
         with col_a:
             if st.button("다시 답변 입력하기"):
-                st.session_state.weight_interpretation = None
-                st.session_state.stage = "followup"
+                _retry()
                 st.rerun()
         with col_b:
             if st.button("동일 가중치로 진행하기", type="primary"):
@@ -931,15 +1028,28 @@ elif st.session_state.stage == "done":
     st.subheader("✅ 입력이 완료되었습니다")
     st.caption("아래에서 창원시 5개 구 비교 및 추천 결과를 확인하세요.")
 
+    if st.session_state.followup_ai_error:
+        st.info(
+            f"ℹ️ AI 추가질문 생성 중 문제가 발생해 일부 질문은 만들지 못했습니다"
+            f"({st.session_state.followup_ai_error}). 기존에 확보된 데이터로 추천은 "
+            "정상적으로 진행되었습니다."
+        )
+
     with st.expander("📝 내가 입력한 정보 보기 (최초 입력 + AI 추가질문 답변)"):
         st.markdown("**최초 입력 정보**")
         st.json(st.session_state.initial_input)
 
+        wc = st.session_state.weight_confirmation
+        if wc and wc.get("answer_source") == "initial_extra_request" and wc["source"] == "ai_approved":
+            st.caption(
+                "ℹ️ 위 '추가 요청사항'에 적으신 비율이 승인되어 실제 시설 수 기반 비교 "
+                "점수 계산(가중치)에 반영되었습니다."
+            )
+
         if st.session_state.followup_answers:
             st.markdown("**AI 추가질문에 대한 답변**")
             st.json(st.session_state.followup_answers)
-            wc = st.session_state.weight_confirmation
-            if wc and wc["asked"] and wc["source"] == "ai_approved":
+            if wc and wc["asked"] and wc["source"] == "ai_approved" and wc.get("answer_source") == "followup_answer":
                 st.caption(
                     "ℹ️ 이 중 ⚖️ 가중치 확인 질문의 답변은 승인되어 실제 시설 수 기반 비교 "
                     "점수 계산(가중치)에 반영되었습니다. 나머지 답변은 참고용으로 저장만 됩니다."

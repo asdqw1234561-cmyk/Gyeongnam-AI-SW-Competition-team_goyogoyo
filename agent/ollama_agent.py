@@ -52,10 +52,13 @@ _CONDITION_DISPLAY_LABEL = {
 _EXPLICIT_PERCENT_PATTERN = re.compile(r"\d{1,3}\s*%")
 
 
-def _already_has_explicit_weights(text: str) -> bool:
-    """추가 요청사항 등에 이미 명확한 숫자 비율(예: '교통 70%, 의료 30%')이 적혀
-    있는지 가볍게 확인한다. 정밀한 해석은 interpret_weight_feedback()의 몫이고,
-    여기서는 "가중치 질문을 또 할 필요가 있는가"만 판단한다."""
+def _looks_like_explicit_weight_request(text: str) -> bool:
+    """추가 요청사항 등에 비율처럼 보이는 표현(숫자% 2개 이상)이 있는지 가볍게
+    확인한다. 이 결과만으로 "정상적인 비율"이라고 확정하지 않는다 - 퍼센트
+    기호가 있다는 사실은 "interpret_weight_feedback()으로 실제 검증을 시도할
+    가치가 있는가"를 판단하는 사전 필터일 뿐이다. 최종 판단(지원 지표인지,
+    숫자가 유효한지, 합계가 100%인지)은 항상 interpret_weight_feedback()이
+    내린다(plan_followup_questions() 참고)."""
     if not text:
         return False
     return len(_EXPLICIT_PERCENT_PATTERN.findall(text)) >= 2
@@ -64,13 +67,15 @@ def _already_has_explicit_weights(text: str) -> bool:
 def plan_weight_question(user_input: dict) -> dict | None:
     """
     사용자가 선택한 "중요 생활조건" 중 실제 계산 가능한 지표(교통/의료/생활편의)가
-    2개 이상이고 비율이 아직 명확하지 않다면, "어느 쪽을 더 중요하게 생각하는지"
-    묻는 질문을 결정적으로(고정된 워딩으로) 만든다. Ollama를 호출하지 않는다 -
-    이 질문은 나중에 사용자가 답하면 interpret_weight_feedback()으로 정확히
-    파싱할 수 있어야 하므로, 표현을 AI에게 맡기지 않는다.
+    2개 이상이면, "어느 쪽을 더 중요하게 생각하는지" 묻는 질문을 결정적으로(고정된
+    워딩으로) 만든다. Ollama를 호출하지 않는다 - 이 질문은 나중에 사용자가 답하면
+    interpret_weight_feedback()으로 정확히 파싱할 수 있어야 하므로, 표현을 AI에게
+    맡기지 않는다.
 
-    - 계산 가능한 조건이 1개 이하면 가중치를 나눌 필요가 없으므로 None(질문 불필요).
-    - 추가 요청사항에 이미 명확한 비율이 적혀 있으면 같은 내용을 다시 묻지 않고 None.
+    "추가 요청사항에 이미 비율이 있는지"는 이 함수가 아니라 plan_followup_questions()
+    가 interpret_weight_feedback()으로 실제 검증한 뒤 판단한다(이 함수를 단독으로
+    호출할 때는 계산 가능한 조건 개수만 본다) - 계산 가능한 조건이 1개 이하면
+    가중치를 나눌 필요가 없으므로 None(질문 불필요).
 
     Returns: {"text": str, "conditions": [...], "indicator_codes": [...]} | None
     """
@@ -78,9 +83,6 @@ def plan_weight_question(user_input: dict) -> dict | None:
     computable_conditions = [c for c in conditions if c in CONDITION_TO_INDICATOR_CODE]
 
     if len(computable_conditions) < 2:
-        return None
-
-    if _already_has_explicit_weights(user_input.get("추가 요청사항") or ""):
         return None
 
     indicator_codes = [CONDITION_TO_INDICATOR_CODE[c] for c in computable_conditions]
@@ -102,31 +104,74 @@ def plan_weight_question(user_input: dict) -> dict | None:
 
 def plan_followup_questions(user_input: dict) -> dict:
     """
-    generate_followup_questions()(Ollama 호출)와 plan_weight_question()(결정적,
-    Ollama 미호출)을 합쳐서 app.py가 쓸 최종 질문 목록을 만든다.
+    최초 입력 제출 시점에 한 번만 호출된다. generate_followup_questions()(Ollama
+    호출), plan_weight_question()(결정적, Ollama 미호출), interpret_weight_feedback()
+    (Ollama 호출, 기존 자연어 가중치 해석 로직 재사용)을 합쳐서 app.py가 쓸 최종
+    계획을 만든다. 이 함수 자체는 Ollama 호출이 실패해도 예외를 던지지 않는다
+    (요구사항: AI 추가질문 생성 실패 시에도 동일 가중치 추천으로 안전하게 진행
+    가능해야 함).
 
-    - 가중치 질문이 필요하면 항상 첫 번째 질문으로 포함시킨다(랜덤하게 AI가
-      비슷한 걸 물어주길 기대하지 않는다).
-    - 남은 자리(최대 2개 한도 안에서)만 Ollama의 generate_followup_questions()로
-      채우되, _is_groundless_question()에 걸리는 질문(가족/통근시간 등)은
-      생략한다(억지로 다른 문장으로 바꿔치기하지 않는다).
+    [최초 입력 "추가 요청사항"과 AI 추가질문의 가중치 확인 질문 - 우선순위]
+    계산 가능한 조건(교통/의료/생활편의)이 2개 이상이고, 추가 요청사항에 비율처럼
+    보이는 표현(숫자% 2개 이상)이 있으면, 그 자리에서 interpret_weight_feedback()
+    으로 실제 검증한다(퍼센트 기호 개수만으로 정상 비율이라고 간주하지 않는다 -
+    지원 지표인지/숫자가 유효한지/합계가 100%인지까지 전부 확인). 결과가 유효하든
+    (합계 100%의 구체적 비율) 무효하든(지원하지 않는 지표 혼합, 합계 불일치 등)
+    사용자가 이미 비율을 밝히려 시도한 것이므로, 같은 내용을 다시 묻는 가중치
+    확인 질문(weight_question)은 만들지 않는다 - 구조적으로 initial_weight_interpretation
+    과 weight_question이 동시에 존재할 수 없으므로 두 출처의 가중치가 충돌할
+    여지가 없다. 이 경우를 포함해 모든 검증 결과는 app.py의 'weight_confirm'
+    단계에서 미리보기 + 승인/재확인/동일 가중치 진행 선택지로 이어진다(여기서는
+    해석만 하고 적용하지 않는다).
+
+    그 외의 경우(조건이 1개 이하이거나, 비율처럼 보이는 표현이 없음)에는 기존처럼
+    plan_weight_question()으로 가중치 확인 질문을 만들지 결정한다.
+
+    [AI 추가질문(가중치 외) 생성 실패 시 안전한 대체]
+    generate_followup_questions()가 Ollama 연결 실패 등으로 RuntimeError를
+    던지면 여기서 잡아서 questions를 빈 목록으로 두고 ai_questions_error에 사유를
+    담아 반환한다 - weight_question이나 initial_weight_interpretation은 이미
+    결정돼 있으므로(Ollama 추가질문 생성과 무관하게) 그대로 유지되고, 사용자는
+    이어서 가중치 확인(또는 동일 가중치)으로 최초 추천을 계속 진행할 수 있다.
 
     Returns:
         {
-            "questions": [str, ...],                 # 화면에 보여줄 질문(최대 2개)
+            "questions": [str, ...],                       # 화면에 보여줄 질문(가중치 질문 제외 가능, 최대 2개)
             "weight_question": {"text","conditions","indicator_codes"} | None,
+            "initial_weight_interpretation": interpret_weight_feedback() 반환값 | None,
+            "ai_questions_error": str | None,                # AI 추가질문 생성 실패 메시지(있으면)
         }
     """
-    weight_question = plan_weight_question(user_input)
-    remaining_slots = 2 - (1 if weight_question else 0)
+    computable_conditions = [
+        c for c in (user_input.get("중요 생활조건") or []) if c in CONDITION_TO_INDICATOR_CODE
+    ]
+    extra_request = user_input.get("추가 요청사항") or ""
 
+    weight_question: dict | None = None
+    initial_weight_interpretation: dict | None = None
+    if len(computable_conditions) >= 2 and _looks_like_explicit_weight_request(extra_request):
+        initial_weight_interpretation = interpret_weight_feedback(extra_request)
+    else:
+        weight_question = plan_weight_question(user_input)
+
+    remaining_slots = 2 - (1 if weight_question else 0)
     ai_questions: list[str] = []
+    ai_questions_error: str | None = None
     if remaining_slots > 0:
-        candidates = generate_followup_questions(user_input)
-        ai_questions = [q for q in candidates if not _is_groundless_question(q)][:remaining_slots]
+        try:
+            candidates = generate_followup_questions(user_input)
+        except RuntimeError as exc:
+            ai_questions_error = str(exc)
+        else:
+            ai_questions = [q for q in candidates if not _is_groundless_question(q)][:remaining_slots]
 
     questions = ([weight_question["text"]] if weight_question else []) + ai_questions
-    return {"questions": questions, "weight_question": weight_question}
+    return {
+        "questions": questions,
+        "weight_question": weight_question,
+        "initial_weight_interpretation": initial_weight_interpretation,
+        "ai_questions_error": ai_questions_error,
+    }
 
 
 def _build_user_prompt(user_input: dict) -> str:

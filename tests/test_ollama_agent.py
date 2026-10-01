@@ -260,23 +260,44 @@ class PlanWeightQuestionTest(unittest.TestCase):
         plan = ollama_agent.plan_weight_question({"중요 생활조건": []})
         self.assertIsNone(plan)
 
-    def test_explicit_ratio_already_in_extra_request_skips_question(self):
+    def test_explicit_ratio_in_extra_request_no_longer_gates_this_function(self):
+        """요구사항 변경: "이미 비율이 있는지" 판단은 이제 plan_weight_question()이
+        아니라 plan_followup_questions()가 interpret_weight_feedback()으로 실제
+        검증한 뒤 내린다. 이 함수를 단독으로 호출하면 추가 요청사항 내용과 무관하게
+        계산 가능한 조건 개수만 본다."""
         plan = ollama_agent.plan_weight_question(
             {"중요 생활조건": ["교통", "의료"], "추가 요청사항": "교통 70%, 의료 30%로 해주세요"}
         )
-        self.assertIsNone(plan)
+        self.assertIsNotNone(plan)
 
     def test_single_percent_mention_still_asks(self):
-        """퍼센트 표현이 하나뿐이면(두 조건 사이 비율로 보기 부족) 그대로 질문한다."""
         plan = ollama_agent.plan_weight_question(
             {"중요 생활조건": ["교통", "의료"], "추가 요청사항": "교통 70% 정도면 좋겠어요"}
         )
         self.assertIsNotNone(plan)
 
 
+class LooksLikeExplicitWeightRequestTest(unittest.TestCase):
+    """_looks_like_explicit_weight_request()는 "검증을 시도할 가치가 있는가"만
+    보는 사전 필터다 - 최종 유효성 판단이 아니다(요구사항: 퍼센트 기호 개수만으로
+    정상 비율이라고 판단하지 않음)."""
+
+    def test_two_percent_mentions_triggers_prefilter(self):
+        self.assertTrue(
+            ollama_agent._looks_like_explicit_weight_request("교통 70%, 의료 30%로 해주세요")
+        )
+
+    def test_single_percent_mention_does_not_trigger(self):
+        self.assertFalse(ollama_agent._looks_like_explicit_weight_request("교통 70% 정도면 좋겠어요"))
+
+    def test_empty_text_does_not_trigger(self):
+        self.assertFalse(ollama_agent._looks_like_explicit_weight_request(""))
+
+
 class PlanFollowupQuestionsTest(unittest.TestCase):
-    """plan_followup_questions()는 plan_weight_question()(Ollama 미호출) +
-    generate_followup_questions()(Ollama 호출, 모킹)를 합친다."""
+    """plan_followup_questions()는 plan_weight_question()(Ollama 미호출),
+    generate_followup_questions()(Ollama 호출, 모킹), interpret_weight_feedback()
+    (Ollama 호출, 모킹)를 합쳐서 최초 입력 제출 시점의 계획을 만든다."""
 
     @mock.patch("agent.ollama_agent.ollama.chat")
     def test_weight_question_takes_first_slot_and_leaves_one_for_ai(self, mock_chat):
@@ -285,6 +306,7 @@ class PlanFollowupQuestionsTest(unittest.TestCase):
         )
         plan = ollama_agent.plan_followup_questions({"중요 생활조건": ["교통", "의료"]})
         self.assertIsNotNone(plan["weight_question"])
+        self.assertIsNone(plan["initial_weight_interpretation"])
         self.assertEqual(plan["questions"][0], plan["weight_question"]["text"])
         self.assertEqual(len(plan["questions"]), 2)
         mock_chat.assert_called_once()
@@ -308,10 +330,79 @@ class PlanFollowupQuestionsTest(unittest.TestCase):
         self.assertEqual(plan["questions"], ["창원시 내 어느 구를 가장 선호하시나요?"])
 
     @mock.patch("agent.ollama_agent.ollama.chat")
-    def test_ollama_failure_propagates_as_runtime_error(self, mock_chat):
+    def test_ai_question_generation_failure_degrades_gracefully(self, mock_chat):
+        """요구사항 8: AI 추가질문 생성이 실패해도 전체 흐름을 막지 않는다 - 더 이상
+        예외를 던지지 않고 questions를 비운 채 ai_questions_error를 채워 돌려준다."""
         mock_chat.side_effect = ConnectionError("서버 없음")
-        with self.assertRaises(RuntimeError):
-            ollama_agent.plan_followup_questions({"중요 생활조건": ["교통"]})
+        plan = ollama_agent.plan_followup_questions({"중요 생활조건": ["교통"]})
+        self.assertEqual(plan["questions"], [])
+        self.assertIsNotNone(plan["ai_questions_error"])
+        self.assertIn("서버 없음", plan["ai_questions_error"])
+
+    def test_valid_explicit_ratio_in_extra_request_is_interpreted_and_skips_weight_question(self):
+        """요구사항 1,2,6: 추가 요청사항에 명확한 비율이 있으면 interpret_weight_feedback()
+        으로 실제 해석하고, 가중치 확인 질문은 다시 만들지 않는다(단, 가중치 외
+        AI 추가질문 생성은 별개 Ollama 호출로 그대로 남은 슬롯만큼 시도된다)."""
+        with mock.patch("agent.ollama_agent.ollama.chat") as mock_chat:
+            mock_chat.side_effect = [
+                _fake_response(
+                    '{"type": "set_weights", "weights": {"bus_stop_count": 70, "hospital_count": 30}, '
+                    '"message": null}'
+                ),
+                _fake_response('{"questions": []}'),
+            ]
+            plan = ollama_agent.plan_followup_questions(
+                {"중요 생활조건": ["교통", "의료"], "추가 요청사항": "교통 70%, 의료 30%로 해주세요"}
+            )
+        self.assertIsNone(plan["weight_question"])
+        self.assertIsNotNone(plan["initial_weight_interpretation"])
+        self.assertEqual(plan["initial_weight_interpretation"]["status"], "ok")
+        self.assertEqual(plan["initial_weight_interpretation"]["type"], "set_weights")
+        self.assertEqual(
+            plan["initial_weight_interpretation"]["weights"],
+            {"bus_stop_count": 70.0, "hospital_count": 30.0},
+        )
+        self.assertEqual(mock_chat.call_count, 2)
+
+    @mock.patch("agent.ollama_agent.ollama.chat")
+    def test_invalid_ratio_in_extra_request_is_not_silently_ignored(self, mock_chat):
+        """요구사항 4,5: 퍼센트 기호가 있다고 바로 정상 비율로 취급하지 않는다 -
+        합계가 100%가 아니면 ask_clarification으로 분류되고, 그래도 같은 가중치
+        질문을 다시 만들지는 않는다(weight_confirm 단계에서 재확인/동일 가중치
+        선택지로 이어진다)."""
+        mock_chat.return_value = _fake_response(
+            '{"type": "ask_clarification", "weights": null, "message": "합이 120%입니다."}'
+        )
+        plan = ollama_agent.plan_followup_questions(
+            {"중요 생활조건": ["교통", "의료"], "추가 요청사항": "교통 60%, 의료 60%"}
+        )
+        self.assertIsNone(plan["weight_question"])
+        self.assertEqual(plan["initial_weight_interpretation"]["type"], "ask_clarification")
+
+    def test_single_percent_mention_in_extra_request_does_not_trigger_interpretation(self):
+        """퍼센트 기호가 하나뿐이면 비율로 보기 부족하므로 해석을 시도하지 않고
+        기존처럼 가중치 확인 질문을 만든다(Ollama를 호출하지 않아도 되는 경로)."""
+        with mock.patch("agent.ollama_agent.ollama.chat") as mock_chat:
+            mock_chat.return_value = _fake_response('{"questions": []}')
+            plan = ollama_agent.plan_followup_questions(
+                {"중요 생활조건": ["교통", "의료"], "추가 요청사항": "교통 위주로 봐주세요 70%"}
+            )
+        self.assertIsNone(plan["initial_weight_interpretation"])
+        self.assertIsNotNone(plan["weight_question"])
+
+    @mock.patch("agent.ollama_agent.ollama.chat")
+    def test_unsupported_condition_in_extra_request_ratio_is_reported_not_ignored(self, mock_chat):
+        """요구사항 4: 미지원 조건이 섞인 비율도 임의로 무시하지 않고 그대로
+        초기 해석 결과에 담아 반환한다."""
+        mock_chat.return_value = _fake_response(
+            '{"type": "unsupported", "weights": null, "message": '
+            '"월세 데이터는 아직 확보되지 않아 반영할 수 없습니다."}'
+        )
+        plan = ollama_agent.plan_followup_questions(
+            {"중요 생활조건": ["교통", "의료"], "추가 요청사항": "교통 50%, 월세 50%"}
+        )
+        self.assertIsNone(plan["weight_question"])
+        self.assertEqual(plan["initial_weight_interpretation"]["type"], "unsupported")
 
 
 if __name__ == "__main__":
