@@ -31,7 +31,7 @@ CSV를 직접 수정하지 않으며, 집계 결과만 출력한다.
 from __future__ import annotations
 
 import csv
-from collections import Counter, defaultdict
+from collections import defaultdict
 
 ROOT = r"C:\Gyeongnam-AI-SW-Competition-team_goyogoyo"
 BUS_CSV = ROOT + r"\data\raw\changwon_bus_stops.csv"
