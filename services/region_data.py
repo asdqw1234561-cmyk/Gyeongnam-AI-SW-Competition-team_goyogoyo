@@ -233,3 +233,22 @@ def get_regions_for_user_input(
     return compare_regions(
         region_ids, categories=categories, include_dev_sample=include_dev_sample
     )
+
+
+def get_all_changwon_regions(
+    categories: Optional[list[str]] = None,
+    include_dev_sample: bool = False,
+) -> list[dict]:
+    """
+    창원시 5개 구 전체의 비교 데이터를 항상 전부 반환한다.
+
+    get_regions_for_user_input()은 사용자가 입력한 "원하는 후보 개수"만큼 앞에서부터
+    잘라서 반환하므로, 적합도 계산(analysis/scoring.py 등) 직전처럼 "후보 개수와 무관하게
+    전체 구를 다 봐야 하는" 단계에서는 이 함수를 사용한다. 점수 계산이나 순위화는 하지 않고
+    compare_regions()와 동일한 형식의 원본 지표 데이터만 반환한다.
+    """
+    all_regions = get_available_regions(city=TARGET_CITY)
+    region_ids = [r["region_id"] for r in all_regions]
+    return compare_regions(
+        region_ids, categories=categories, include_dev_sample=include_dev_sample
+    )

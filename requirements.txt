@@ -3,3 +3,4 @@ anthropic
 ollama
 pandas
 python-dotenv
+requests
