@@ -284,10 +284,12 @@ def _approve_nl_feedback_weights(weights: dict[str, float]) -> None:
         weights, candidate_count
     )
     st.session_state.nl_feedback_proposal = None
+    st.session_state.nl_feedback_proposal_text = None
 
 
 def _reject_nl_feedback_proposal() -> None:
     st.session_state.nl_feedback_proposal = None
+    st.session_state.nl_feedback_proposal_text = None
 
 
 def _render_nl_feedback_proposal(proposal: dict) -> None:
@@ -315,14 +317,23 @@ def _render_nl_feedback_proposal(proposal: dict) -> None:
 
     # type == "set_weights"
     weights = proposal["weights"]
+    weight_sum = sum(weights.values())
     st.markdown("**AI 해석 결과 (아직 승인 전 - 결과가 바뀌지 않았습니다)**")
     preview_df = pd.DataFrame(
         [
-            {"지표": FEEDBACK_INDICATOR_LABELS.get(code, code), "AI가 읽은 값": f"{value:g}%"}
+            {
+                "지표": FEEDBACK_INDICATOR_LABELS.get(code, code),
+                "AI가 읽은 값": f"{value:g}%",
+                "실제 적용될 정규화 가중치": f"{value / weight_sum * 100:.1f}%",
+            }
             for code, value in weights.items()
         ]
     )
     st.dataframe(preview_df, hide_index=True, width="stretch")
+    st.caption(
+        "'AI가 읽은 값'은 요청하신 숫자 그대로입니다. 이미 합계가 100%에 가까워야만 "
+        "승인 가능한 제안으로 올라오므로 두 값은 거의 같습니다."
+    )
 
     col_approve, col_reject = st.columns(2)
     with col_approve:
@@ -403,6 +414,17 @@ def render_feedback_section() -> None:
         else:
             with st.spinner("Ollama가 요청을 해석하고 있습니다..."):
                 st.session_state.nl_feedback_proposal = interpret_weight_feedback(nl_text)
+            st.session_state.nl_feedback_proposal_text = nl_text
+
+    # 제안을 받은 뒤 사용자가 입력창의 문장을 고쳤다면, 그 고친 문장을 다시 해석하지
+    # 않고도 이전 제안이 그대로 남아 "새 요청"처럼 승인되는 걸 막는다. 승인 버튼은
+    # 반드시 그 버튼이 뜬 시점의 문장과 지금 입력창 문장이 같을 때만 유효해야 한다.
+    if (
+        st.session_state.nl_feedback_proposal is not None
+        and nl_text != st.session_state.get("nl_feedback_proposal_text")
+    ):
+        st.session_state.nl_feedback_proposal = None
+        st.info("ℹ️ 입력하신 문장이 바뀌었습니다. 'AI로 해석하기'를 다시 눌러 주세요.")
 
     if st.session_state.nl_feedback_proposal is not None:
         _render_nl_feedback_proposal(st.session_state.nl_feedback_proposal)
@@ -520,6 +542,8 @@ if "feedback_recommendation" not in st.session_state:
     st.session_state.feedback_recommendation = None
 if "nl_feedback_proposal" not in st.session_state:
     st.session_state.nl_feedback_proposal = None
+if "nl_feedback_proposal_text" not in st.session_state:
+    st.session_state.nl_feedback_proposal_text = None
 
 
 def reset_all():
@@ -531,6 +555,7 @@ def reset_all():
     st.session_state.feedback_initial_weights = {}
     st.session_state.feedback_recommendation = None
     st.session_state.nl_feedback_proposal = None
+    st.session_state.nl_feedback_proposal_text = None
     for key in FEEDBACK_SLIDER_KEYS.values():
         st.session_state.pop(key, None)
     st.session_state.pop("nl_feedback_input", None)
@@ -551,6 +576,7 @@ def _finalize_initial_recommendation() -> None:
     )
     st.session_state.feedback_recommendation = None
     st.session_state.nl_feedback_proposal = None
+    st.session_state.nl_feedback_proposal_text = None
     for code, key in FEEDBACK_SLIDER_KEYS.items():
         st.session_state[key] = st.session_state.feedback_initial_weights.get(code, 0.0)
 

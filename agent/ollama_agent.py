@@ -1,5 +1,6 @@
 # Ollama(Qwen3.5) 연동 - 입력정보 기반 추가질문 생성
 import json
+import math
 import re
 
 import ollama
@@ -88,8 +89,10 @@ WEIGHT_FEEDBACK_SYSTEM_PROMPT = """당신은 창원시 생활권 비교 앱에�
 
 [판단 기준 - 아래 3가지 type 중 정확히 하나를 고르세요]
 1. "set_weights": 위 3개 지표 중 하나 이상에 구체적인 숫자(비율·퍼센트)가 명시된 경우.
-   weights에 사용자가 말한 숫자를 그대로 넣으세요(%). 합계가 100이 아니어도 그대로
-   두세요(나중에 자동으로 정규화됩니다). 언급되지 않은 지표는 weights에 넣지 마세요.
+   weights에 사용자가 말한 숫자를 그대로 넣으세요(%) - 더하거나 빼거나 비율을
+   바꾸지 마세요. 합계가 100이 아니어도 계산하지 말고 사용자가 말한 숫자만 그대로
+   전달하세요(합계 확인과 재질문은 이후 단계에서 처리합니다). 언급되지 않은 지표는
+   weights에 넣지 마세요.
 2. "ask_clarification": "의료가 더 중요해", "교통 위주로 봐줘"처럼 방향성만 있고
    구체적인 숫자가 없는 경우. 절대 숫자를 임의로 만들어내지 말고, message에 몇
    %로 할지 되묻는 한국어 질문을 작성하세요.
@@ -109,12 +112,54 @@ WEIGHT_FEEDBACK_SYSTEM_PROMPT = """당신은 창원시 생활권 비교 앱에�
 """
 
 
+# 비율 합계가 100%와 이 정도 차이 안이면 "사실상 100%"로 본다(LLM의 사소한 반올림만
+# 허용 - 80+20처럼 사용자가 직접 말한 숫자는 보통 정확히 더해진다).
+_WEIGHT_SUM_TOLERANCE = 0.5
+
+
+def _validate_weight_value(value) -> float | None:
+    """
+    가중치 값 하나가 "0~100 사이의 유한한 숫자"인지 검사해서 float을 돌려주고,
+    아니면 None을 돌려준다. bool은 int의 서브클래스라 float(True)==1.0으로
+    조용히 통과해버리므로 명시적으로 막는다. NaN/Infinity/-Infinity, 음수,
+    100 초과는 전부 거부한다.
+    """
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        numeric = float(value)
+    elif isinstance(value, str):
+        try:
+            numeric = float(value)
+        except ValueError:
+            return None
+    else:
+        return None
+
+    if not math.isfinite(numeric):  # NaN, inf, -inf 전부 차단 ("Infinity"/"NaN" 문자열도 float()은 통과시키므로 필수)
+        return None
+    if numeric < 0 or numeric > 100:
+        return None
+    return numeric
+
+
 def _parse_weight_feedback(raw_text: str) -> dict:
     """
-    Ollama 원문 응답을 파싱하고 검증한다. 허용되지 않은 지표 코드나 숫자가 아닌
-    값은 조용히 버리고(해당 항목만 거부), 유효한 항목이 하나도 안 남으면 전체를
-    invalid_response로 처리한다. JSON 자체가 깨졌거나 type이 알 수 없는 값이면
-    즉시 invalid_response.
+    Ollama 원문 응답을 파싱하고 검증한다. 사용자 의도를 임의로 바꾸지 않는 것을
+    최우선으로 한다 - 지원하지 않는 지표가 섞여 있거나, 값이 유효하지 않거나,
+    비율 합계가 100%가 아니면 "일부만" 조용히 적용하지 않고 전체를 되묻거나
+    거부한다.
+
+    1) 지원하지 않는 지표(bus_stop_count/hospital_count/convenience_store_count
+       외)가 weights에 하나라도 있으면 -> 전체를 "unsupported"로 돌려 재입력을
+       유도한다(예: "의료 60%, 주거비 40%"가 의료 60%만으로 조용히 바뀌는 것을
+       막기 위함).
+    2) 값이 하나라도 유효하지 않으면(NaN/Infinity/음수/100 초과/bool/숫자 아님)
+       -> 전체를 invalid_response로 거부한다.
+    3) 유효한 값이 전부 0이면 -> invalid_response.
+    4) 유효한 값의 합계가 100%(±0.5%p)에서 벗어나면 -> 임의로 정규화하지 않고
+       "ask_clarification"으로 돌려 사용자에게 재확인을 요청한다(모자라면 "나머지를
+       어디에 둘지", 넘치면 "합계가 X%로 100%를 넘는다"는 안내).
     """
     match = re.search(r"\{.*\}", raw_text, re.DOTALL)
     if not match:
@@ -167,24 +212,68 @@ def _parse_weight_feedback(raw_text: str) -> dict:
             "message": "AI가 구체적인 가중치를 지정하지 않았습니다.",
         }
 
+    # 1) 지원하지 않는 지표가 섞여 있으면 일부만 적용하지 않고 전체를 되묻는다.
+    unsupported_codes = [c for c in raw_weights if c not in WEIGHT_FEEDBACK_SUPPORTED_INDICATORS]
+    if unsupported_codes:
+        return {
+            "status": "ok",
+            "type": "unsupported",
+            "weights": None,
+            "message": (
+                f"요청하신 조건 중 '{', '.join(unsupported_codes)}'에 해당하는 데이터는 "
+                "아직 확보되지 않아 요청하신 비율 구성을 그대로 적용할 수 없습니다. "
+                "교통·의료·생활편의 중에서만 다시 비율을 지정해 주세요."
+            ),
+        }
+
+    # 2) 값 하나라도 유효하지 않으면 전체를 거부한다(일부만 조용히 쓰지 않는다).
     validated_weights: dict[str, float] = {}
     for code, value in raw_weights.items():
-        if code not in WEIGHT_FEEDBACK_SUPPORTED_INDICATORS:
-            continue  # 허용되지 않은 지표 코드는 그 항목만 조용히 거부
-        try:
-            numeric = float(value)
-        except (TypeError, ValueError):
-            continue  # 숫자가 아닌 값도 그 항목만 거부
-        if numeric < 0:
-            continue
+        numeric = _validate_weight_value(value)
+        if numeric is None:
+            return {
+                "status": "invalid_response",
+                "type": None,
+                "weights": None,
+                "message": f"'{WEIGHT_FEEDBACK_SUPPORTED_INDICATORS[code]}'에 지정된 값이 올바른 0~100 사이 숫자가 아닙니다.",
+            }
         validated_weights[code] = numeric
 
-    if not validated_weights:
+    # 3) 전부 0이면 거부한다.
+    if all(v == 0 for v in validated_weights.values()):
         return {
             "status": "invalid_response",
             "type": None,
             "weights": None,
-            "message": "AI가 제시한 가중치에 유효한 지표·숫자가 없습니다.",
+            "message": "요청하신 가중치가 전부 0입니다. 하나 이상에 0보다 큰 비율을 지정해 주세요.",
+        }
+
+    # 4) 합계가 100%에서 벗어나면 임의로 정규화하지 않고 되묻는다.
+    weight_sum = sum(validated_weights.values())
+    breakdown = ", ".join(
+        f"{WEIGHT_FEEDBACK_SUPPORTED_INDICATORS[c]} {v:g}%" for c, v in validated_weights.items()
+    )
+    if weight_sum > 100 + _WEIGHT_SUM_TOLERANCE:
+        return {
+            "status": "ok",
+            "type": "ask_clarification",
+            "weights": None,
+            "message": (
+                f"입력하신 비율({breakdown})의 합이 {weight_sum:g}%로 100%를 넘습니다. "
+                "비율을 다시 확인해서 합이 100%가 되도록 말씀해 주세요."
+            ),
+        }
+    if weight_sum < 100 - _WEIGHT_SUM_TOLERANCE:
+        remaining = 100 - weight_sum
+        return {
+            "status": "ok",
+            "type": "ask_clarification",
+            "weights": None,
+            "message": (
+                f"입력하신 비율({breakdown})의 합이 {weight_sum:g}%로 100%가 되지 않습니다. "
+                f"나머지 {remaining:g}%를 어디에 둘지 알려주세요(그대로 0%로 두시려면 "
+                "'나머지는 0%'처럼 말씀해 주세요)."
+            ),
         }
 
     return {"status": "ok", "type": "set_weights", "weights": validated_weights, "message": message}
