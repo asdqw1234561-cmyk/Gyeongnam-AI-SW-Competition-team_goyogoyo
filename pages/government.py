@@ -17,6 +17,8 @@ from __future__ import annotations
 import pandas as pd
 import streamlit as st
 
+from analysis import simulation
+from analysis.scoring import INDICATOR_CATEGORY
 from services.region_data import get_all_changwon_regions
 
 CHART_ACCENT_COLOR = "#2a78d6"
@@ -235,9 +237,134 @@ if diff_rows:
 else:
     st.info("아직 5개 구 전체가 확보된 지표가 없어 차이를 비교할 수 없습니다.")
 
+# ---------------------------------------------------------------------------
+# 5. 가상 시설 증감 시뮬레이션
+# ---------------------------------------------------------------------------
 st.divider()
+st.header("5. 가상 시설 증감 시뮬레이션")
 st.caption(
-    "ℹ️ 향후 개선 시나리오 시뮬레이션(analysis/simulation.py)은 이번 단계에 포함되지 "
-    "않았습니다. 가상의 시설 추가로 통근시간 단축·정주율 증가·인구 유입 등 실제 "
-    "정책 효과를 추정하지 않습니다."
+    "창원시 5개 구 중 한 곳의 시설 수를 가상으로 늘리거나 줄였을 때, 시설 수 기준 "
+    "상대 비교 점수와 5개 구 사이의 수치 차이가 어떻게 달라지는지 보여줍니다. "
+    "**이것은 가정에 따른 수치 변화 시뮬레이션이며 실제 정책 효과 예측이 아닙니다** "
+    "(실제 통근시간, 의료 접근성, 정주율, 인구 유입, 사업비 대비 효과 등은 계산하지 "
+    "않습니다). 원본 데이터(data/region_indicators.csv)는 이 시뮬레이션으로 전혀 "
+    "수정되지 않습니다."
 )
+
+if "gov_sim_result" not in st.session_state:
+    st.session_state.gov_sim_result = None
+
+# 5개 구 전부 확보된 지표만 시뮬레이션 대상으로 노출한다(미확보 지표 제외).
+simulatable_codes = [
+    code
+    for code in simulation.SIMULATABLE_INDICATOR_CODES
+    if _is_fully_confirmed(regions, INDICATOR_CATEGORY[code], code)
+]
+indicator_name_by_code = {
+    code: (_get_indicator(regions[0], INDICATOR_CATEGORY[code], code) or {}).get("indicator_name", code)
+    for code in simulatable_codes
+}
+
+if not simulatable_codes:
+    st.info("현재 시뮬레이션 가능한(5개 구 전부 확보된) 지표가 없습니다.")
+else:
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        sim_region_name = st.selectbox("① 분석 대상 구", region_names, key="gov_sim_region")
+    with col2:
+        sim_indicator_code = st.selectbox(
+            "② 분석 대상 시설 지표",
+            simulatable_codes,
+            format_func=lambda c: indicator_name_by_code[c],
+            key="gov_sim_indicator",
+        )
+    with col3:
+        sim_delta = st.number_input(
+            "③ 시설 수 가상 증감량(음수 가능)", value=0, step=1, key="gov_sim_delta"
+        )
+
+    st.markdown("**④ 비교 점수 가중치** (상대 점수 계산에만 쓰이며, 실제 시설 수에는 영향을 주지 않습니다)")
+    if "gov_sim_weights_initialized" not in st.session_state:
+        for code, weight in simulation.default_equal_weights(regions).items():
+            st.session_state[f"gov_sim_weight_{code}"] = weight
+        st.session_state.gov_sim_weights_initialized = True
+
+    weight_cols = st.columns(len(simulatable_codes))
+    sim_weights: dict[str, float] = {}
+    for col, code in zip(weight_cols, simulatable_codes):
+        with col:
+            sim_weights[code] = st.slider(
+                indicator_name_by_code[code], 0, 100, key=f"gov_sim_weight_{code}"
+            )
+
+    run_col, reset_col = st.columns(2)
+    with run_col:
+        run_clicked = st.button("⑤ 시뮬레이션 실행", type="primary", width="stretch")
+    with reset_col:
+        if st.button("초기화", width="stretch"):
+            st.session_state.gov_sim_result = None
+
+    if run_clicked:
+        sim_region_id = next(r["region_id"] for r in regions if r["region_name"] == sim_region_name)
+        st.session_state.gov_sim_result = simulation.simulate_facility_change(
+            sim_region_id, sim_indicator_code, int(sim_delta), comparison_weights=sim_weights
+        )
+
+    sim_result = st.session_state.gov_sim_result
+    if sim_result is None:
+        st.caption("시뮬레이션을 실행하면 결과가 여기에 표시됩니다. 실행 전까지는 아무 값도 바뀌지 않습니다.")
+    elif sim_result["status"] == "error":
+        st.error(f"⚠️ {sim_result['message']}")
+    else:
+        st.success(
+            f"'{sim_result['region_name']}'의 '{sim_result['indicator_name']}'을(를) 가상으로 "
+            f"{sim_result['delta']:+d}개 변경했을 때의 시설 수 기반 상대 비교 결과입니다."
+        )
+        for caveat in sim_result["caveats"]:
+            st.caption(f"· {caveat}")
+
+        st.markdown("**⑥ 실제값 vs 가상값**")
+        st.dataframe(
+            pd.DataFrame(
+                [
+                    {"구분": "실제 시설 수", "값": f"{sim_result['actual_value']:g}개"},
+                    {"구분": "가상 시설 수", "값": f"{sim_result['simulated_value']:g}개"},
+                    {"구분": "가상 증감량", "값": f"{sim_result['delta']:+d}개"},
+                ]
+            ),
+            hide_index=True,
+            width="stretch",
+        )
+        st.caption(
+            f"원본 데이터 출처: {sim_result['source'] or '-'} · 기준일: {sim_result['reference_date'] or '-'} "
+            "(가상값은 이 화면 표시용일 뿐 원본 CSV에는 반영되지 않습니다)"
+        )
+
+        st.markdown("**⑦ 5개 구 전체 변경 전후 비교**")
+        compare_rows = [
+            {
+                "구": sim_result["score_change"][region["region_id"]]["region_name"],
+                "실제 시설 수": f"{sim_result['facility_counts_before'][region['region_id']]:g}",
+                "가상 시설 수": f"{sim_result['facility_counts_after'][region['region_id']]:g}",
+                "변경 전 점수": round(sim_result["score_change"][region["region_id"]]["score_before"], 1),
+                "변경 후 점수": round(sim_result["score_change"][region["region_id"]]["score_after"], 1),
+                "점수 변화": round(sim_result["score_change"][region["region_id"]]["score_delta"], 1),
+                "변경 전 순위": sim_result["score_change"][region["region_id"]]["rank_before"],
+                "변경 후 순위": sim_result["score_change"][region["region_id"]]["rank_after"],
+            }
+            for region in regions
+        ]
+        compare_df = pd.DataFrame(compare_rows)
+        st.dataframe(compare_df, hide_index=True, width="stretch")
+
+        st.markdown("**⑧ 변경 전후 그래프**")
+        chart_df = compare_df[["구", "변경 전 점수", "변경 후 점수"]].set_index("구")
+        st.bar_chart(chart_df, color=[CHART_ACCENT_COLOR, "#e07b39"])
+
+        st.caption(
+            "사용된 가중치: "
+            + ", ".join(
+                f"{indicator_name_by_code.get(code, code)} {weight:.0f}%"
+                for code, weight in sim_result["comparison_weights"].items()
+            )
+        )

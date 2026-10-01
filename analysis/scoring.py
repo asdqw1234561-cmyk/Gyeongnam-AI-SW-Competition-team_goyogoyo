@@ -202,6 +202,7 @@ def _build_ok_result(
 def compute_region_scores(
     user_conditions: list[str] | None = None,
     candidate_count: int = 5,
+    regions: list[dict] | None = None,
 ) -> dict:
     """
     창원시 5개 구를 사용자가 선택한 "중요 생활조건" 중 실제 데이터가 확보된 것만으로
@@ -212,6 +213,12 @@ def compute_region_scores(
             조건 미선택으로 간주해 확보된 지표 전체를 동일 가중치로 쓴다.
         candidate_count: 최종으로 잘라서 보여줄 후보 구 개수(1~5 권장이나 값 자체를
             강제하지는 않음 - 화면단 number_input에서 1~5로 제한한다).
+        regions: 생략하면(기본값 None) 기존처럼 get_all_changwon_regions()로 실제
+            공공데이터를 조회한다. 값을 넘기면 그 목록을 그대로 쓴다 - 창원시 5개 구
+            전체가 포함된 get_all_changwon_regions()와 같은 형식의 데이터여야 하며,
+            analysis/simulation.py가 "원본의 깊은 복사본에 가상값만 바꾼" 목록을
+            넘길 때 쓰는 용도다. 이주자용 추천(app.py)은 이 인자를 쓰지 않으므로
+            동작이 전혀 바뀌지 않는다.
 
     Returns:
         공통 키:
@@ -232,7 +239,7 @@ def compute_region_scores(
                   }, ...]
             top_candidates: region_scores[:candidate_count]
     """
-    regions = get_all_changwon_regions()
+    regions = regions if regions is not None else get_all_changwon_regions()
 
     conditions = list(user_conditions) if user_conditions else []
     target_conditions = conditions if conditions else list(ALL_SCORABLE_CONDITIONS)
@@ -300,6 +307,7 @@ def initial_feedback_weights(scoring_result: dict) -> dict[str, float]:
 def compute_region_scores_from_weights(
     indicator_weights: dict[str, float],
     candidate_count: int = 5,
+    regions: list[dict] | None = None,
 ) -> dict:
     """
     사용자가 "조건 조정 후 다시 비교하기"에서 직접 지정한 가중치로 5개 구를
@@ -313,13 +321,16 @@ def compute_region_scores_from_weights(
             그 외 키나 값이 0 이하인 항목은 무시한다. 합계가 100이 아니어도 되며
             내부에서 합계 100%로 정규화한다.
         candidate_count: 최종 후보 개수.
+        regions: compute_region_scores()와 동일 - 생략하면 실제 공공데이터를 조회하고,
+            넘기면 그 목록을 그대로 쓴다(analysis/simulation.py가 가상 데이터를 넣을
+            때 사용). 이주자용 피드백 화면(app.py)은 이 인자를 쓰지 않는다.
 
     Returns:
         compute_region_scores()와 동일한 형식. 유효한 가중치가 하나도 없으면
         (전부 0 이하이거나, 가리키는 지표가 아직 확보되지 않았으면)
         status="no_usable_conditions"를 반환하고 계산하지 않는다.
     """
-    regions = get_all_changwon_regions()
+    regions = regions if regions is not None else get_all_changwon_regions()
 
     positive_weights = {
         code: w
