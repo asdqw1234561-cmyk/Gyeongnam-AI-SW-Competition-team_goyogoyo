@@ -4,3 +4,6 @@ ollama
 pandas
 python-dotenv
 requests
+pyshp
+shapely
+pyproj
