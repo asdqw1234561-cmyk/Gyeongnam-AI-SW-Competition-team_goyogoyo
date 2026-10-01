@@ -2,7 +2,7 @@
 import pandas as pd
 import streamlit as st
 
-from agent.ollama_agent import generate_followup_questions
+from agent.ollama_agent import generate_followup_questions, interpret_weight_feedback
 from analysis import scoring
 from services.region_data import get_all_changwon_regions, is_supported_region
 
@@ -270,6 +270,73 @@ def _reset_feedback_weights() -> None:
     st.session_state.feedback_recommendation = None
 
 
+def _approve_nl_feedback_weights(weights: dict[str, float]) -> None:
+    """
+    AI가 해석한 가중치를 사용자가 승인했을 때의 on_click 콜백. 슬라이더 값도 맞춰
+    바꾸고, 실제 재계산은 기존 compute_region_scores_from_weights()로 수행한다
+    (AI는 가중치를 "제안"만 했을 뿐 이 계산에 관여하지 않는다). 위젯 session_state
+    는 on_click 콜백 안에서만 안전하게 수정할 수 있어 여기서 처리한다.
+    """
+    for code, key in FEEDBACK_SLIDER_KEYS.items():
+        st.session_state[key] = min(100.0, max(0.0, weights.get(code, 0.0)))
+    candidate_count = st.session_state.initial_input.get("원하는 후보 개수") or 3
+    st.session_state.feedback_recommendation = scoring.compute_region_scores_from_weights(
+        weights, candidate_count
+    )
+    st.session_state.nl_feedback_proposal = None
+
+
+def _reject_nl_feedback_proposal() -> None:
+    st.session_state.nl_feedback_proposal = None
+
+
+def _render_nl_feedback_proposal(proposal: dict) -> None:
+    """
+    interpret_weight_feedback()의 반환값을 상태별로 보여준다. type=="set_weights"일
+    때만 승인/무시 버튼이 뜨고, 승인 전에는 feedback_recommendation이 전혀 바뀌지
+    않는다(요구사항: 사용자 승인 전까지 실제 결과 불변).
+    """
+    if proposal["status"] == "ollama_error":
+        st.error(
+            f"⚠️ {proposal['message']} 위 슬라이더로 직접 가중치를 조정하는 기능은 "
+            "그대로 사용할 수 있습니다."
+        )
+        return
+    if proposal["status"] == "invalid_response":
+        st.warning(f"⚠️ AI 응답을 적용할 수 없습니다: {proposal['message']}")
+        return
+
+    if proposal["type"] == "unsupported":
+        st.info(f"ℹ️ {proposal['message']}")
+        return
+    if proposal["type"] == "ask_clarification":
+        st.info(f"🤔 {proposal['message']}")
+        return
+
+    # type == "set_weights"
+    weights = proposal["weights"]
+    st.markdown("**AI 해석 결과 (아직 승인 전 - 결과가 바뀌지 않았습니다)**")
+    preview_df = pd.DataFrame(
+        [
+            {"지표": FEEDBACK_INDICATOR_LABELS.get(code, code), "AI가 읽은 값": f"{value:g}%"}
+            for code, value in weights.items()
+        ]
+    )
+    st.dataframe(preview_df, hide_index=True, width="stretch")
+
+    col_approve, col_reject = st.columns(2)
+    with col_approve:
+        st.button(
+            "✅ 이 가중치로 적용하기",
+            type="primary",
+            width="stretch",
+            on_click=_approve_nl_feedback_weights,
+            args=(weights,),
+        )
+    with col_reject:
+        st.button("❌ 무시하기", width="stretch", on_click=_reject_nl_feedback_proposal)
+
+
 def render_feedback_section() -> None:
     """
     '조건 조정 후 다시 비교하기' - 교통/의료/생활편의 가중치를 사용자가 직접 조정해
@@ -321,6 +388,24 @@ def render_feedback_section() -> None:
         st.session_state.feedback_recommendation = scoring.compute_region_scores_from_weights(
             current_weights, candidate_count
         )
+
+    st.markdown("---")
+    st.markdown("**또는 자연어로 요청하기 (AI 해석)**")
+    st.caption(
+        "예: '의료 80%, 교통 20%로 비교해줘'. 버튼을 누를 때만 로컬 Ollama(qwen3.5:4b)를 "
+        "호출하며, AI는 요청을 가중치로 해석만 할 뿐 점수는 계산하지 않습니다 - 실제 "
+        "재계산은 아래에서 승인해야 적용됩니다."
+    )
+    nl_text = st.text_input("자연어 요청", key="nl_feedback_input", label_visibility="collapsed")
+    if st.button("AI로 해석하기"):
+        if not nl_text.strip():
+            st.warning("문장을 입력해 주세요.")
+        else:
+            with st.spinner("Ollama가 요청을 해석하고 있습니다..."):
+                st.session_state.nl_feedback_proposal = interpret_weight_feedback(nl_text)
+
+    if st.session_state.nl_feedback_proposal is not None:
+        _render_nl_feedback_proposal(st.session_state.nl_feedback_proposal)
 
     feedback_result = st.session_state.feedback_recommendation
     if feedback_result is None:
@@ -433,6 +518,8 @@ if "feedback_initial_weights" not in st.session_state:
     st.session_state.feedback_initial_weights = {}
 if "feedback_recommendation" not in st.session_state:
     st.session_state.feedback_recommendation = None
+if "nl_feedback_proposal" not in st.session_state:
+    st.session_state.nl_feedback_proposal = None
 
 
 def reset_all():
@@ -443,8 +530,10 @@ def reset_all():
     st.session_state.initial_recommendation = None
     st.session_state.feedback_initial_weights = {}
     st.session_state.feedback_recommendation = None
+    st.session_state.nl_feedback_proposal = None
     for key in FEEDBACK_SLIDER_KEYS.values():
         st.session_state.pop(key, None)
+    st.session_state.pop("nl_feedback_input", None)
 
 
 def _finalize_initial_recommendation() -> None:
@@ -461,6 +550,7 @@ def _finalize_initial_recommendation() -> None:
         st.session_state.initial_recommendation
     )
     st.session_state.feedback_recommendation = None
+    st.session_state.nl_feedback_proposal = None
     for code, key in FEEDBACK_SLIDER_KEYS.items():
         st.session_state[key] = st.session_state.feedback_initial_weights.get(code, 0.0)
 

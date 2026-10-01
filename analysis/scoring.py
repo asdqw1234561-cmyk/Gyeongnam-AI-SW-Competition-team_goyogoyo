@@ -335,23 +335,18 @@ def compute_region_scores_from_weights(
             "caveats": CAVEATS,
         }
 
-    weight_sum = sum(positive_weights.values())
-    used_meta: list[dict] = []
+    # 먼저 "실제로 확보된" 지표만 걸러낸 다음 그 부분집합을 기준으로 정규화한다.
+    # (weight_sum을 필터링 전에 구하면, 나중에 한 지표가 미확보로 바뀌어 제외될 때
+    # 남은 지표들의 가중치 합이 100%에 못 미치게 된다 - 순서가 중요하다.)
+    confirmed_weights: dict[str, tuple[float, str]] = {}
     for code, w in positive_weights.items():
         collected = _collect_confirmed_indicator(regions, code)
         if collected is None:
             continue  # 방어적 처리 - 현재는 3개 다 확보 상태라 실제로는 거의 발생하지 않음
         _raw_values, indicator_name = collected
-        used_meta.append(
-            {
-                "indicator_code": code,
-                "indicator_name": indicator_name,
-                "category": INDICATOR_CATEGORY[code],
-                "weight": w / weight_sum,
-            }
-        )
+        confirmed_weights[code] = (w, indicator_name)
 
-    if not used_meta:
+    if not confirmed_weights:
         return {
             "status": "no_usable_conditions",
             "message": NO_DATA_MESSAGE,
@@ -359,5 +354,16 @@ def compute_region_scores_from_weights(
             "excluded_conditions": [],
             "caveats": CAVEATS,
         }
+
+    weight_sum = sum(w for w, _name in confirmed_weights.values())
+    used_meta: list[dict] = [
+        {
+            "indicator_code": code,
+            "indicator_name": name,
+            "category": INDICATOR_CATEGORY[code],
+            "weight": w / weight_sum,
+        }
+        for code, (w, name) in confirmed_weights.items()
+    ]
 
     return _build_ok_result(regions, used_meta, excluded_conditions=[], candidate_count=candidate_count)

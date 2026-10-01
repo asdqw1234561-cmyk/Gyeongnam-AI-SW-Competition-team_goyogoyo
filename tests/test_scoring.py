@@ -200,6 +200,26 @@ class FeedbackWeightAdjustmentTest(unittest.TestCase):
             weight_based["normalization"]["hospital_count"],
         )
 
+    def test_weights_renormalize_to_100_percent_if_one_indicator_loses_confirmation(self):
+        """요구사항: 일부 지표가 '향후' 미확보로 바뀌더라도, 실제 사용 가능한 지표끼리
+        가중치 합계가 100%가 되어야 한다(필터링 전 합계로 나누면 100%에 못 미친다)."""
+        original = scoring._collect_confirmed_indicator
+
+        def fake_collect(regions, indicator_code):
+            if indicator_code == "hospital_count":
+                return None  # 의료가 갑자기 미확보가 됐다고 가정
+            return original(regions, indicator_code)
+
+        with mock.patch("analysis.scoring._collect_confirmed_indicator", side_effect=fake_collect):
+            result = scoring.compute_region_scores_from_weights(
+                {"hospital_count": 60, "bus_stop_count": 40}, candidate_count=5
+            )
+
+        self.assertEqual(result["status"], "ok")
+        self.assertEqual(len(result["used_conditions"]), 1)
+        self.assertEqual(result["used_conditions"][0]["indicator_code"], "bus_stop_count")
+        self.assertAlmostEqual(result["used_conditions"][0]["weight"], 1.0)
+
 
 if __name__ == "__main__":
     unittest.main()
