@@ -8,3 +8,5 @@ pyshp
 shapely
 pyproj
 numpy
+folium
+streamlit-folium
