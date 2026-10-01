@@ -37,6 +37,13 @@ def render_indicator_category(category: str, section_title: str) -> None:
     창원시 5개 구 전체(get_all_changwon_regions)를 category 기준으로 조회해
     지표별 표 + 막대그래프를 렌더링한다. CSV에 새 category/지표가 추가되면
     (교통/생활편의/주거비 등) 이 함수를 그대로 재사용해 같은 화면을 확장할 수 있다.
+
+    - 5개 구 전부 미확보인 지표는 긴 표 대신 "지표명 — 미확보" 한 줄 + 접기 영역으로
+      간결하게 표시한다(수치를 0으로 바꾸거나 숨기지 않는다 - 접으면 볼 수 있다).
+    - 일부만 확보된 지표(향후 생길 수 있음)는 기존처럼 표 전체를 보여주되, 확보 행만
+      그래프에 반영한다.
+    - 출처·기준일은 표를 좁게 유지하기 위해 별도 접기 영역으로 뺐다(원본 CSV 값은
+      그대로 보존, 표시 위치만 바뀜).
     """
     st.subheader(section_title)
     regions = get_all_changwon_regions(categories=[category])
@@ -90,20 +97,31 @@ def render_indicator_category(category: str, section_title: str) -> None:
             None,
         )
 
+        rows_df = pd.DataFrame(rows)
+        confirmed_rows = [row for row in rows if row["상태"] == "확보"]
+
+        if not confirmed_rows:
+            # 5개 구 전체 미확보 - 긴 표 대신 한 줄 + 접기 영역
+            st.markdown(f"**{indicator_name}** — 미확보")
+            with st.expander("구별 상태 보기"):
+                st.dataframe(rows_df[["구", "상태"]], hide_index=True, width="stretch")
+            if note_text:
+                st.caption(f"ℹ️ {note_text}")
+            continue
+
         st.markdown(f"**{indicator_name}**")
-        st.dataframe(pd.DataFrame(rows), hide_index=True, width="stretch")
+        st.dataframe(rows_df[["구", "값", "단위", "상태"]], hide_index=True, width="stretch")
 
         if note_text:
             st.caption(f"ℹ️ {note_text}")
 
-        confirmed_rows = [row for row in rows if row["상태"] == "확보"]
-        if confirmed_rows:
-            chart_df = pd.DataFrame(
-                [{"구": row["구"], "값": float(row["값"])} for row in confirmed_rows]
-            ).set_index("구")
-            st.bar_chart(chart_df, color=CHART_ACCENT_COLOR)
-        else:
-            st.caption("확보된 수치가 없어 그래프를 표시하지 않습니다.")
+        with st.expander("출처 및 기준일 보기"):
+            st.dataframe(rows_df[["구", "출처", "기준일"]], hide_index=True, width="stretch")
+
+        chart_df = pd.DataFrame(
+            [{"구": row["구"], "값": float(row["값"])} for row in confirmed_rows]
+        ).set_index("구")
+        st.bar_chart(chart_df, color=CHART_ACCENT_COLOR)
 
         missing_regions = [row["구"] for row in rows if row["상태"] != "확보"]
         if missing_regions:
@@ -118,6 +136,12 @@ REFERENCE_INDICATOR_ORDER = ["hospital_count", "bus_stop_count", "convenience_st
 UNAVAILABLE_DATA_NOTICE = (
     "실제 대중교통 소요시간, 월세·전세 가격, 응급실 운영 병원 수, 대형마트 수, "
     "교육·안전·자연환경·문화시설 지표는 아직 확보되지 않아 추천 계산에 사용되지 않습니다."
+)
+
+RELATIVE_SCORE_CAVEAT = (
+    "이 점수는 인구·면적이나 실제 접근성을 보정하지 않은, 시설 수 기준 상대 비교 "
+    "점수입니다(100점 = 해당 지표에서 5개 구 중 수치가 가장 높다는 뜻일 뿐, "
+    "완벽한 정주환경을 의미하지 않습니다)."
 )
 
 
@@ -156,8 +180,16 @@ def render_recommendation_section() -> None:
     상대 비교하고 후보 개수만큼 추천한다. 점수 계산은 analysis/scoring.py가 전부
     담당하며, Ollama는 이 단계에 전혀 관여하지 않는다(추천 설명은 계산 결과를
     그대로 문장으로 바꾼 규칙 기반 텍스트일 뿐 AI가 새로 생성하지 않는다).
+
+    표시 순서(사용자가 가장 먼저 보고 싶어할 내용부터):
+    조건·가중치 -> 추천 후보지역 -> 5개 구 전체 순위 -> 계산식 -> 미반영 정보.
     """
-    st.subheader("🏆 창원시 5개 구 비교 및 후보지역")
+    st.subheader("🏆 최초 추천 결과")
+    st.caption(
+        "창원시 5개 구를 시설 수 기준으로 상대 비교한 결과입니다. 아래 "
+        "'🔄 조건 조정 후 다시 비교하기'에서 가중치를 바꾸기 전까지는 이 결과가 "
+        "**현재 적용 중인 결과**입니다."
+    )
 
     initial_input = st.session_state.initial_input
     region_text = initial_input.get("희망지역", "")
@@ -174,7 +206,7 @@ def render_recommendation_section() -> None:
     # _finalize_initial_recommendation()이 stage='done' 전환 시 저장해 둔 값을 그대로 쓴다.
     result = st.session_state.initial_recommendation
 
-    st.markdown("**비교에 사용된 조건**")
+    st.markdown("**이번 비교에 사용된 조건과 가중치**")
     if result["used_conditions"]:
         used_df = pd.DataFrame(
             [
@@ -203,7 +235,11 @@ def render_recommendation_section() -> None:
             st.caption(f"· {c}")
         return
 
-    st.markdown("**창원시 5개 구 전체 비교 결과**")
+    # 추천 후보지역을 가장 먼저 보여준다(사용자가 실제로 궁금해할 내용).
+    _render_top_candidates(result)
+
+    st.markdown("---")
+    st.markdown("**창원시 5개 구 전체 순위**")
     overview_df = pd.DataFrame(
         [
             {
@@ -220,6 +256,7 @@ def render_recommendation_section() -> None:
         [{"구": r["region_name"], "종합점수": r["total_score"]} for r in result["region_scores"]]
     ).set_index("구")
     st.bar_chart(chart_df, color=CHART_ACCENT_COLOR)
+    st.caption(RELATIVE_SCORE_CAVEAT)
 
     with st.expander("정규화 계산식 보기 (min-max, 0~100점)"):
         for code, info in result["normalization"].items():
@@ -227,8 +264,6 @@ def render_recommendation_section() -> None:
                 uc["indicator_name"] for uc in result["used_conditions"] if uc["indicator_code"] == code
             )
             st.markdown(f"- **{indicator_name}**: {info['formula']}")
-
-    _render_top_candidates(result)
 
     st.markdown("**아직 점수에 반영되지 않은 입력정보**")
     not_used_inputs = []
@@ -296,7 +331,8 @@ def _render_nl_feedback_proposal(proposal: dict) -> None:
     """
     interpret_weight_feedback()의 반환값을 상태별로 보여준다. type=="set_weights"일
     때만 승인/무시 버튼이 뜨고, 승인 전에는 feedback_recommendation이 전혀 바뀌지
-    않는다(요구사항: 사용자 승인 전까지 실제 결과 불변).
+    않는다(요구사항: 사용자 승인 전까지 실제 결과 불변). 아직 승인하지 않은 제안임을
+    "⏳ 승인 대기 중"으로 명확히 표시해, 아래 "현재 적용 중인 결과"와 혼동하지 않게 한다.
     """
     if proposal["status"] == "ollama_error":
         st.error(
@@ -318,7 +354,7 @@ def _render_nl_feedback_proposal(proposal: dict) -> None:
     # type == "set_weights"
     weights = proposal["weights"]
     weight_sum = sum(weights.values())
-    st.markdown("**AI 해석 결과 (아직 승인 전 - 결과가 바뀌지 않았습니다)**")
+    st.warning("⏳ **승인 대기 중인 제안** — 아직 적용되지 않았습니다. 아래에서 승인해야 반영됩니다.")
     preview_df = pd.DataFrame(
         [
             {
@@ -348,25 +384,41 @@ def _render_nl_feedback_proposal(proposal: dict) -> None:
         st.button("❌ 무시하기", width="stretch", on_click=_reject_nl_feedback_proposal)
 
 
+def _current_applied_weights_label() -> str:
+    """지금 이 순간 '실제로 점수 계산에 쓰이고 있는' 가중치를 문자열로 요약한다
+    (승인된 피드백이 있으면 그것, 없으면 최초 추천 가중치). 승인 대기 중인 AI 제안은
+    여기 포함하지 않는다 - 아직 적용된 게 아니기 때문이다."""
+    source = st.session_state.feedback_recommendation or st.session_state.initial_recommendation
+    if not source or source.get("status") != "ok":
+        return "없음"
+    parts = [
+        f"{FEEDBACK_INDICATOR_LABELS.get(uc['indicator_code'], uc['indicator_code'])} {uc['weight'] * 100:.0f}%"
+        for uc in source["used_conditions"]
+    ]
+    return ", ".join(parts) if parts else "없음"
+
+
 def render_feedback_section() -> None:
     """
-    '조건 조정 후 다시 비교하기' - 교통/의료/생활편의 가중치를 사용자가 직접 조정해
-    창원시 5개 구를 재평가한다. 가중치 정규화와 5개 구 재계산은
-    analysis.scoring.compute_region_scores_from_weights()가 전부 결정적으로
-    수행하며, 이 함수는 Ollama를 전혀 호출하지 않는다.
+    '조건 조정 후 다시 비교하기' - 교통/의료/생활편의 가중치를 수동 슬라이더 또는
+    자연어(AI 해석 + 승인)로 조정해 창원시 5개 구를 재평가한다. 가중치 정규화와
+    5개 구 재계산은 analysis.scoring.compute_region_scores_from_weights()가 전부
+    결정적으로 수행하며, AI는 자연어를 가중치 "제안"으로 해석만 할 뿐 점수를
+    계산하지 않는다.
     """
     st.divider()
     st.subheader("🔄 조건 조정 후 다시 비교하기")
     st.caption(
-        "교통·의료·생활편의 가중치를 직접 조정해서 창원시 5개 구를 다시 비교할 수 있습니다. "
-        "슬라이더 값의 합이 100이 아니어도 자동으로 100%로 정규화해서 계산합니다. "
-        "min-max 정규화 방식과 지표값 자체는 최초 추천과 동일합니다."
+        "교통·의료·생활편의 가중치를 직접 조정하거나 문장으로 요청해서 창원시 5개 구를 "
+        "다시 비교할 수 있습니다. min-max 정규화 방식과 지표값 자체는 최초 추천과 동일합니다."
     )
+    st.info(f"📌 현재 적용 중인 결과: {_current_applied_weights_label()}")
 
     for code, key in FEEDBACK_SLIDER_KEYS.items():
         if key not in st.session_state:
             st.session_state[key] = st.session_state.feedback_initial_weights.get(code, 0.0)
 
+    st.markdown("**① 슬라이더로 직접 조정**")
     cols = st.columns(3)
     current_weights: dict[str, float] = {}
     for col, code in zip(cols, FEEDBACK_SLIDER_KEYS):
@@ -400,12 +452,11 @@ def render_feedback_section() -> None:
             current_weights, candidate_count
         )
 
-    st.markdown("---")
-    st.markdown("**또는 자연어로 요청하기 (AI 해석)**")
+    st.markdown("**② 자연어로 요청 (AI 해석)**")
     st.caption(
         "예: '의료 80%, 교통 20%로 비교해줘'. 버튼을 누를 때만 로컬 Ollama(qwen3.5:4b)를 "
-        "호출하며, AI는 요청을 가중치로 해석만 할 뿐 점수는 계산하지 않습니다 - 실제 "
-        "재계산은 아래에서 승인해야 적용됩니다."
+        "호출하며, AI는 요청을 가중치 '제안'으로 해석만 할 뿐 점수는 계산하지 않습니다 - "
+        "실제 재계산은 아래에서 승인해야 적용됩니다."
     )
     nl_text = st.text_input("자연어 요청", key="nl_feedback_input", label_visibility="collapsed")
     if st.button("AI로 해석하기"):
@@ -437,7 +488,9 @@ def render_feedback_section() -> None:
         st.warning(f"⚠️ {feedback_result['message']}")
         return
 
-    st.markdown("### 📊 변경 전후 비교")
+    st.markdown("---")
+    st.markdown("### 📊 현재 적용 중인 피드백 결과 — 변경 전후 비교")
+    st.caption("아래는 최초 추천과, 지금까지 승인(또는 '다시 비교하기')으로 **실제 적용된** 가중치를 비교한 내용입니다.")
     initial_result = st.session_state.initial_recommendation
 
     initial_weight_by_code = {
@@ -518,7 +571,7 @@ def render_feedback_section() -> None:
             f"{biggest['점수 변화']:+.1f}점 {direction}."
         )
 
-    _render_top_candidates(feedback_result, heading="피드백 반영 후 추천 후보지역")
+    _render_top_candidates(feedback_result, heading="현재 적용 중인 피드백 기준 추천 후보지역")
 
 
 st.set_page_config(page_title="경남 이주자 생활권 탐색 AI", page_icon="🏡")
@@ -638,7 +691,11 @@ if st.session_state.stage == "input":
 # 2단계: AI 추가 질문 ----------------------------------------------------
 elif st.session_state.stage == "followup":
     st.subheader("📝 AI의 추가 질문")
-    st.write("추천 정확도를 높이기 위해 아래 질문에 답변해 주세요.")
+    st.write(
+        "거주 조건을 추가로 파악하기 위한 질문입니다. 답변은 저장되어 아래 완료 "
+        "화면에서 확인할 수 있지만, 현재 구현상 시설 수 기반 비교 점수 계산에는 "
+        "반영되지 않습니다."
+    )
 
     with st.form("followup_form"):
         answers = {}
@@ -657,26 +714,31 @@ elif st.session_state.stage == "followup":
         reset_all()
         st.rerun()
 
-# 3단계: 완료 - 수집된 정보 확인 ------------------------------------------
+# 3단계: 완료 - 추천 결과 중심 화면 ----------------------------------------
 elif st.session_state.stage == "done":
-    st.subheader("✅ 입력 정보 확인")
-    st.write("아래 정보가 저장되었습니다. 창원시 5개 구 비교 및 추천 결과는 아래에서 확인하세요.")
+    st.subheader("✅ 입력이 완료되었습니다")
+    st.caption("아래에서 창원시 5개 구 비교 및 추천 결과를 확인하세요.")
 
-    st.markdown("**최초 입력 정보**")
-    st.json(st.session_state.initial_input)
+    with st.expander("📝 내가 입력한 정보 보기 (최초 입력 + AI 추가질문 답변)"):
+        st.markdown("**최초 입력 정보**")
+        st.json(st.session_state.initial_input)
 
-    if st.session_state.followup_answers:
-        st.markdown("**AI 추가 질문에 대한 답변**")
-        st.json(st.session_state.followup_answers)
-    elif st.session_state.followup_questions == [] and st.session_state.stage == "done":
-        st.info("AI가 판단했을 때 추가로 필요한 정보가 없었습니다.")
+        if st.session_state.followup_answers:
+            st.markdown("**AI 추가질문에 대한 답변**")
+            st.json(st.session_state.followup_answers)
+            st.caption(
+                "ℹ️ 위 답변은 참고용으로 저장만 되며, 현재 시설 수 기반 비교 점수 계산에는 "
+                "반영되지 않습니다."
+            )
+        elif st.session_state.followup_questions == []:
+            st.info("AI가 판단했을 때 추가로 필요한 정보가 없었습니다.")
 
     st.divider()
     render_recommendation_section()
     render_feedback_section()
 
     st.divider()
-    st.subheader("📋 창원시 5개 구 상세 지표")
+    st.subheader("📋 창원시 5개 구 상세 공공데이터")
     render_indicator_category("의료", "🏥 창원시 의료기관 현황")
     st.divider()
     render_indicator_category("교통", "🚌 창원시 버스정류장 현황")
