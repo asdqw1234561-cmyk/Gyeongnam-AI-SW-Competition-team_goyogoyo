@@ -33,6 +33,9 @@
       `codes` 명령으로 실제 코드를 확인한 뒤 --inds-scls-cd 로 넘기면 서버에서 걸러져
       훨씬 빨라진다.
     - 기준일은 응답 header의 stdrYm(기준년월)을 사용한다. 응답에 없으면 "미확보"로 둔다.
+    - 수집 완전성: 구마다 모든 페이지 성공 + totalCount 불변 + max_pages 안에 종료 +
+      받은 레코드 수 == totalCount 일 때만 '확보'로 저장한다. 하나라도 어긋나면 그 구는
+      '미확보'로 남기고, --save 시 기존 CSV를 덮어쓰지 않는다(--allow-partial 예외).
 """
 
 from __future__ import annotations
@@ -126,25 +129,98 @@ def _items(data: dict) -> list[dict]:
     return items
 
 
-def iter_district_stores(service_key: str, signgu_cd: str, inds_scls_cd: str | None,
-                         num_of_rows: int, max_pages: int):
-    """한 구의 상가업소를 페이지 단위로 모두 순회한다. (header, item) 튜플을 yield."""
+class DistrictFetch:
+    """한 구의 페이지 조회 결과와 '빠짐없이 다 받았는지' 판정."""
+
+    def __init__(self):
+        self.items: list[dict] = []
+        self.reference_yms: set[str] = set()
+        self.total_count: int | None = None
+        self.pages: int = 0
+        self.complete: bool = False
+        self.reason: str = ""
+
+
+def _call_with_retry(params: dict, service_key: str, retries: int, retry_wait: float) -> dict:
+    last_exc: Exception | None = None
+    for attempt in range(retries + 1):
+        try:
+            return _call("storeListInDong", params, service_key)
+        except (ApiError, requests.RequestException, ValueError) as exc:
+            last_exc = exc
+            if attempt < retries:
+                time.sleep(retry_wait * (attempt + 1))
+    raise ApiError(f"pageNo={params.get('pageNo')} {retries + 1}회 시도 실패: {last_exc}")
+
+
+def fetch_district(service_key: str, signgu_cd: str, inds_scls_cd: str | None,
+                   num_of_rows: int, max_pages: int,
+                   retries: int = 2, retry_wait: float = 1.0) -> DistrictFetch:
+    """
+    한 구의 상가업소를 모든 페이지에 걸쳐 받는다. 예외를 던지지 않고 결과에 complete/reason을 남긴다.
+
+    complete=True 조건(모두 만족해야 '확보'):
+      - 모든 페이지 호출 성공(재시도 포함)
+      - 응답에 totalCount가 있고 페이지마다 값이 바뀌지 않음
+      - max_pages 안에 끝남
+      - 실제로 받은 레코드 수 == totalCount
+    """
+    result = DistrictFetch()
     params = {"divId": "signguCd", "key": signgu_cd, "numOfRows": num_of_rows}
     if inds_scls_cd:
         params["indsSclsCd"] = inds_scls_cd
+
     page_no = 1
-    while page_no <= max_pages:
-        data = _call("storeListInDong", {**params, "pageNo": page_no}, service_key)
-        items = _items(data)
+    while True:
+        if page_no > max_pages:
+            result.reason = (f"max_pages({max_pages}) 도달: {len(result.items)}/"
+                             f"{result.total_count}건만 조회")
+            return result
+        try:
+            data = _call_with_retry({**params, "pageNo": page_no}, service_key,
+                                    retries, retry_wait)
+        except ApiError as exc:
+            result.reason = f"페이지 조회 실패({len(result.items)}건 받은 뒤 중단): {exc}"[:300]
+            return result
+
+        result.pages = page_no
         header = data.get("header") or {}
-        for item in items:
-            yield header, item
-        total = int((data.get("body") or {}).get("totalCount") or 0)
-        if not items or page_no * num_of_rows >= total:
-            return
+        if header.get("stdrYm"):
+            result.reference_yms.add(str(header["stdrYm"]))
+
+        raw_total = (data.get("body") or {}).get("totalCount")
+        try:
+            total = int(raw_total)
+        except (TypeError, ValueError):
+            if str(header.get("resultCode")) == "03":  # 데이터 없음
+                total = 0
+            else:
+                result.reason = f"pageNo={page_no} 응답에 totalCount가 없어 완전성 검증 불가"
+                return result
+        if result.total_count is None:
+            result.total_count = total
+        elif total != result.total_count:
+            result.reason = (f"조회 중 totalCount 변경({result.total_count} -> {total}), "
+                             "데이터 갱신 중일 수 있어 재수집 필요")
+            return result
+
+        items = _items(data)
+        result.items.extend(items)
+
+        if len(result.items) >= result.total_count:
+            break
+        if not items:
+            result.reason = (f"pageNo={page_no}가 비어 있음: {len(result.items)}/"
+                             f"{result.total_count}건만 조회")
+            return result
         page_no += 1
         time.sleep(0.1)
-    print(f"  [경고] {signgu_cd}: max_pages({max_pages})에 도달해 일부만 조회했을 수 있습니다.")
+
+    if len(result.items) != result.total_count:
+        result.reason = f"받은 레코드 {len(result.items)}건 != totalCount {result.total_count}건"
+        return result
+    result.complete = True
+    return result
 
 
 def _to_store_row(item: dict, region_id: str, district: str,
@@ -168,8 +244,14 @@ def _to_store_row(item: dict, region_id: str, district: str,
 
 
 def collect(service_key: str, inds_scls_cd: str | None, type_name: str,
-            num_of_rows: int, max_pages: int) -> tuple[list[dict], list[dict]]:
-    """5개 구를 수집해 (업소 행 목록, 구별 집계 행 목록)을 반환한다."""
+            num_of_rows: int, max_pages: int,
+            retries: int = 2, retry_wait: float = 1.0) -> tuple[list[dict], list[dict]]:
+    """
+    5개 구를 수집해 (업소 행 목록, 구별 집계 행 목록)을 반환한다.
+
+    한 구라도 페이지가 빠졌으면(fetch_district().complete == False) 그 구는
+    count를 비우고 data_status="미확보"로 남기며, 일부만 받은 업소는 목록에 넣지 않는다.
+    """
     collected = date.today().isoformat()
     stores: list[dict] = []
     counts: list[dict] = []
@@ -177,38 +259,36 @@ def collect(service_key: str, inds_scls_cd: str | None, type_name: str,
 
     for signgu_cd, (region_id, district) in CHANGWON_DISTRICTS.items():
         print(f"- {district}({signgu_cd}) 조회 중...")
-        reference_yms: set[str] = set()
-        scanned = mismatched = 0
-        district_rows: list[dict] = []
-        try:
-            for header, item in iter_district_stores(
-                service_key, signgu_cd, inds_scls_cd, num_of_rows, max_pages
-            ):
-                scanned += 1
-                if header.get("stdrYm"):
-                    reference_yms.add(str(header["stdrYm"]))
-                if item.get("indsSclsNm") != type_name:
-                    continue
-                signgu_nm = str(item.get("signguNm", ""))
-                if district not in signgu_nm:
-                    mismatched += 1
-                    continue
-                bizes_id = str(item.get("bizesId", ""))
-                if bizes_id and bizes_id in seen_ids:
-                    continue
-                seen_ids.add(bizes_id)
-                district_rows.append(item)
-        except (ApiError, requests.RequestException) as exc:
-            print(f"  [실패] {district}: {exc}")
-            counts.append(_count_row(region_id, district, type_name, None,
-                                     NOT_SECURED, collected, f"API 호출 실패: {exc}"[:200]))
+        fetched = fetch_district(service_key, signgu_cd, inds_scls_cd, num_of_rows,
+                                 max_pages, retries, retry_wait)
+        if not fetched.complete:
+            print(f"  [미확보] {district}: {fetched.reason}")
+            counts.append(_count_row(region_id, district, type_name, None, NOT_SECURED,
+                                     collected, f"수집 불완전: {fetched.reason}"[:300]))
             continue
 
-        reference_ym = ",".join(sorted(reference_yms)) or NOT_SECURED
+        scanned = len(fetched.items)
+        mismatched = 0
+        district_rows: list[dict] = []
+        for item in fetched.items:
+            if item.get("indsSclsNm") != type_name:
+                continue
+            signgu_nm = str(item.get("signguNm", ""))
+            if district not in signgu_nm:
+                mismatched += 1
+                continue
+            bizes_id = str(item.get("bizesId", ""))
+            if bizes_id and bizes_id in seen_ids:
+                continue
+            seen_ids.add(bizes_id)
+            district_rows.append(item)
+
+        reference_ym = ",".join(sorted(fetched.reference_yms)) or NOT_SECURED
         for item in district_rows:
             stores.append(_to_store_row(item, region_id, district, reference_ym, collected))
 
-        note = f"조회 레코드 {scanned}건 중 indsSclsNm='{type_name}' 필터"
+        note = (f"조회 레코드 {scanned}건(totalCount 일치, {fetched.pages}페이지) 중 "
+                f"indsSclsNm='{type_name}' 필터")
         if mismatched:
             note += f", signguNm 불일치 {mismatched}건 제외"
         counts.append(_count_row(region_id, district, type_name, len(district_rows),
@@ -286,7 +366,8 @@ def cmd_codes(args: argparse.Namespace) -> None:
 def cmd_collect(args: argparse.Namespace) -> None:
     key = _get_service_key()
     stores, counts = collect(key, args.inds_scls_cd, args.type_name,
-                             args.num_of_rows, args.max_pages)
+                             args.num_of_rows, args.max_pages, args.retries)
+    incomplete = [row["district"] for row in counts if row["data_status"] != "확보"]
 
     print("\n=== 창원시 구별 편의점 수 ===")
     for row in counts:
@@ -298,6 +379,11 @@ def cmd_collect(args: argparse.Namespace) -> None:
     if not args.save:
         print("\n--save 없이 실행되어 파일은 만들지 않았습니다 (dry-run).")
         return
+    if incomplete and not args.allow_partial:
+        print(f"\n[저장 안 함] 수집이 불완전한 구가 있습니다: {', '.join(incomplete)}")
+        print("기존 CSV를 그대로 두었습니다. 잠시 후 다시 실행하세요.")
+        print("불완전한 구를 '미확보'로 표시한 채 저장하려면 --allow-partial 을 붙이세요.")
+        sys.exit(2)
     _write_csv(STORES_CSV, STORE_COLUMNS, stores)
     _write_csv(COUNTS_CSV, COUNT_COLUMNS, counts + _mart_not_secured_rows())
     print(f"\n저장 완료:\n  {STORES_CSV}\n  {COUNTS_CSV}")
@@ -322,6 +408,9 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--type-name", default=FACILITY_TYPE, help="indsSclsNm 일치 기준 (기본: 편의점)")
     p.add_argument("--num-of-rows", type=int, default=1000)
     p.add_argument("--max-pages", type=int, default=200)
+    p.add_argument("--retries", type=int, default=2, help="페이지 호출 실패 시 재시도 횟수")
+    p.add_argument("--allow-partial", action="store_true",
+                   help="불완전한 구가 있어도 저장(해당 구는 미확보, 업소 목록 제외)")
     p.set_defaults(func=cmd_collect)
 
     args = parser.parse_args(argv)
