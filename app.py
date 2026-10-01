@@ -7,6 +7,14 @@ from services.region_data import get_all_changwon_regions
 
 CHART_ACCENT_COLOR = "#2a78d6"
 
+# 화면에 표시할 간결한 주의사항. CSV의 note 컬럼(검증 정보 전체, 예외 ID 목록 등)은
+# data/region_indicators.csv에 그대로 보존되며, 여기서는 화면용 짧은 문구로만 대체한다.
+SHORT_NOTES = {
+    "hospital_count": "의원·치과의원·한의원 등이 포함된 등록 의료기관 수입니다.",
+    "bus_stop_count": "공식 행정경계 내부 좌표 기준 집계이며, 버스정류장 개수는 실제 통근시간을 의미하지 않습니다.",
+    "convenience_store_count": "상가정보에 등록된 업소 기준 집계로, 동일 주소 중복 등록 등으로 실제 영업 매장 수와 다를 수 있습니다.",
+}
+
 
 def render_indicator_category(category: str, section_title: str) -> None:
     """
@@ -56,7 +64,7 @@ def render_indicator_category(category: str, section_title: str) -> None:
             ),
             code,
         )
-        note_text = next(
+        note_text = SHORT_NOTES.get(code) or next(
             (
                 i["note"]
                 for region in regions
@@ -187,9 +195,13 @@ elif st.session_state.stage == "done":
 
     st.divider()
     render_indicator_category("의료", "🏥 창원시 의료기관 현황")
+    st.divider()
+    render_indicator_category("교통", "🚌 창원시 버스정류장 현황")
+    st.divider()
+    render_indicator_category("생활편의", "🏪 창원시 편의점 현황")
     st.caption(
         "현재는 창원시 5개 구 전체를 비교용으로 보여드리며, 지역 추천 순위나 "
-        "적합도 점수는 아직 계산하지 않습니다. 교통·생활편의·주거비 데이터가 "
+        "적합도 점수는 아직 계산하지 않습니다. 주거비 등 나머지 데이터가 "
         "확보되면 이 화면에 같은 방식으로 추가될 예정입니다."
     )
 

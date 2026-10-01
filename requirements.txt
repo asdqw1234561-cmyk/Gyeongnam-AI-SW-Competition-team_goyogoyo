@@ -7,3 +7,4 @@ requests
 pyshp
 shapely
 pyproj
+numpy
