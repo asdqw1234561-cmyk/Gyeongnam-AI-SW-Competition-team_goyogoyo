@@ -63,10 +63,12 @@ def main() -> None:
         found_codes.add(code)
 
         geom_5179 = shape(sr.shape.__geo_interface__)
-        # 해안선 디테일로 원본 정밀도가 과도하게 커서(피처당 수백KB~MB) 10m 허용오차로
-        # 단순화한다. 버스정류장 점-다각형 판정 목적에는 충분한 정밀도이며, 위상
-        # (구멍/자기교차 없음)은 preserve_topology=True로 보존한다.
-        geom_5179 = geom_5179.simplify(10, preserve_topology=True)
+        # 해안선 디테일로 원본 정밀도가 과도하게 커서(피처당 수백KB~MB) 단순화한다.
+        # 10m 허용오차는 실제 경계 부근 정류장 재검증에서 2개 구간(0-10m, 50-500m 등)의
+        # 점-다각형 판정을 원본과 다르게 만드는 것으로 확인되어, 2m로 낮춰
+        # 그 오차를 모두 제거했다(원본 SHP 전체 재검증으로 확인됨). 위상(구멍/자기교차
+        # 없음)은 preserve_topology=True로 보존한다.
+        geom_5179 = geom_5179.simplify(2, preserve_topology=True)
         geom_4326 = transform(transformer.transform, geom_5179)
 
         features.append(
@@ -92,7 +94,7 @@ def main() -> None:
         "features": features,
     }
     OUTPUT_GEOJSON.write_text(
-        json.dumps(geojson, ensure_ascii=False, indent=2), encoding="utf-8"
+        json.dumps(geojson, ensure_ascii=False), encoding="utf-8"  # compact - 좌표가 많아 indent 시 용량 급증
     )
     print(f"저장 완료: {OUTPUT_GEOJSON}")
     print(f"피처 수: {len(features)}개 (기대: 5개)")
