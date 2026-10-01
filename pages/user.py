@@ -39,6 +39,8 @@ import math
 import pandas as pd
 import streamlit as st
 
+from agent.location_agent import TOOL_LABELS as LOCATION_TOOL_LABELS
+from agent.location_agent import run_location_agent
 from services import bus_stops, convenience
 from services.map_markers import (
     SEARCH_CENTER_MARKER_COLOR,
@@ -244,6 +246,181 @@ def _render_nearby_list(bus_result: dict, store_result: dict) -> None:
             st.warning(store_result["message"])
 
 
+def _render_agent_bus_result(radius_m: int, result: dict) -> None:
+    st.markdown(f"**🚌 버스정류장 (반경 {radius_m}m)**")
+    st.caption(result["message"])
+    if result["status"] == "ok" and result["stops"]:
+        df = pd.DataFrame(
+            [
+                {
+                    "순위": s["rank"],
+                    "정류소명": s["stop_name"],
+                    "소속 구": s["district"],
+                    "직선거리(m)": s["straight_distance_m"],
+                    "품질 주의": bus_stops.QUALITY_FLAG_LABELS.get(s["quality_flag"], "-")
+                    if s["quality_flag"]
+                    else "-",
+                }
+                for s in result["stops"]
+            ]
+        )
+        st.dataframe(df, hide_index=True, width="stretch")
+        st.caption(f"출처: {result['source']} (기준일 {result['reference_date']})")
+    elif result["status"] == "invalid_input":
+        st.error(result["message"])
+    elif result["status"] == "no_data":
+        st.warning(result["message"])
+
+
+def _render_agent_convenience_result(radius_m: int, result: dict) -> None:
+    st.markdown(f"**🏪 편의점 (반경 {radius_m}m)**")
+    st.caption(result["message"])
+    if result["status"] == "ok" and result["stores"]:
+        df = pd.DataFrame(
+            [
+                {
+                    "순위": s["rank"],
+                    "상호명": s["facility_name"],
+                    "소속 구": s["district"],
+                    "직선거리(m)": s["straight_distance_m"],
+                    "도로명주소": s["road_address"],
+                }
+                for s in result["stores"]
+            ]
+        )
+        st.dataframe(df, hide_index=True, width="stretch")
+        if result["source"]:
+            st.caption(f"출처: {result['source']} (기준년월 {result['reference_date']})")
+    elif result["status"] == "invalid_input":
+        st.error(result["message"])
+    elif result["status"] == "no_data":
+        st.warning(result["message"])
+
+
+def _render_agent_compare_result(result: dict) -> None:
+    st.markdown("**📊 반경별(300m/500m/1km) 비교**")
+    bus_cmp = result["bus_stops"]
+    store_cmp = result["convenience_stores"]
+
+    def _cell(cmp_result: dict, radius: int) -> str:
+        if cmp_result["status"] != "ok":
+            return "미확보" if cmp_result["status"] == "no_data" else "조회 실패"
+        value = cmp_result["counts"].get(radius)
+        return "미확보" if value is None else f"{value}건"
+
+    rows = [
+        {"시설": "🚌 버스정류장", **{f"{r}m" if r != 1000 else "1km": _cell(bus_cmp, r) for r in RADII_M}},
+        {"시설": "🏪 편의점", **{f"{r}m" if r != 1000 else "1km": _cell(store_cmp, r) for r in RADII_M}},
+    ]
+    st.dataframe(pd.DataFrame(rows), hide_index=True, width="stretch")
+
+
+def _render_agent_executed_entry(entry: dict) -> None:
+    icon = "✅" if entry["executed"] else "❌"
+    st.caption(f"{icon} {LOCATION_TOOL_LABELS.get(entry['tool'], entry['tool'])}" + (f" — {entry['reason']}" if entry.get("reason") else ""))
+    if not entry["executed"]:
+        st.error(f"⚠️ 실행 중 오류: {entry['error']}")
+        return
+    if entry["tool"] == "find_nearby_bus_stops":
+        _render_agent_bus_result(entry["radius_m"], entry["result"])
+    elif entry["tool"] == "find_nearby_convenience_stores":
+        _render_agent_convenience_result(entry["radius_m"], entry["result"])
+    elif entry["tool"] == "compare_nearby_facilities":
+        _render_agent_compare_result(entry["result"])
+
+
+def render_location_agent_execution_log(result: dict) -> None:
+    """'🔍 AI 위치 분석 실행 과정 보기' 접기 영역 - run_location_agent()의 반환값을
+    그대로 보여줄 뿐 여기서 새로 판단하거나 숫자를 만들지 않는다. "AI가 제안한
+    계획"과 "Python이 실제 실행한 작업"을 항상 구분해서 표시한다."""
+    if result["mode"] == "ai_planned":
+        st.success("✅ AI가 계획한 작업을 Python이 검증한 뒤 그대로 실행했습니다.")
+    elif result["planner_error"]:
+        st.warning(f"⚠️ AI 분석 계획을 생성하지 못해 기본 조회 절차를 사용했습니다: {result['planner_error']}")
+    else:
+        st.warning("⚠️ AI가 제안한 계획이 검증을 통과하지 못해 기본 조회 절차를 사용했습니다.")
+
+    st.markdown("**1. AI가 제안한 분석 목표**")
+    if result["goals"]:
+        for g in result["goals"]:
+            st.caption(f"· {g}")
+    else:
+        st.caption("(없음)")
+
+    st.markdown("**2. AI가 제안한 도구 호출 계획 (검증 전 원본)**")
+    if result["planned_tool_calls"]:
+        for call in result["planned_tool_calls"]:
+            tool = call.get("tool") if isinstance(call, dict) else call
+            reason = call.get("reason", "") if isinstance(call, dict) else ""
+            st.caption(f"· {LOCATION_TOOL_LABELS.get(tool, tool)} — {reason}")
+    else:
+        st.caption("AI 계획 호출 자체가 없었습니다(Ollama 연결 실패 등).")
+
+    st.markdown("**3. Python이 검증한(허용된) 도구 목록**")
+    st.caption(", ".join(LOCATION_TOOL_LABELS.values()))
+
+    st.markdown("**4. 실제 실행한 도구와 실행 상태**")
+    if result["executed_tool_calls"]:
+        for i, entry in enumerate(result["executed_tool_calls"], start=1):
+            icon = "✅" if entry["executed"] else "❌"
+            err = f" - 오류: {entry['error']}" if entry.get("error") else ""
+            st.caption(f"{icon} {i}. {LOCATION_TOOL_LABELS.get(entry['tool'], entry['tool'])}{err}")
+    else:
+        st.caption("실행된 도구가 없습니다(지원하지 않는 요청이었거나 실행할 내용이 없었습니다).")
+
+    st.markdown("**5. 검증 과정에서 수정하거나 거부한 내용**")
+    if result["notes"]:
+        for n in result["notes"]:
+            st.caption(f"· {n}")
+    else:
+        st.caption("(없음)")
+
+    st.markdown("**6. Ollama 실패 시 기본 절차 전환 여부**")
+    st.caption("예 - 기본 절차를 사용했습니다." if result["mode"] == "fallback_default" else "아니오 - AI 계획을 그대로 실행했습니다.")
+
+
+def render_location_agent_result(result: dict) -> None:
+    if result["status"] == "rejected_input":
+        st.error(f"⚠️ {result['message']}")
+        return
+
+    if result["search_center"] != st.session_state.search_center:
+        prev_lat, prev_lon = result["search_center"]
+        st.warning(
+            f"⚠️ 이 결과는 이전 위치(위도 {prev_lat:.6f}, 경도 {prev_lon:.6f})에서 실행한 "
+            "결과입니다. 현재 확정된 검색 중심과 다릅니다 - 최신 결과를 보려면 다시 실행해 "
+            "주세요."
+        )
+
+    st.markdown("**A. 사용자 요청**")
+    st.write(f"> {result['user_text']}")
+
+    st.markdown("**B. 실제 검색 기준**")
+    lat, lon = result["search_center"]
+    radius_label = f"{result['resolved_radius_m']}m" if result["resolved_radius_m"] != 1000 else "1km"
+    source_label = "요청 문장에서 직접 명시" if result["radius_source"] == "explicit_text" else "화면에서 선택된 기본값"
+    st.write(f"검색 중심: 위도 {lat:.6f}, 경도 {lon:.6f} · 검색 반경: {radius_label} ({source_label})")
+
+    st.markdown("**C. AI 분석 결과**")
+    if result["unsupported_requests"]:
+        for item in result["unsupported_requests"]:
+            st.info(f"ℹ️ 지원하지 않는 요청입니다: {item['request']} - {item['reason']}")
+
+    if result["executed_tool_calls"]:
+        for entry in result["executed_tool_calls"]:
+            _render_agent_executed_entry(entry)
+    elif not result["unsupported_requests"]:
+        st.caption("실행된 조회가 없습니다.")
+
+    st.caption(
+        "실제 도보 이동시간·대중교통 소요시간·버스 노선 및 배차 간격은 계산하지 않습니다 "
+        "- 위 수치는 정류소아이디·등록 업소 기준 조회 결과일 뿐입니다."
+    )
+
+    with st.expander("🔍 AI 위치 분석 실행 과정 보기"):
+        render_location_agent_execution_log(result)
+
+
 # ---------------------------------------------------------------------------
 # 화면 시작
 # ---------------------------------------------------------------------------
@@ -261,6 +438,12 @@ if "map_click_candidate" not in st.session_state:
     st.session_state.map_click_candidate = None  # 지도에서 클릭했지만 아직 확정 안 한 좌표
 if "map_click_seen" not in st.session_state:
     st.session_state.map_click_seen = None  # 마지막으로 "처리"한 클릭 좌표(중복 처리 방지)
+if "location_agent_result" not in st.session_state:
+    # run_location_agent()의 반환값을 통째로 저장한다. "🤖 AI 분석 실행" 버튼을 눌렀을
+    # 때만 채워지며(지도 이동·레이어 토글·반경 변경 등 다른 재실행에서는 절대 갱신하지
+    # 않음), 실행 당시의 search_center/반경도 같이 저장돼 있어 이후 검색 중심이
+    # 바뀌어도 "이전 위치의 결과"임을 구분해서 보여줄 수 있다.
+    st.session_state.location_agent_result = None
 
 st.subheader("1. 검색 중심 위치 설정")
 location_mode = st.radio("위치 설정 방식", LOCATION_MODES, horizontal=True)
@@ -415,11 +598,43 @@ else:
     _render_comparison_table(lat_input, lon_input)
 
     st.divider()
-    st.subheader(f"5. 주변 시설 목록 (반경 {radius_choice}m 이내)" if radius_choice != 1000 else "5. 주변 시설 목록 (반경 1km 이내)")
+    st.subheader("5. 🤖 AI에게 주변 생활시설 분석 요청하기")
+    st.caption(
+        "자연어로 요청하면 로컬 Ollama(qwen3.5:4b)가 어떤 조회 도구를 쓸지 계획하고, "
+        "Python이 그 계획을 검증한 뒤 실제 데이터를 조회합니다. 검색 중심 좌표는 항상 "
+        "위에서 확정한 좌표만 사용되며, AI가 임의로 바꿀 수 없습니다."
+    )
+    agent_request_text = st.text_input(
+        "분석 요청",
+        key="location_agent_input",
+        placeholder="예: 이 위치에서 500m 안에 버스정류장과 편의점이 얼마나 있어?",
+        label_visibility="collapsed",
+    )
+    # 버튼을 눌렀을 때만 run_location_agent()(Ollama 호출 포함)를 실행한다 - 지도
+    # 이동·레이어 토글·반경 변경 등 다른 재실행에서는 절대 호출되지 않는다.
+    if st.button("🤖 AI 분석 실행", type="primary"):
+        if not agent_request_text.strip():
+            st.warning("분석 요청 문장을 입력해 주세요.")
+        else:
+            with st.spinner("AI가 분석 계획을 세우고 실제 데이터를 조회하는 중입니다..."):
+                st.session_state.location_agent_result = run_location_agent(
+                    user_text=agent_request_text,
+                    # 승인된 확정 좌표만 넘긴다 - map_click_candidate(미확정 후보)는
+                    # 여기 절대 쓰지 않는다(가장 중요한 요구사항).
+                    search_center=st.session_state.search_center,
+                    ui_radius_m=radius_choice,
+                    ui_max_results=max_results,
+                )
+
+    if st.session_state.location_agent_result is not None:
+        render_location_agent_result(st.session_state.location_agent_result)
+
+    st.divider()
+    st.subheader(f"6. 주변 시설 목록 (반경 {radius_choice}m 이내)" if radius_choice != 1000 else "6. 주변 시설 목록 (반경 1km 이내)")
     _render_nearby_list(bus_result, store_result)
 
     st.divider()
-    st.subheader("6. 데이터 출처와 한계 안내")
+    st.subheader("7. 데이터 출처와 한계 안내")
     for c in DISTANCE_CAVEATS:
         st.caption(f"· {c}")
     with st.expander("데이터 품질 참고 (버스정류장)"):
