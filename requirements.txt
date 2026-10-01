@@ -1,4 +1,5 @@
 streamlit>=1.36
 anthropic
+ollama
 pandas
 python-dotenv
