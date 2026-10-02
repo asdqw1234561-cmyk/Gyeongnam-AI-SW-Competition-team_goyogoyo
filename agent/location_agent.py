@@ -78,6 +78,14 @@ DEFAULT_RADIUS_M = 500
 MAX_RESULTS_LIMIT = 30  # pages/user.py 슬라이더 상한과 동일하게 맞춤
 MAX_TOOL_CALLS = 4
 
+# ---------------------------------------------------------------------------
+# 요청 키워드 패턴 - 도구 선택 범위 검증(guardrail)에만 사용하며 AI 계획을 대체하지 않음
+# ---------------------------------------------------------------------------
+_BUS_PATTERN = re.compile(r"버스|정류장|정류소")
+_CONV_PATTERN = re.compile(r"편의점")
+_NEAREST_PATTERN = re.compile(r"가장\s*가까운|제일\s*가까운")
+_COMPARE_PATTERN = re.compile(r"비교|반경별|거리별")
+
 
 # ---------------------------------------------------------------------------
 # 도구 실행 함수 - 전부 기존 서비스 함수를 그대로 호출(새 계산식 없음)
@@ -127,6 +135,40 @@ def extract_explicit_radius_m(text: str) -> dict:
 
 
 # ---------------------------------------------------------------------------
+# 사용자 요청 제약조건 추출 - AI 계획의 guardrail (AI를 대체하지 않음)
+# ---------------------------------------------------------------------------
+def extract_request_constraints(text: str) -> dict:
+    """
+    사용자 문장에서 도구 선택 검증에 필요한 제약조건을 추출한다.
+    이 함수는 AI의 도구 선택을 대체하지 않고, AI 계획이 사용자 요청 범위에
+    맞는지 Python이 검증할 때만 쓰는 guardrail이다.
+
+    Returns:
+        {
+            "requested_facilities": ["bus_stop"] | ["convenience"] | ["bus_stop","convenience"] | [],
+            "explicit_radius_m": int | None,
+            "wants_radius_comparison": bool,
+            "nearest_only": bool,
+        }
+    """
+    text = text or ""
+    facilities: list[str] = []
+    if _BUS_PATTERN.search(text):
+        facilities.append("bus_stop")
+    if _CONV_PATTERN.search(text):
+        facilities.append("convenience")
+
+    radius_info = extract_explicit_radius_m(text)
+
+    return {
+        "requested_facilities": facilities,
+        "explicit_radius_m": radius_info["radius_m"],
+        "wants_radius_comparison": bool(_COMPARE_PATTERN.search(text)),
+        "nearest_only": bool(_NEAREST_PATTERN.search(text)),
+    }
+
+
+# ---------------------------------------------------------------------------
 # 계획 수립 (Ollama 호출)
 # ---------------------------------------------------------------------------
 LOCATION_AGENT_SYSTEM_PROMPT = """당신은 경남 이주자 생활권 탐색 서비스의 위치 기반 분석 도우미입니다.
@@ -158,7 +200,11 @@ LOCATION_AGENT_SYSTEM_PROMPT = """당신은 경남 이주자 생활권 탐색 �
 - 추론 과정을 출력하지 마세요. 각 도구 호출의 reason은 한 문장으로 간단히만 적으세요.
 - 반드시 아래 JSON 형식으로만 응답하세요. 다른 설명이나 markdown은 포함하지 마세요.
 
+[지원 가능 예시]
 {"goals": ["주변 버스정류장 조회"], "tool_calls": [{"tool": "find_nearby_bus_stops", "reason": "사용자가 버스정류장 수를 물었음"}], "unsupported_requests": []}
+
+[지원 불가 예시 - 이동시간, 월세, 배차간격 등]
+{"goals": [], "tool_calls": [], "unsupported_requests": [{"request": "버스 이동시간", "reason": "이 서비스는 정류장 개수만 조회할 수 있으며 이동시간·배차간격·경로 데이터가 없습니다"}]}
 """
 
 
@@ -213,9 +259,135 @@ def call_location_planner(user_text: str, resolved_radius_m: int) -> dict:
 
 
 # ---------------------------------------------------------------------------
+# 도구 선택 범위 보정 - AI가 제안한 도구가 사용자 요청 범위보다 넓으면 최소 도구로 교체
+# ---------------------------------------------------------------------------
+def _apply_scope_corrections(
+    tool_calls: list[dict],
+    constraints: dict,
+    resolved_radius_m: int,
+    ui_max_results: int,
+) -> tuple[list[dict], list[dict]]:
+    """
+    검증·정규화된 tool_calls를 사용자 요청 범위에 맞게 최소 보정한다.
+
+    보정 조건:
+    - compare_nearby_facilities + wants_radius_comparison=False + 특정 시설 요청
+      → 단일 시설 도구(들)로 교체
+    - 단일 시설 도청에 반대 시설 도구가 제안된 경우 교체
+    - nearest_only=True 시 단일 시설 도구의 max_results=1 강제
+
+    Returns:
+        (보정된 tool_calls, corrections 기록 목록)
+        corrections 항목: {"original_tool", "corrected_to": [str,...], "note"}
+    """
+    facilities = constraints.get("requested_facilities", [])
+    wants_comparison = constraints.get("wants_radius_comparison", False)
+    nearest_only = constraints.get("nearest_only", False)
+
+    if not facilities and not nearest_only:
+        return tool_calls, []
+
+    corrections: list[dict] = []
+    result: list[dict] = []
+    added_tools: set[str] = set()
+
+    for call in tool_calls:
+        tool = call["tool"]
+
+        # compare_nearby_facilities → 단일 시설 도구로 보정
+        if tool == "compare_nearby_facilities" and not wants_comparison and facilities:
+            new_calls: list[dict] = []
+            if "bus_stop" in facilities and "find_nearby_bus_stops" not in added_tools:
+                new_calls.append({
+                    "tool": "find_nearby_bus_stops",
+                    "reason": call.get("reason", ""),
+                    "radius_m": resolved_radius_m,
+                    "max_results": 1 if nearest_only else ui_max_results,
+                })
+            if "convenience" in facilities and "find_nearby_convenience_stores" not in added_tools:
+                new_calls.append({
+                    "tool": "find_nearby_convenience_stores",
+                    "reason": call.get("reason", ""),
+                    "radius_m": resolved_radius_m,
+                    "max_results": 1 if nearest_only else ui_max_results,
+                })
+            if new_calls:
+                to_labels = " + ".join(TOOL_LABELS.get(c["tool"], c["tool"]) for c in new_calls)
+                corrections.append({
+                    "original_tool": tool,
+                    "corrected_to": [c["tool"] for c in new_calls],
+                    "note": (
+                        f"AI가 '{TOOL_LABELS[tool]}'을 제안했지만 사용자는 반경별 비교가 아닌 "
+                        f"단일 조회를 요청했습니다. '{to_labels}'으로 보정했습니다."
+                    ),
+                })
+                for c in new_calls:
+                    result.append(c)
+                    added_tools.add(c["tool"])
+            continue
+
+        # 버스정류장 도구가 제안됐지만 편의점만 요청한 경우
+        if (
+            tool == "find_nearby_bus_stops"
+            and facilities
+            and "bus_stop" not in facilities
+            and "convenience" in facilities
+        ):
+            if "find_nearby_convenience_stores" not in added_tools:
+                corrected = {**call, "tool": "find_nearby_convenience_stores"}
+                corrections.append({
+                    "original_tool": tool,
+                    "corrected_to": ["find_nearby_convenience_stores"],
+                    "note": "AI가 버스정류장 조회를 제안했지만 사용자는 편의점을 요청했습니다. 편의점 조회로 보정했습니다.",
+                })
+                result.append(corrected)
+                added_tools.add("find_nearby_convenience_stores")
+            continue
+
+        # 편의점 도구가 제안됐지만 버스정류장만 요청한 경우
+        if (
+            tool == "find_nearby_convenience_stores"
+            and facilities
+            and "convenience" not in facilities
+            and "bus_stop" in facilities
+        ):
+            if "find_nearby_bus_stops" not in added_tools:
+                corrected = {**call, "tool": "find_nearby_bus_stops"}
+                corrections.append({
+                    "original_tool": tool,
+                    "corrected_to": ["find_nearby_bus_stops"],
+                    "note": "AI가 편의점 조회를 제안했지만 사용자는 버스정류장을 요청했습니다. 버스정류장 조회로 보정했습니다.",
+                })
+                result.append(corrected)
+                added_tools.add("find_nearby_bus_stops")
+            continue
+
+        # nearest_only: 단일 시설 도구의 max_results=1 강제
+        if nearest_only and tool in ("find_nearby_bus_stops", "find_nearby_convenience_stores"):
+            if call.get("max_results", ui_max_results) != 1:
+                corrections.append({
+                    "original_tool": tool,
+                    "corrected_to": [tool],
+                    "note": (
+                        f"'가장 가까운' 요청으로 max_results를 "
+                        f"{call.get('max_results', ui_max_results)}에서 1로 보정했습니다."
+                    ),
+                })
+                call = {**call, "max_results": 1}
+
+        # 보정 없음 - 중복 방지 후 추가
+        if tool == "compare_nearby_facilities" or tool not in added_tools:
+            result.append(call)
+            if tool != "compare_nearby_facilities":
+                added_tools.add(tool)
+
+    return result, corrections
+
+
+# ---------------------------------------------------------------------------
 # 계획 검증 - LLM의 계획을 그대로 신뢰하지 않는다
 # ---------------------------------------------------------------------------
-def validate_and_normalize_plan(plan: object, resolved_radius_m: int, ui_max_results: int) -> dict:
+def validate_and_normalize_plan(plan: object, resolved_radius_m: int, ui_max_results: int, constraints: dict | None = None) -> dict:
     """
     AI가 제안한 계획(plan)을 검증해 Python이 실제로 실행할 수 있는 형태로
     정규화한다. tool_calls가 빈 리스트인 것 자체는 유효하다(지원하지 않는
@@ -285,7 +457,11 @@ def validate_and_normalize_plan(plan: object, resolved_radius_m: int, ui_max_res
         seen_signatures.add(sig)
         normalized.append(entry)
 
-    return {"status": "ok", "tool_calls": normalized, "notes": notes}
+    corrections: list[dict] = []
+    if constraints is not None:
+        normalized, corrections = _apply_scope_corrections(normalized, constraints, resolved_radius_m, ui_max_results)
+
+    return {"status": "ok", "tool_calls": normalized, "notes": notes, "corrections": corrections}
 
 
 # ---------------------------------------------------------------------------
@@ -401,6 +577,8 @@ def run_location_agent(
             "executed_tool_calls": [],
             "notes": [],
             "planner_error": None,
+            "constraints": None,
+            "corrections": [],
         }
 
     if extract["found"]:
@@ -410,6 +588,8 @@ def run_location_agent(
         resolved_radius_m = ui_radius_m if ui_radius_m in SUPPORTED_RADII_M else DEFAULT_RADIUS_M
         radius_source = "ui_default"
 
+    constraints = extract_request_constraints(user_text)
+
     planner_error: str | None = None
     plan: dict | None = None
     try:
@@ -418,14 +598,16 @@ def run_location_agent(
         planner_error = str(exc)
 
     if planner_error is None:
-        validated = validate_and_normalize_plan(plan, resolved_radius_m, ui_max_results)
+        validated = validate_and_normalize_plan(plan, resolved_radius_m, ui_max_results, constraints=constraints)
     else:
         validated = {"status": "rejected", "reason": planner_error}
 
     notes: list[str] = []
+    corrections: list[dict] = []
     if validated["status"] == "ok":
         tool_calls = validated["tool_calls"]
         notes = list(validated["notes"])
+        corrections = list(validated.get("corrections", []))
         unsupported = _sanitize_unsupported_requests(plan.get("unsupported_requests") if isinstance(plan, dict) else None)
         goals = _sanitize_goals(plan.get("goals") if isinstance(plan, dict) else None)
         if not tool_calls and not unsupported:
@@ -459,4 +641,6 @@ def run_location_agent(
         "executed_tool_calls": executed,
         "notes": notes,
         "planner_error": planner_error,
+        "constraints": constraints,
+        "corrections": corrections,
     }

@@ -395,6 +395,428 @@ class RunLocationAgentTest(unittest.TestCase):
         self.assertEqual(result["mode"], "fallback_default")
 
 
+class ExtractRequestConstraintsTest(unittest.TestCase):
+    """extract_request_constraints() - guardrail 제약조건 추출."""
+
+    def test_bus_keyword_detected(self):
+        result = location_agent.extract_request_constraints("500m 안에 버스정류장이 몇 개 있어?")
+        self.assertIn("bus_stop", result["requested_facilities"])
+        self.assertNotIn("convenience", result["requested_facilities"])
+
+    def test_convenience_keyword_detected(self):
+        result = location_agent.extract_request_constraints("500m 안에 편의점이 몇 개 있어?")
+        self.assertIn("convenience", result["requested_facilities"])
+        self.assertNotIn("bus_stop", result["requested_facilities"])
+
+    def test_both_facilities_detected(self):
+        result = location_agent.extract_request_constraints("500m 안에 버스정류장과 편의점이 얼마나 있어?")
+        self.assertIn("bus_stop", result["requested_facilities"])
+        self.assertIn("convenience", result["requested_facilities"])
+
+    def test_no_facility_keywords(self):
+        result = location_agent.extract_request_constraints("주변 시설 알려줘")
+        self.assertEqual(result["requested_facilities"], [])
+
+    def test_nearest_only_detected(self):
+        result = location_agent.extract_request_constraints("가장 가까운 버스정류장이 어디야?")
+        self.assertTrue(result["nearest_only"])
+
+    def test_nearest_only_not_detected(self):
+        result = location_agent.extract_request_constraints("500m 안에 버스정류장이 몇 개 있어?")
+        self.assertFalse(result["nearest_only"])
+
+    def test_comparison_keyword_detected(self):
+        result = location_agent.extract_request_constraints("300m, 500m, 1km별로 시설 수를 비교해줘")
+        self.assertTrue(result["wants_radius_comparison"])
+
+    def test_comparison_keyword_radius_byeol(self):
+        result = location_agent.extract_request_constraints("반경별 시설 현황을 비교해줘")
+        self.assertTrue(result["wants_radius_comparison"])
+
+    def test_comparison_not_detected_for_single_query(self):
+        result = location_agent.extract_request_constraints("500m 안에 버스정류장이 몇 개 있어?")
+        self.assertFalse(result["wants_radius_comparison"])
+
+    def test_explicit_radius_extracted(self):
+        result = location_agent.extract_request_constraints("300m 안의 편의점 알려줘")
+        self.assertEqual(result["explicit_radius_m"], 300)
+
+    def test_unsupported_radius_is_none(self):
+        result = location_agent.extract_request_constraints("200m 안에 뭐 있어?")
+        self.assertIsNone(result["explicit_radius_m"])
+
+
+class ScopeCorrectionUnitTest(unittest.TestCase):
+    """validate_and_normalize_plan() + constraints - 범위 보정 단위 테스트."""
+
+    def _bus_constraints(self, nearest_only=False):
+        return {
+            "requested_facilities": ["bus_stop"],
+            "explicit_radius_m": 500,
+            "wants_radius_comparison": False,
+            "nearest_only": nearest_only,
+        }
+
+    def _conv_constraints(self):
+        return {
+            "requested_facilities": ["convenience"],
+            "explicit_radius_m": 500,
+            "wants_radius_comparison": False,
+            "nearest_only": False,
+        }
+
+    def _both_constraints(self):
+        return {
+            "requested_facilities": ["bus_stop", "convenience"],
+            "explicit_radius_m": 500,
+            "wants_radius_comparison": False,
+            "nearest_only": False,
+        }
+
+    def _compare_constraints(self):
+        return {
+            "requested_facilities": ["bus_stop", "convenience"],
+            "explicit_radius_m": None,
+            "wants_radius_comparison": True,
+            "nearest_only": False,
+        }
+
+    def test_compare_corrected_to_bus_for_bus_only_request(self):
+        """시나리오 7: AI가 compare를 제안했는데 버스 단일 요청 → bus 도구로 보정."""
+        plan = {"tool_calls": [{"tool": "compare_nearby_facilities", "reason": "x"}]}
+        result = location_agent.validate_and_normalize_plan(
+            plan, 500, 10, constraints=self._bus_constraints()
+        )
+        self.assertEqual(result["status"], "ok")
+        tools = [c["tool"] for c in result["tool_calls"]]
+        self.assertIn("find_nearby_bus_stops", tools)
+        self.assertNotIn("compare_nearby_facilities", tools)
+        self.assertTrue(result["corrections"])
+        self.assertEqual(result["corrections"][0]["original_tool"], "compare_nearby_facilities")
+
+    def test_compare_corrected_to_conv_for_conv_only_request(self):
+        """편의점 단일 요청에 compare → convenience 도구로 보정."""
+        plan = {"tool_calls": [{"tool": "compare_nearby_facilities", "reason": "x"}]}
+        result = location_agent.validate_and_normalize_plan(
+            plan, 500, 10, constraints=self._conv_constraints()
+        )
+        tools = [c["tool"] for c in result["tool_calls"]]
+        self.assertIn("find_nearby_convenience_stores", tools)
+        self.assertNotIn("compare_nearby_facilities", tools)
+        self.assertTrue(result["corrections"])
+
+    def test_compare_corrected_to_both_for_both_facilities_request(self):
+        """시나리오 3: 두 시설 요청에 compare → 두 단일 도구로 보정."""
+        plan = {"tool_calls": [{"tool": "compare_nearby_facilities", "reason": "x"}]}
+        result = location_agent.validate_and_normalize_plan(
+            plan, 500, 10, constraints=self._both_constraints()
+        )
+        tools = {c["tool"] for c in result["tool_calls"]}
+        self.assertEqual(tools, {"find_nearby_bus_stops", "find_nearby_convenience_stores"})
+        self.assertNotIn("compare_nearby_facilities", tools)
+
+    def test_compare_allowed_when_comparison_requested(self):
+        """시나리오 4: 반경별 비교 요청 → compare_nearby_facilities 그대로 허용."""
+        plan = {"tool_calls": [{"tool": "compare_nearby_facilities", "reason": "x"}]}
+        result = location_agent.validate_and_normalize_plan(
+            plan, 500, 10, constraints=self._compare_constraints()
+        )
+        tools = [c["tool"] for c in result["tool_calls"]]
+        self.assertIn("compare_nearby_facilities", tools)
+        self.assertEqual(result["corrections"], [])
+
+    def test_bus_tool_corrected_when_only_convenience_requested(self):
+        """시나리오 8: 편의점 요청에 bus 도구 제안 → convenience로 보정."""
+        plan = {"tool_calls": [{"tool": "find_nearby_bus_stops", "reason": "x"}]}
+        result = location_agent.validate_and_normalize_plan(
+            plan, 500, 10, constraints=self._conv_constraints()
+        )
+        tools = [c["tool"] for c in result["tool_calls"]]
+        self.assertIn("find_nearby_convenience_stores", tools)
+        self.assertNotIn("find_nearby_bus_stops", tools)
+        self.assertTrue(result["corrections"])
+
+    def test_conv_tool_corrected_when_only_bus_requested(self):
+        """버스 요청에 convenience 도구 제안 → bus로 보정."""
+        plan = {"tool_calls": [{"tool": "find_nearby_convenience_stores", "reason": "x"}]}
+        result = location_agent.validate_and_normalize_plan(
+            plan, 500, 10, constraints=self._bus_constraints()
+        )
+        tools = [c["tool"] for c in result["tool_calls"]]
+        self.assertIn("find_nearby_bus_stops", tools)
+        self.assertNotIn("find_nearby_convenience_stores", tools)
+        self.assertTrue(result["corrections"])
+
+    def test_nearest_only_forces_max_results_one(self):
+        """시나리오 5/6: nearest_only=True → max_results 강제 1."""
+        plan = {"tool_calls": [{"tool": "find_nearby_bus_stops", "max_results": 10, "reason": "x"}]}
+        result = location_agent.validate_and_normalize_plan(
+            plan, 500, 10, constraints=self._bus_constraints(nearest_only=True)
+        )
+        self.assertEqual(result["tool_calls"][0]["max_results"], 1)
+        self.assertTrue(result["corrections"])
+
+    def test_no_correction_without_constraints(self):
+        """constraints=None이면 보정 없음 - 기존 동작 유지."""
+        plan = {"tool_calls": [{"tool": "compare_nearby_facilities", "reason": "x"}]}
+        result = location_agent.validate_and_normalize_plan(plan, 500, 10)
+        tools = [c["tool"] for c in result["tool_calls"]]
+        self.assertIn("compare_nearby_facilities", tools)
+        self.assertEqual(result.get("corrections", []), [])
+
+    def test_no_correction_when_no_facility_keywords(self):
+        """시설 키워드 없으면 compare 보정 안 함."""
+        constraints = {
+            "requested_facilities": [],
+            "explicit_radius_m": None,
+            "wants_radius_comparison": False,
+            "nearest_only": False,
+        }
+        plan = {"tool_calls": [{"tool": "compare_nearby_facilities", "reason": "x"}]}
+        result = location_agent.validate_and_normalize_plan(plan, 500, 10, constraints=constraints)
+        tools = [c["tool"] for c in result["tool_calls"]]
+        self.assertIn("compare_nearby_facilities", tools)
+        self.assertEqual(result["corrections"], [])
+
+
+class RunLocationAgentScopeCorrectionTest(unittest.TestCase):
+    """run_location_agent() 통합 - 범위 보정 시나리오."""
+
+    # ── 시나리오 1: 버스 단일 요청, AI가 올바로 bus 제안 ──────────────────────
+    def test_bus_only_request_with_correct_ai_plan(self):
+        """AI가 올바로 bus 도구를 제안 → 보정 없이 bus 실행."""
+        plan_json = (
+            '{"goals": ["버스정류장 조회"], '
+            '"tool_calls": [{"tool": "find_nearby_bus_stops", "reason": "버스 요청"}], '
+            '"unsupported_requests": []}'
+        )
+        with mock.patch("agent.location_agent.ollama.chat") as mock_chat:
+            mock_chat.return_value = _fake_chat_response(plan_json)
+            result = location_agent.run_location_agent(
+                "이 위치에서 500m 안에 버스정류장이 몇 개 있어?",
+                SEARCH_CENTER, ui_radius_m=500, ui_max_results=10,
+            )
+        executed = [e["tool"] for e in result["executed_tool_calls"]]
+        self.assertEqual(executed, ["find_nearby_bus_stops"])
+        self.assertEqual(result["corrections"], [])
+
+    # ── 시나리오 2: 편의점 단일 요청, AI가 올바로 conv 제안 ────────────────────
+    def test_conv_only_request_with_correct_ai_plan(self):
+        """AI가 올바로 convenience 도구를 제안 → 보정 없이 convenience 실행."""
+        plan_json = (
+            '{"goals": ["편의점 조회"], '
+            '"tool_calls": [{"tool": "find_nearby_convenience_stores", "reason": "편의점 요청"}], '
+            '"unsupported_requests": []}'
+        )
+        with mock.patch("agent.location_agent.ollama.chat") as mock_chat:
+            mock_chat.return_value = _fake_chat_response(plan_json)
+            result = location_agent.run_location_agent(
+                "이 위치에서 500m 안에 편의점이 몇 개 있어?",
+                SEARCH_CENTER, ui_radius_m=500, ui_max_results=10,
+            )
+        executed = [e["tool"] for e in result["executed_tool_calls"]]
+        self.assertEqual(executed, ["find_nearby_convenience_stores"])
+        self.assertEqual(result["corrections"], [])
+
+    # ── 시나리오 3: 두 시설 요청, AI가 두 단일 도구 제안 ──────────────────────
+    def test_both_facilities_two_single_tools_no_compare(self):
+        """두 시설 요청 → 두 단일 도구 실행, compare 실행 안 함."""
+        plan_json = (
+            '{"goals": ["버스+편의점 조회"], '
+            '"tool_calls": ['
+            '{"tool": "find_nearby_bus_stops", "reason": "a"}, '
+            '{"tool": "find_nearby_convenience_stores", "reason": "b"}'
+            '], "unsupported_requests": []}'
+        )
+        with mock.patch("agent.location_agent.ollama.chat") as mock_chat:
+            mock_chat.return_value = _fake_chat_response(plan_json)
+            result = location_agent.run_location_agent(
+                "500m 안에 버스정류장과 편의점이 몇 개 있어?",
+                SEARCH_CENTER, ui_radius_m=500, ui_max_results=10,
+            )
+        executed = {e["tool"] for e in result["executed_tool_calls"]}
+        self.assertEqual(executed, {"find_nearby_bus_stops", "find_nearby_convenience_stores"})
+        self.assertNotIn("compare_nearby_facilities", executed)
+
+    # ── 시나리오 3 변형: 두 시설 요청인데 AI가 compare 제안 → 보정 ──────────────
+    def test_both_facilities_ai_proposes_compare_corrected_to_two_single(self):
+        """AI가 두 시설 요청에 compare를 제안 → 두 단일 도구로 보정."""
+        plan_json = (
+            '{"goals": ["시설 비교"], '
+            '"tool_calls": [{"tool": "compare_nearby_facilities", "reason": "시설 조회"}], '
+            '"unsupported_requests": []}'
+        )
+        with mock.patch("agent.location_agent.ollama.chat") as mock_chat:
+            mock_chat.return_value = _fake_chat_response(plan_json)
+            result = location_agent.run_location_agent(
+                "500m 안에 버스정류장과 편의점이 몇 개 있어?",
+                SEARCH_CENTER, ui_radius_m=500, ui_max_results=10,
+            )
+        executed = {e["tool"] for e in result["executed_tool_calls"]}
+        self.assertEqual(executed, {"find_nearby_bus_stops", "find_nearby_convenience_stores"})
+        self.assertTrue(result["corrections"])
+
+    # ── 시나리오 4: 반경별 비교 요청 → compare 사용 가능 ─────────────────────
+    def test_comparison_request_allows_compare(self):
+        """반경별 비교 명시 요청 → compare_nearby_facilities 보정 없이 실행."""
+        plan_json = (
+            '{"goals": ["반경별 비교"], '
+            '"tool_calls": [{"tool": "compare_nearby_facilities", "reason": "비교 요청"}], '
+            '"unsupported_requests": []}'
+        )
+        with mock.patch("agent.location_agent.ollama.chat") as mock_chat:
+            mock_chat.return_value = _fake_chat_response(plan_json)
+            result = location_agent.run_location_agent(
+                "300m, 500m, 1km별 시설 수를 비교해줘",
+                SEARCH_CENTER, ui_radius_m=500, ui_max_results=10,
+            )
+        executed = [e["tool"] for e in result["executed_tool_calls"]]
+        self.assertIn("compare_nearby_facilities", executed)
+        self.assertEqual(result["corrections"], [])
+
+    # ── 시나리오 5: 가장 가까운 버스정류장 → max_results=1 ─────────────────────
+    def test_nearest_bus_stop_forces_max_results_one(self):
+        """'가장 가까운' 버스정류장 → max_results=1 강제."""
+        plan_json = (
+            '{"goals": ["가장 가까운 버스"], '
+            '"tool_calls": [{"tool": "find_nearby_bus_stops", "max_results": 10, "reason": "x"}], '
+            '"unsupported_requests": []}'
+        )
+        with mock.patch("agent.location_agent.ollama.chat") as mock_chat:
+            mock_chat.return_value = _fake_chat_response(plan_json)
+            result = location_agent.run_location_agent(
+                "가장 가까운 버스정류장이 어디야?",
+                SEARCH_CENTER, ui_radius_m=500, ui_max_results=10,
+            )
+        entry = result["executed_tool_calls"][0]
+        self.assertEqual(entry["tool"], "find_nearby_bus_stops")
+        self.assertEqual(entry["max_results"], 1)
+        self.assertTrue(result["corrections"])
+
+    # ── 시나리오 6: 가장 가까운 편의점 → max_results=1 ─────────────────────────
+    def test_nearest_convenience_forces_max_results_one(self):
+        """'가장 가까운' 편의점 → max_results=1 강제."""
+        plan_json = (
+            '{"goals": ["가장 가까운 편의점"], '
+            '"tool_calls": [{"tool": "find_nearby_convenience_stores", "max_results": 10, "reason": "x"}], '
+            '"unsupported_requests": []}'
+        )
+        with mock.patch("agent.location_agent.ollama.chat") as mock_chat:
+            mock_chat.return_value = _fake_chat_response(plan_json)
+            result = location_agent.run_location_agent(
+                "가장 가까운 편의점 알려줘",
+                SEARCH_CENTER, ui_radius_m=500, ui_max_results=10,
+            )
+        entry = result["executed_tool_calls"][0]
+        self.assertEqual(entry["tool"], "find_nearby_convenience_stores")
+        self.assertEqual(entry["max_results"], 1)
+
+    # ── 시나리오 7: AI가 버스 단일 요청에 compare 제안 → 보정 ──────────────────
+    def test_ai_proposes_compare_for_bus_only_request_gets_corrected(self):
+        """AI가 버스 단일 요청에 compare_nearby_facilities 제안 → bus 도구로 보정."""
+        plan_json = (
+            '{"goals": [], '
+            '"tool_calls": [{"tool": "compare_nearby_facilities", "reason": "조회"}], '
+            '"unsupported_requests": []}'
+        )
+        with mock.patch("agent.location_agent.ollama.chat") as mock_chat:
+            mock_chat.return_value = _fake_chat_response(plan_json)
+            result = location_agent.run_location_agent(
+                "이 위치에서 500m 안에 버스정류장이 몇 개 있어?",
+                SEARCH_CENTER, ui_radius_m=500, ui_max_results=10,
+            )
+        executed = [e["tool"] for e in result["executed_tool_calls"]]
+        self.assertNotIn("compare_nearby_facilities", executed)
+        self.assertIn("find_nearby_bus_stops", executed)
+        self.assertTrue(result["corrections"])
+        self.assertEqual(result["corrections"][0]["original_tool"], "compare_nearby_facilities")
+        self.assertEqual(result["mode"], "ai_planned")
+
+    # ── 시나리오 8: AI가 편의점 요청에 bus 제안 → 보정 ─────────────────────────
+    def test_ai_proposes_bus_for_convenience_request_gets_corrected(self):
+        """AI가 편의점 요청에 bus 도구 제안 → convenience로 보정."""
+        plan_json = (
+            '{"goals": [], '
+            '"tool_calls": [{"tool": "find_nearby_bus_stops", "reason": "조회"}], '
+            '"unsupported_requests": []}'
+        )
+        with mock.patch("agent.location_agent.ollama.chat") as mock_chat:
+            mock_chat.return_value = _fake_chat_response(plan_json)
+            result = location_agent.run_location_agent(
+                "이 위치에서 500m 안에 편의점이 몇 개 있어?",
+                SEARCH_CENTER, ui_radius_m=500, ui_max_results=10,
+            )
+        executed = [e["tool"] for e in result["executed_tool_calls"]]
+        self.assertNotIn("find_nearby_bus_stops", executed)
+        self.assertIn("find_nearby_convenience_stores", executed)
+        self.assertTrue(result["corrections"])
+
+    # ── 시나리오 16: 보정 발생 시 corrections 기록 ──────────────────────────────
+    def test_corrections_recorded_when_scope_correction_applied(self):
+        """보정 발생 시 result['corrections']가 비어 있지 않아야 한다."""
+        plan_json = (
+            '{"goals": [], '
+            '"tool_calls": [{"tool": "compare_nearby_facilities", "reason": "x"}], '
+            '"unsupported_requests": []}'
+        )
+        with mock.patch("agent.location_agent.ollama.chat") as mock_chat:
+            mock_chat.return_value = _fake_chat_response(plan_json)
+            result = location_agent.run_location_agent(
+                "500m 안에 버스정류장이 몇 개 있어?",
+                SEARCH_CENTER, ui_radius_m=500, ui_max_results=10,
+            )
+        self.assertTrue(result["corrections"])
+        correction = result["corrections"][0]
+        self.assertIn("original_tool", correction)
+        self.assertIn("corrected_to", correction)
+        self.assertIn("note", correction)
+
+    # ── 시나리오 14: unsupported 요청에 관계없는 도구 억지 실행 안 함 ────────────
+    def test_unsupported_request_no_forced_tool_execution(self):
+        """지원하지 않는 요청 → 시설 도구 억지 실행하지 않음 (기존 테스트 유지)."""
+        plan_json = (
+            '{"goals": [], "tool_calls": [], '
+            '"unsupported_requests": [{"request": "버스 이동시간", "reason": "데이터 없음"}]}'
+        )
+        with mock.patch("agent.location_agent.ollama.chat") as mock_chat:
+            mock_chat.return_value = _fake_chat_response(plan_json)
+            result = location_agent.run_location_agent(
+                "여기서 창원시청까지 버스로 몇 분 걸려?",
+                SEARCH_CENTER, ui_radius_m=500, ui_max_results=10,
+            )
+        self.assertEqual(result["executed_tool_calls"], [])
+        self.assertEqual(result["mode"], "ai_planned")
+
+    # ── 시나리오 15: executed_tool_calls에 실제 실행 도구만 기록 ───────────────
+    def test_executed_tool_calls_only_contains_actually_executed(self):
+        """보정 발생 시에도 executed_tool_calls에 원래 AI 제안 도구는 없음."""
+        plan_json = (
+            '{"tool_calls": [{"tool": "compare_nearby_facilities", "reason": "x"}]}'
+        )
+        with mock.patch("agent.location_agent.ollama.chat") as mock_chat:
+            mock_chat.return_value = _fake_chat_response(plan_json)
+            result = location_agent.run_location_agent(
+                "500m 안에 편의점이 몇 개 있어?",
+                SEARCH_CENTER, ui_radius_m=500, ui_max_results=10,
+            )
+        executed_tools = [e["tool"] for e in result["executed_tool_calls"]]
+        self.assertNotIn("compare_nearby_facilities", executed_tools)
+        self.assertIn("find_nearby_convenience_stores", executed_tools)
+
+    # ── 결과 반환 구조 검증 ──────────────────────────────────────────────────────
+    def test_result_always_has_constraints_and_corrections_fields(self):
+        """run_location_agent() 반환에 항상 constraints와 corrections 포함."""
+        plan_json = '{"tool_calls": [{"tool": "find_nearby_bus_stops", "reason": "x"}]}'
+        with mock.patch("agent.location_agent.ollama.chat") as mock_chat:
+            mock_chat.return_value = _fake_chat_response(plan_json)
+            result = location_agent.run_location_agent(
+                "버스정류장 알려줘", SEARCH_CENTER, ui_radius_m=500, ui_max_results=10,
+            )
+        self.assertIn("constraints", result)
+        self.assertIn("corrections", result)
+        self.assertIsInstance(result["corrections"], list)
+
+
 class RealOllamaIntegrationSmokeTest(unittest.TestCase):
     """실제 qwen3.5:4b를 사용하는 통합 스모크 테스트 - 기본적으로 건너뛴다.
     LOCATION_AGENT_REAL_OLLAMA_TEST=1 환경변수가 설정됐을 때만 실행하며,

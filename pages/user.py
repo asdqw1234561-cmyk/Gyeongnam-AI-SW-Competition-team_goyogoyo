@@ -333,8 +333,14 @@ def render_location_agent_execution_log(result: dict) -> None:
     """'🔍 AI 위치 분석 실행 과정 보기' 접기 영역 - run_location_agent()의 반환값을
     그대로 보여줄 뿐 여기서 새로 판단하거나 숫자를 만들지 않는다. "AI가 제안한
     계획"과 "Python이 실제 실행한 작업"을 항상 구분해서 표시한다."""
+    corrections = result.get("corrections", [])
+    has_corrections = bool(corrections)
+
     if result["mode"] == "ai_planned":
-        st.success("✅ AI가 계획한 작업을 Python이 검증한 뒤 그대로 실행했습니다.")
+        if has_corrections:
+            st.success("✅ AI가 제안한 계획을 Python이 검증·보완한 후 실행했습니다.")
+        else:
+            st.success("✅ AI가 제안한 계획을 Python이 검증한 후 실행했습니다.")
     elif result["planner_error"]:
         st.warning(f"⚠️ AI 분석 계획을 생성하지 못해 기본 조회 절차를 사용했습니다: {result['planner_error']}")
     else:
@@ -347,36 +353,46 @@ def render_location_agent_execution_log(result: dict) -> None:
     else:
         st.caption("(없음)")
 
-    st.markdown("**2. AI가 제안한 도구 호출 계획 (검증 전 원본)**")
+    st.markdown("**2. AI가 제안한 도구 계획 (검증 전 원본)**")
     if result["planned_tool_calls"]:
         for call in result["planned_tool_calls"]:
             tool = call.get("tool") if isinstance(call, dict) else call
             reason = call.get("reason", "") if isinstance(call, dict) else ""
-            st.caption(f"· {LOCATION_TOOL_LABELS.get(tool, tool)} — {reason}")
+            st.caption(f"· {LOCATION_TOOL_LABELS.get(tool, tool)}" + (f" — {reason}" if reason else ""))
     else:
         st.caption("AI 계획 호출 자체가 없었습니다(Ollama 연결 실패 등).")
 
-    st.markdown("**3. Python이 검증한(허용된) 도구 목록**")
-    st.caption(", ".join(LOCATION_TOOL_LABELS.values()))
+    st.markdown("**3. Python 검증 결과**")
+    if has_corrections:
+        for corr in corrections:
+            orig_label = LOCATION_TOOL_LABELS.get(corr["original_tool"], corr["original_tool"])
+            to_labels = " + ".join(LOCATION_TOOL_LABELS.get(t, t) for t in corr["corrected_to"])
+            st.caption(f"· 보정: {orig_label} → {to_labels}")
+            st.caption(f"  이유: {corr['note']}")
+    if result["notes"]:
+        for n in result["notes"]:
+            st.caption(f"· {n}")
+    if not has_corrections and not result["notes"]:
+        st.caption("AI 계획이 사용자 요청 범위에 적합하여 그대로 승인했습니다.")
 
-    st.markdown("**4. 실제 실행한 도구와 실행 상태**")
+    st.markdown("**4. 실제 실행한 도구**")
     if result["executed_tool_calls"]:
         for i, entry in enumerate(result["executed_tool_calls"], start=1):
             icon = "✅" if entry["executed"] else "❌"
-            err = f" - 오류: {entry['error']}" if entry.get("error") else ""
+            err = f" — 오류: {entry['error']}" if entry.get("error") else ""
             st.caption(f"{icon} {i}. {LOCATION_TOOL_LABELS.get(entry['tool'], entry['tool'])}{err}")
     else:
         st.caption("실행된 도구가 없습니다(지원하지 않는 요청이었거나 실행할 내용이 없었습니다).")
 
-    st.markdown("**5. 검증 과정에서 수정하거나 거부한 내용**")
-    if result["notes"]:
-        for n in result["notes"]:
-            st.caption(f"· {n}")
+    st.markdown("**5. 기본 절차 전환 여부**")
+    if result["mode"] == "fallback_default":
+        st.caption("예 — AI 계획을 사용할 수 없어 기본 조회 절차(반경별 전체 비교)로 전환했습니다.")
     else:
-        st.caption("(없음)")
+        st.caption("아니오 — AI 계획을 사용했습니다.")
 
-    st.markdown("**6. Ollama 실패 시 기본 절차 전환 여부**")
-    st.caption("예 - 기본 절차를 사용했습니다." if result["mode"] == "fallback_default" else "아니오 - AI 계획을 그대로 실행했습니다.")
+    with st.expander("사용 가능한 도구 목록"):
+        for tool_name, label in LOCATION_TOOL_LABELS.items():
+            st.caption(f"· {label} ({tool_name})")
 
 
 def render_location_agent_result(result: dict) -> None:
