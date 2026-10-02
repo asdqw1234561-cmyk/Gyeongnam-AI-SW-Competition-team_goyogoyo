@@ -7,7 +7,7 @@
 [설계 원칙]
 - AI는 계획(어떤 도구를, 어떤 순서로, 어떤 인자로 호출할지)만 제안한다. 실제 데이터
   조회와 점수 계산은 전부 기존 함수(services.region_data.get_all_changwon_regions,
-  analysis.scoring의 _collect_confirmed_indicator/compute_region_scores_from_weights)
+  analysis.scoring의 collect_confirmed_indicator/compute_region_scores_from_weights)
   를 그대로 재사용하는 Python 도구 함수가 수행한다 - AI가 시설 수·점수·통근시간·
   주거비 등의 숫자를 직접 만들어낼 방법이 구조적으로 없다.
 - AI가 제안한 가중치는 절대 신뢰하지 않는다. calculate_region_scores 도구는 항상
@@ -31,7 +31,7 @@ import ollama
 from agent.llm_json import extract_json_object, sanitize_goals, sanitize_unsupported_requests
 from analysis.scoring import (
     VALID_SCORABLE_INDICATOR_CODES,
-    _collect_confirmed_indicator,
+    collect_confirmed_indicator,
     compute_region_scores,
     compute_region_scores_from_weights,
 )
@@ -58,10 +58,10 @@ TOOL_LABELS: dict[str, str] = {
 
 def tool_get_available_indicators(regions: list[dict]) -> dict[str, bool]:
     """VALID_SCORABLE_INDICATOR_CODES(교통/의료/생활편의) 각각이 창원시 5개 구
-    전부 data_status=='확보'인지. 새 판정 로직 없이 기존 _collect_confirmed_indicator
+    전부 data_status=='확보'인지. 새 판정 로직 없이 기존 collect_confirmed_indicator
     를 그대로 재사용한다."""
     return {
-        code: _collect_confirmed_indicator(regions, code) is not None
+        code: collect_confirmed_indicator(regions, code) is not None
         for code in VALID_SCORABLE_INDICATOR_CODES
     }
 
@@ -75,7 +75,7 @@ def tool_get_region_indicators(regions: list[dict], indicator_codes: list[str]) 
     for code in indicator_codes:
         if code not in VALID_SCORABLE_INDICATOR_CODES:
             continue
-        collected = _collect_confirmed_indicator(regions, code)
+        collected = collect_confirmed_indicator(regions, code)
         if collected is None:
             continue
         raw_values, indicator_name = collected

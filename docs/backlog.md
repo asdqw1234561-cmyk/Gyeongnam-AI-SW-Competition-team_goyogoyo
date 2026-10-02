@@ -56,11 +56,11 @@
 - 결과: 2026-10-02 · 새 services/geo.py(DISTRICTS, CHANGWON_BBOX, EARTH_RADIUS_M, to_float, to_int, haversine_m, is_within_changwon_bbox) · bus_stops/convenience는 기존 이름으로 import(호출부 무변경), 미사용 math·numpy import 제거 · pages/user.py bbox 중복 제거 · tests/test_geo.py 7개 추가, 전체 269개 통과(skip 1) · `python -m services.bus_stops` 공식 집계 일치, 창원시청 예시 좌표 반경별 개수·최근접 거리 리팩터링 전과 동일, AppTest user.py 예외 0.
 
 ## B6. scoring의 private 함수 공개 이름 제공
-- [ ] 상태
+- [x] 상태
 - 승인: 불필요
 - 범위: `analysis/scoring.py:91` `_collect_confirmed_indicator`를 `agent/planner.py`, `analysis/simulation.py`가 직접 import한다. 공개 이름 `collect_confirmed_indicator`를 추가하고(기존 이름은 별칭으로 유지) 호출부를 공개 이름으로 바꾼다. 계산 로직은 건드리지 않는다.
 - 완료 조건: 전체 테스트 통과, 계산식 diff 없음.
-- 결과:
+- 결과: 2026-10-02 · analysis/scoring.py에 공개 함수 collect_confirmed_indicator() 추가(내부 _collect_confirmed_indicator에 그대로 위임 - 기존 테스트의 private 모킹이 계속 유효하도록 별칭 대신 위임 함수로 구현) · agent/planner.py, analysis/simulation.py 호출부를 공개 이름으로 변경 · scoring.py는 추가만 있고 계산 코드 삭제·수정 0줄 · 위임 테스트 2개 추가, 전체 271개 통과(skip 1), AppTest app.py·government.py 예외 0.
 
 ## B7. Streamlit 화면 스모크 테스트 추가
 - [ ] 상태

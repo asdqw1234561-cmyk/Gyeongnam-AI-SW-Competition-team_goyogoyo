@@ -113,6 +113,17 @@ def _collect_confirmed_indicator(
     return raw_values, indicator_name
 
 
+def collect_confirmed_indicator(
+    regions: list[dict], indicator_code: str
+) -> tuple[dict[str, float], str] | None:
+    """
+    다른 모듈(agent/planner.py, analysis/simulation.py)이 쓰는 공개 이름. 판정 로직은
+    _collect_confirmed_indicator()와 완전히 같다 - 내부 함수를 그대로 호출할 뿐이라
+    "확보" 판정 기준이 모듈마다 갈라질 수 없다.
+    """
+    return _collect_confirmed_indicator(regions, indicator_code)
+
+
 def _build_ok_result(
     regions: list[dict],
     used_meta: list[dict],

@@ -31,7 +31,7 @@ from analysis.scoring import (
     CAVEATS,
     INDICATOR_CATEGORY,
     VALID_SCORABLE_INDICATOR_CODES,
-    _collect_confirmed_indicator,
+    collect_confirmed_indicator,
     compute_region_scores_from_weights,
 )
 from services.region_data import get_all_changwon_regions
@@ -66,7 +66,7 @@ def default_equal_weights(regions: list[dict]) -> dict[str, float]:
     """
     confirmed_codes = [
         code for code in SIMULATABLE_INDICATOR_CODES
-        if _collect_confirmed_indicator(regions, code) is not None
+        if collect_confirmed_indicator(regions, code) is not None
     ]
     if not confirmed_codes:
         return {}

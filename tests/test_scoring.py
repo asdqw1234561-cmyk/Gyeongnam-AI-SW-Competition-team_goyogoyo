@@ -221,5 +221,24 @@ class FeedbackWeightAdjustmentTest(unittest.TestCase):
         self.assertAlmostEqual(result["used_conditions"][0]["weight"], 1.0)
 
 
+class PublicCollectConfirmedIndicatorTest(unittest.TestCase):
+    """다른 모듈용 공개 이름은 내부 판정 함수를 그대로 위임해야 한다(기준이 갈라지지 않음)."""
+
+    def test_public_name_matches_private_result(self):
+        from services.region_data import get_all_changwon_regions
+
+        regions = get_all_changwon_regions()
+        for code in scoring.VALID_SCORABLE_INDICATOR_CODES:
+            self.assertEqual(
+                scoring.collect_confirmed_indicator(regions, code),
+                scoring._collect_confirmed_indicator(regions, code),
+            )
+
+    def test_public_name_delegates_to_private(self):
+        with mock.patch("analysis.scoring._collect_confirmed_indicator", return_value=None) as private:
+            self.assertIsNone(scoring.collect_confirmed_indicator([], "bus_stop_count"))
+        private.assert_called_once_with([], "bus_stop_count")
+
+
 if __name__ == "__main__":
     unittest.main()
