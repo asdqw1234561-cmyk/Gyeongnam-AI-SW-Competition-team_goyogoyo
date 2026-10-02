@@ -76,10 +76,10 @@
 - 결과: 2026-10-02 막힘 · `.claude/settings.json`의 deny에 `Edit(./data/region_indicators.csv)`가 아직 있어 CSV를 수정할 수 없음(Agent가 권한 규칙을 직접 고치는 것은 auto 모드에서 차단됨). 사용자가 그 한 줄을 지운 뒤 상태를 `[ ]`로 되돌리면 처리 가능. 코드 변경 없음.
 
 ## B9. 빈 스텁 파일 정리
-- [ ] 상태
+- [x] 상태
 - 승인: 완료 (2026-10-02 사용자 승인. 처리 방식: 파일은 남기고 역할 설명 docstring만 채운다. `agent/agent_state.py`는 팀원이 hwang2에서 97줄로 구현해 사용 중이라 **제외** - jhy에서 건드리면 병합 시 충돌)
 - 범위: `agent/claude_agent.py`, `agent/agent_state.py`, `services/housing.py`, `services/medical.py`, `services/transport.py`, `database/db.py` — 주석 한 줄뿐. 삭제할지, 역할 설명 docstring을 채울지 결정 필요.
-- 결과:
+- 결과: 2026-10-02 · 5개 파일(agent/claude_agent.py, services/housing.py, services/medical.py, services/transport.py, database/db.py)에 '미구현 - 현재 상태 / 예정 역할' docstring 추가(코드 없음, 어디서도 import 안 됨 확인) · 언급한 미확보 지표 4개·로더 함수명 CSV/코드로 확인 · agent/agent_state.py는 제외 · hwang2 병합 시뮬레이션에서 이 5개 파일 충돌 없음 · py_compile OK, 전체 279개 통과(skip 1).
 
 ## B10. README 현행화
 - [x] 상태
