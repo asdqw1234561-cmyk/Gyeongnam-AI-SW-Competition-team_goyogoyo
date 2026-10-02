@@ -147,6 +147,15 @@
 - 완료 조건: 스크립트가 3개 화면 + 위치 Agent 실행 흐름을 스크린샷으로 남기고 콘솔 오류를 보고, skill 문서대로 재현 가능.
 - 결과:
 
+## R1. 정착 후보군 역할 부여 + Critic 점검 (추천 품질 G1+G2)
+- [x] 상태
+- 승인: 완료 (2026-10-02 사용자 지시 - 추천 품질 최우선, DEC-11)
+- 근거: `docs/agent/CURRENT_STATE.md` 추천 품질 분석 G1·G2, R-EV-2(판단·추론), R-AG-5(결과 확인·수정), R-EV-4(차별성)
+- 범위: 새 `analysis/candidates.py` - 기존 `score_result`의 축별 정규화 점수만으로 후보 역할(최적·균형·대안, 가성비는 주거비 미확보로 산출 불가 표시)과 Critic 점검(1·2위 근소차, 단일 지표 의존, 지배 관계, 후보 쏠림, 평가축 데이터 커버리지, 구 단위 한계)을 결정적으로 계산. `agent/planner.run_agent_plan` 결과에 `candidate_review` 추가(Agent 단계로 기록), `app.py` 기존 결과 화면(최초·피드백)에 후보군·Critic 표시. 점수 계산식·순위·`top_candidates`는 바꾸지 않는다. LLM 호출 없음.
+- 테스트: 새 `tests/test_candidates.py`(실데이터 형태 픽스처로 역할·Critic 각 규칙, 축 1개·동점·no_usable 경계), planner 결과 키 테스트, 전체 테스트 + AppTest 스모크.
+- 완료 조건: 실제 CSV 동일 가중치에서 최적≠균형 후보가 나오고 Critic이 근거 숫자와 함께 표시, 기존 테스트 전부 통과.
+- 결과: 2026-10-02 · 새 analysis/candidates.py(build_candidate_set: 6개 평가축 상태, 최적·균형·대안·가성비(산출 불가) 역할, Pareto, Critic 7규칙 close_gap/single_axis/dominated/concentration/granularity/coverage/ties + 지배된 1차 대안을 바꾸는 revised) · agent/planner.py run_agent_plan에 unscored_inputs 인자·candidate_review 결과 추가 · app.py 최초·피드백 결과 화면에 후보군·Critic 표시(_render_candidate_set) · scoring.py 변경 0줄 · tests/test_candidates.py 15개 + planner 1개 + AppTest 1개 추가, 전체 377개 통과(skip 1) · 실데이터 동일 가중치: 최적 성산구 / 균형 의창구 / 대안 1차 마산합포구→Critic이 의창구로 수정 / 가성비 산출 불가 · AppTest로 "다시 비교하기"(교통 80%) 후 최적 의창구·대안 성산구 재평가 확인 · 실제 Ollama·브라우저 확인 미실행.
+
 ---
 
 ## 발견된 작업

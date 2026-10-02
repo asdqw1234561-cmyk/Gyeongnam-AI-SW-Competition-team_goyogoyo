@@ -22,6 +22,7 @@
 | 위치 기반 탐색 | `pages/user.py` | 확정 좌표 주변 300m/500m/1km 버스정류장·편의점, Folium 지도, 위치 AI Agent |
 | 정부용 분석 | `pages/government.py` | 구별 시설 수 비교, 차이, 가상 시설 증감 시뮬레이션 |
 | 점수 계산 | `analysis/scoring.py` | min-max 정규화 + 가중합 (유일한 점수 계산 경로) |
+| 정착 후보군·Critic | `analysis/candidates.py` | 점수 결과로 최적·균형·대안 후보와 Critic 점검을 결정적으로 계산(새 점수식 없음, 가성비는 주거비 미확보로 산출 불가) |
 | 시뮬레이션 | `analysis/simulation.py` | deepcopy 사본에 가상값 → `compute_region_scores_from_weights()` 재사용 |
 | 데이터 조회 | `services/region_data.py`, `services/bus_stops.py`, `services/convenience.py`, `services/map_markers.py` | CSV 읽기 전용 |
 | 수집·집계 | `scripts/` | 공공데이터 수집, 버스정류장 공간판정·집계 |

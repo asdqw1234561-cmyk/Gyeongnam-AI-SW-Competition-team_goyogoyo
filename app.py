@@ -7,6 +7,7 @@ from agent.ollama_agent import interpret_weight_feedback, plan_followup_question
 from agent.planner import TOOL_LABELS, run_agent_plan
 from agent.planner_loop import REVIEW_TOOL_LABELS
 from analysis import scoring
+from analysis.candidates import build_candidate_set
 from services.region_data import get_all_changwon_regions, is_supported_region
 
 CHART_ACCENT_COLOR = "#2a78d6"
@@ -210,6 +211,54 @@ def _render_top_candidates(result: dict, heading: str = "추천 후보지역") -
             for uc in result["used_conditions"]
         ]
         st.caption("계산 근거: " + " + ".join(explanation_parts) + f" = {row['total_score']:.1f}점")
+
+
+def _unscored_inputs(initial_input: dict) -> list[str]:
+    """입력은 받았지만 대응 데이터가 없어 점수에 반영하지 못한 항목 이름(Critic 커버리지 점검용)."""
+    return [name for name in ("직장/학교 위치", "주거비 예산") if (initial_input or {}).get(name)]
+
+
+def _render_candidate_set(candidate_set: dict, heading: str = "🧭 정착 후보군 — 성격이 다른 후보") -> None:
+    """
+    analysis.candidates.build_candidate_set() 결과(후보 역할 + Critic 점검)를 보여준다.
+    후보와 점검 결과는 Python이 점수 결과에서 결정적으로 계산한 것이며 AI가 만들지 않는다.
+    """
+    if candidate_set.get("status") != "ok":
+        return
+    st.markdown(f"### {heading}")
+    st.caption(
+        "종합점수 1위 하나만 보지 않도록, 같은 점수 결과에서 성격이 다른 후보를 함께 보여줍니다. "
+        "후보 선정과 아래 점검은 Python이 계산 결과로만 수행했습니다."
+    )
+    for role in candidate_set["roles"]:
+        if role["status"] != "ok":
+            st.caption(f"**{role['role_label']}** — 산출 불가: {role['reason']}")
+            continue
+        st.markdown(
+            f"**{role['role_label']} · {role['region_name']}** "
+            f"(종합 {role['total_score']:.1f}점, {role['rank']}위) — {role['reason']}"
+        )
+        st.caption(
+            f"강점: {', '.join(role['strengths']) or '없음'} · 약점: {', '.join(role['weaknesses']) or '없음'} · "
+            + " / ".join(
+                f"{p['axis']} {p['raw_value']:.0f}개({p['normalized_score']:.1f}점, {p['axis_rank']}위)"
+                for p in role["axis_profile"]
+            )
+        )
+    if candidate_set["pareto"]:
+        st.caption(f"어느 축에서도 다른 구에 완전히 뒤지지 않는 구: {', '.join(candidate_set['pareto'])}")
+
+    critic = candidate_set["critic"]
+    with st.expander(f"🔎 Critic 점검 (경고 {critic['warning_count']}건)", expanded=critic["warning_count"] > 0):
+        for check in critic["checks"]:
+            if check["level"] == "warning":
+                st.warning(f"⚠️ {check['message']}")
+            else:
+                st.caption(f"ℹ️ {check['message']}")
+        st.dataframe(
+            pd.DataFrame([{"평가축": a["axis"], "상태": a["status"]} for a in candidate_set["axes"]]),
+            hide_index=True, width="stretch",
+        )
 
 
 def render_agent_execution_log() -> None:
@@ -443,7 +492,9 @@ def render_recommendation_section() -> None:
             st.caption(f"· {c}")
         return
 
-    # 추천 후보지역을 가장 먼저 보여준다(사용자가 실제로 궁금해할 내용).
+    # 성격이 다른 정착 후보와 Critic 점검을 먼저, 이어서 종합점수 순 후보를 보여준다.
+    candidate_review = (st.session_state.get("agent_execution_log") or {}).get("candidate_review")
+    _render_candidate_set(candidate_review or build_candidate_set(result, _unscored_inputs(initial_input)))
     _render_top_candidates(result)
 
     st.markdown("---")
@@ -805,6 +856,10 @@ def render_feedback_section() -> None:
             f"{biggest['점수 변화']:+.1f}점 {direction}."
         )
 
+    _render_candidate_set(
+        build_candidate_set(feedback_result, _unscored_inputs(st.session_state.initial_input)),
+        heading="🧭 피드백 기준 정착 후보군 — 다시 평가한 결과",
+    )
     _render_top_candidates(feedback_result, heading="현재 적용 중인 피드백 기준 추천 후보지역")
 
 
@@ -899,6 +954,7 @@ def _finalize_initial_recommendation(confirmed_weights: dict[str, float] | None 
             confirmed_weights=confirmed_weights,
             desired_region=st.session_state.initial_input.get("희망지역", ""),
             candidate_count=st.session_state.initial_input.get("원하는 후보 개수") or 3,
+            unscored_inputs=_unscored_inputs(st.session_state.initial_input),
         )
     st.session_state.agent_execution_log = run_result
     st.session_state.initial_recommendation = run_result["score_result"]

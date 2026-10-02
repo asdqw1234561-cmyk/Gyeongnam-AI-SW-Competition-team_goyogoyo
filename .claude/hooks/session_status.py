@@ -55,7 +55,9 @@ def main() -> int:
 
     synced = state.get("last_synced_commit")
     if synced:
-        behind = _git("rev-list", "--count", f"{synced}..HEAD")
+        # 상태 문서만 고친 커밋(docs/agent, .agent_state, backlog)은 "코드가 바뀐 커밋"으로 세지 않는다.
+        behind = _git("rev-list", "--count", f"{synced}..HEAD", "--", ".",
+                      ":(exclude)docs/agent", ":(exclude).agent_state", ":(exclude)docs/backlog.md")
         if behind and behind != "0":
             out.append(f"- docs/agent/CURRENT_STATE.md 이후 새 커밋 {behind}개 → 상태 문서 갱신 필요")
     else:

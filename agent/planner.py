@@ -32,6 +32,7 @@ from agent.llm_json import extract_json_object, sanitize_goals, sanitize_unsuppo
 from agent import llm  # LLM_BACKEND(.env)에 따라 Ollama 또는 Claude Code CLI 호출
 from agent import planner_loop  # 점수 계산 결과 관찰 -> 설명/추가 조회/가정 계산 판단 반복
 
+from analysis.candidates import build_candidate_set
 from analysis.scoring import (
     VALID_SCORABLE_INDICATOR_CODES,
     collect_confirmed_indicator,
@@ -362,6 +363,7 @@ def run_agent_plan(
     confirmed_weights: dict[str, float] | None,
     desired_region: str,
     candidate_count: int,
+    unscored_inputs: list[str] | None = None,
 ) -> dict:
     """
     최초 추천 계산의 Agent 진입점. app.py의 _finalize_initial_recommendation()이
@@ -392,6 +394,10 @@ def run_agent_plan(
             "notes": [str, ...],                   # 검증 보완/가중치 무시 등 Python의 안내
             "planner_error": str | None,           # Ollama 실패/JSON 해석 실패 사유
             "score_result": compute_region_scores_from_weights() 반환값과 동일한 형식,
+            "candidate_review": analysis.candidates.build_candidate_set() 반환값 -
+                점수 계산 뒤 후보 생성(최적·균형·대안) + Critic 점검. 결정적 계산이며
+                score_result의 순위·점수는 바꾸지 않는다. unscored_inputs(입력했지만
+                대응 데이터가 없는 항목 이름)는 Critic의 데이터 커버리지 점검에만 쓴다.
         }
     """
     regions = get_all_changwon_regions()
@@ -440,6 +446,10 @@ def run_agent_plan(
         # 계획에 없었다는 뜻이므로, 기존과 동일한 "no_usable_conditions" 형태로 안전 반환.
         score_result = compute_region_scores_from_weights(approved_weights, candidate_count, regions=regions)
 
+    # 후보 생성 -> Critic: 종합점수 1위 하나가 아니라 성격이 다른 후보(최적·균형·대안)를
+    # 고르고, 근소차·지배 관계·한 축 의존·쏠림·데이터 공백을 Python이 결정적으로 점검한다.
+    candidate_review = build_candidate_set(score_result, unscored_inputs)
+
     # 관찰 -> 판단 -> 행동 반복: AI 계획으로 점수를 계산한 경우에만 결과를 AI에게 보여주고
     # 설명 작성 / 참고 지표 추가 조회 / 가중치 가정 계산 중 하나를 판단하게 한다.
     # 실제 추천(score_result)은 승인된 가중치 결과 그대로이며 이 단계에서 바뀌지 않는다.
@@ -469,6 +479,7 @@ def run_agent_plan(
         "notes": notes,
         "planner_error": planner_error,
         "score_result": score_result,
+        "candidate_review": candidate_review,
         # 이하 결과 검토 단계(2회차 이후) - 표시 전용, score_result 에는 영향 없음
         "agent_steps": review["agent_steps"],
         "review_tool_calls": review["review_tool_calls"],

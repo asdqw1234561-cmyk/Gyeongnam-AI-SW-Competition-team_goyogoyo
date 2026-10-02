@@ -78,6 +78,26 @@ class PagesFirstRenderTest(unittest.TestCase):
         self.assertEqual(saved["주거비 예산"], "")
         self.assertEqual(at.session_state["stage"], "done")
 
+    def test_done_screen_shows_candidate_roles_and_critic(self):
+        """결과 화면: 종합 1위 하나가 아니라 최적·균형 후보와 Critic 점검이 실제 데이터로 표시된다."""
+        at = AppTest.from_file(os.path.join(PROJECT_ROOT, "app.py"), default_timeout=TIMEOUT_S).run()
+        at.selectbox[1].select("창원시 의창구")  # 직장 또는 학교 위치 - 점수에 반영 못 하는 입력
+        no_questions = {"message": {"content": '{"questions": [], "tool_calls": []}'}}
+        with mock.patch("ollama.chat", return_value=no_questions):
+            at.button[0].click().run()
+        self.assertEqual([e.value for e in at.exception], [])
+        self.assertEqual(at.session_state["stage"], "done")
+        review = at.session_state["agent_execution_log"]["candidate_review"]
+        self.assertEqual(review["status"], "ok")
+        markdown = " ".join(m.value for m in at.markdown)
+        self.assertIn("정착 후보군", markdown)
+        self.assertIn("최적 · 성산구", markdown)
+        self.assertIn("균형 · 의창구", markdown)
+        captions = " ".join(c.value for c in at.caption)
+        self.assertIn("가성비** — 산출 불가", captions)
+        warnings = " ".join(w.value for w in at.warning)
+        self.assertIn("직장/학교 위치", warnings)  # coverage 점검이 반영 못 한 입력을 밝힘
+
     @staticmethod
     def _fake_ollama(**kwargs):
         """가중치 해석 프롬프트에는 '지원하지 않는 지표' 응답, 그 외(추가질문·계획)에는 빈 응답."""

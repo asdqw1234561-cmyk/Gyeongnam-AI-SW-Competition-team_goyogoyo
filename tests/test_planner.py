@@ -236,6 +236,14 @@ class RunAgentPlanTest(unittest.TestCase):
         used = {uc["indicator_code"]: round(uc["weight"] * 100, 1) for uc in result["score_result"]["used_conditions"]}
         self.assertEqual(used, {"bus_stop_count": 70.0, "hospital_count": 30.0})
 
+        # 점수 계산 뒤 후보 생성 + Critic 단계가 같은 점수 결과로 실행됐는지.
+        review = result["candidate_review"]
+        self.assertEqual(review["status"], "ok")
+        self.assertEqual(
+            {r["role"]: r.get("region_id") for r in review["roles"]}["best"],
+            result["score_result"]["region_scores"][0]["region_id"],
+        )
+
         # 실행 로그에 호출하지 않은 도구가 섞이지 않았는지.
         executed_tools = [e["tool"] for e in result["executed_tool_calls"]]
         self.assertEqual(
