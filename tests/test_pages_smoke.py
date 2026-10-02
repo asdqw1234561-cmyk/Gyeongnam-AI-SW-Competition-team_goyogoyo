@@ -50,6 +50,34 @@ class PagesFirstRenderTest(unittest.TestCase):
         self.assertTrue(any("경남 이주자" in t.value for t in at.title))
         self.assertEqual(at.session_state["stage"], "input")
 
+    def test_app_input_form_uses_select_options(self):
+        """희망지역·직장/학교 위치·주거비 예산은 자유입력이 아니라 선택지다."""
+        at = self._run("app.py")
+        labels = {s.label: s.options for s in at.selectbox}
+        region = next(opts for label, opts in labels.items() if label.startswith("희망 지역"))
+        self.assertEqual(region[0], "창원시 전체")
+        self.assertIn("창원시 진해구", region)
+        self.assertIn("선택 안 함", labels["직장 또는 학교 위치"])
+        self.assertIn("월세 30~50만원", labels["주거비 예산"])
+        # 세 항목은 더 이상 text_input이 아니다
+        self.assertFalse(any(t.label.startswith(("희망 지역", "직장", "주거비")) for t in at.text_input))
+
+    def test_app_submit_saves_selected_values(self):
+        """선택값 저장: '선택 안 함'은 기존 자유입력의 빈 값과 같게 ""로 저장된다."""
+        at = AppTest.from_file(os.path.join(PROJECT_ROOT, "app.py"), default_timeout=TIMEOUT_S).run()
+        at.selectbox[0].select("창원시 성산구")  # 희망 지역
+        at.selectbox[1].select("창원시 의창구")  # 직장 또는 학교 위치
+        # 주거비 예산은 기본값("선택 안 함") 그대로
+        no_questions = {"message": {"content": '{"questions": []}'}}
+        with mock.patch("ollama.chat", return_value=no_questions):
+            at.button[0].click().run()  # "다음 단계로"
+        self.assertEqual([e.value for e in at.exception], [])
+        saved = at.session_state["initial_input"]
+        self.assertEqual(saved["희망지역"], "창원시 성산구")
+        self.assertEqual(saved["직장/학교 위치"], "창원시 의창구")
+        self.assertEqual(saved["주거비 예산"], "")
+        self.assertEqual(at.session_state["stage"], "done")
+
     def test_user_page(self):
         at = self._run("pages/user.py")
         self.assertTrue(any("관심 위치" in t.value for t in at.title))

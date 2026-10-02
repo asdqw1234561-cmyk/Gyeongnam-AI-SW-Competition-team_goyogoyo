@@ -24,6 +24,35 @@ FEEDBACK_INDICATOR_LABELS = {
 }
 SPECIFIC_DISTRICT_NAMES = ["의창구", "성산구", "마산합포구", "마산회원구", "진해구"]
 
+# 최초 입력 폼 선택지. 희망지역은 지원 범위(창원시 5개 구) 안에서만 고르게 해 미지원 지역
+# 입력 자체가 생기지 않게 한다. 직장/학교 위치·주거비 예산은 아직 대응 지표(이동시간,
+# 실거래 주거비)가 없어 점수 계산에 쓰지 않고 참고용으로만 저장한다 - "선택 안 함"은
+# 기존 자유입력의 빈 값과 같게 ""로 저장한다.
+NOT_SELECTED = "선택 안 함"
+REGION_OPTIONS = ["창원시 전체"] + [f"창원시 {d}" for d in SPECIFIC_DISTRICT_NAMES]
+WORKPLACE_OPTIONS = [NOT_SELECTED] + [f"창원시 {d}" for d in SPECIFIC_DISTRICT_NAMES] + [
+    "창원시 외 경남 지역",
+    "경남 외 지역",
+    "재택근무·해당 없음",
+]
+HOUSING_BUDGET_OPTIONS = [
+    NOT_SELECTED,
+    "월세 30만원 미만",
+    "월세 30~50만원",
+    "월세 50~70만원",
+    "월세 70만원 이상",
+    "전세 희망",
+    "매매 희망",
+]
+REFERENCE_ONLY_HELP = "현재 점수 계산에는 반영되지 않고 참고용으로만 저장됩니다(대응하는 실제 데이터 미확보)."
+
+
+def _option_index(options: list[str], previous: str | None, empty_value: str | None = None) -> int:
+    """이전 입력값을 선택지 위치로 되돌린다. 빈 값은 empty_value(예: "선택 안 함")로,
+    선택지에 없는 예전 자유입력 값은 첫 항목으로 본다."""
+    value = previous or empty_value
+    return options.index(value) if value in options else 0
+
 # compute_region_scores_from_weights()로 계산된 결과(AI 가중치 확인 승인 포함)는
 # used_conditions 항목에 "condition"(원래 선택한 생활조건 이름)이 없다 - 그 경로는
 # 지표 가중치만 받으므로 구조적으로 알 수 없다(analysis/scoring.py 설계). 화면
@@ -871,11 +900,18 @@ if st.session_state.stage == "input":
     prev_conditions_options = ["교통", "의료", "교육", "생활편의(마트/편의점)", "안전", "자연환경", "문화시설"]
 
     with st.form("initial_input_form"):
-        region = st.text_input(
-            "희망 지역 (예: 창원시, 창원시 의창구 등 - 현재는 창원시만 지원합니다)",
-            value=prev.get("희망지역", ""),
+        region = st.selectbox(
+            "희망 지역 (현재는 창원시 5개 구만 지원합니다)",
+            REGION_OPTIONS,
+            index=_option_index(REGION_OPTIONS, prev.get("희망지역")),
+            help="특정 구를 골라도 추천은 항상 창원시 5개 구 전체를 비교합니다.",
         )
-        workplace = st.text_input("직장 또는 학교 위치", value=prev.get("직장/학교 위치", ""))
+        workplace_choice = st.selectbox(
+            "직장 또는 학교 위치",
+            WORKPLACE_OPTIONS,
+            index=_option_index(WORKPLACE_OPTIONS, prev.get("직장/학교 위치"), NOT_SELECTED),
+            help=REFERENCE_ONLY_HELP,
+        )
         has_car = st.radio(
             "자가용 보유 여부",
             prev_car_options,
@@ -884,7 +920,12 @@ if st.session_state.stage == "input":
             if prev.get("자가용 보유 여부") in prev_car_options
             else 0,
         )
-        budget = st.text_input("주거비 예산 (예: 월세 50만원 이하)", value=prev.get("주거비 예산", ""))
+        budget_choice = st.selectbox(
+            "주거비 예산",
+            HOUSING_BUDGET_OPTIONS,
+            index=_option_index(HOUSING_BUDGET_OPTIONS, prev.get("주거비 예산"), NOT_SELECTED),
+            help=REFERENCE_ONLY_HELP,
+        )
         important_conditions = st.multiselect(
             "중요하게 생각하는 생활 조건",
             prev_conditions_options,
@@ -906,6 +947,8 @@ if st.session_state.stage == "input":
         submitted = st.form_submit_button("다음 단계로")
 
     if submitted:
+        workplace = "" if workplace_choice == NOT_SELECTED else workplace_choice
+        budget = "" if budget_choice == NOT_SELECTED else budget_choice
         region_text = region.strip()
         if not region_text:
             st.error("희망 지역을 입력해 주세요.")
