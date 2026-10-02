@@ -71,7 +71,7 @@
 
 ## B8. CSV의 hospital_count 지표명을 "의료기관 수"로 변경
 - [ ] 상태
-- 승인: 필요 (원본 데이터 파일 `data/region_indicators.csv` 수정, `.claude/settings.json`에서 Edit 차단 중)
+- 승인: 완료 (2026-10-02 사용자 승인. 단 `data/region_indicators.csv`는 `.claude/settings.json`에서 Edit 차단 중이라, 차단 해제 전에는 CSV 수정 단계에서 `[!]`로 멈춘다 - Bash로 우회 수정하지 않는다)
 - 범위: 5개 행의 `indicator_name` "병원 수" → "의료기관 수". 수치·출처·기준일은 그대로. 수집 스크립트(`scripts/ingest_hira_hospital_data.py`)가 다시 생성할 때도 같은 이름을 쓰도록 맞춘다.
 - 결과:
 
