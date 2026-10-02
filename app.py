@@ -458,7 +458,9 @@ def render_recommendation_section() -> None:
             "AI 추가질문(가중치 확인 질문 제외) 답변 - 실제 지표와 연결할 수 없어 점수 계산에 "
             "반영하지 않음(입력정보로는 위에 보존됨)"
         )
-    if wc and wc["asked"] and wc["source"] != "ai_approved":
+    # 비율의 출처가 최초 입력의 '추가 요청사항'이면 바로 위 추가 요청사항 항목에서 이미
+    # 안내했으므로, 이 줄은 AI 추가질문(가중치 확인)에 답한 경우에만 보여준다.
+    if wc and wc["asked"] and wc["source"] != "ai_approved" and wc.get("answer_source") != "initial_extra_request":
         not_used_inputs.append(f"AI 추가질문(가중치 확인) 답변 - {wc['reason']}")
     for e in result["excluded_conditions"]:
         not_used_inputs.append(f"중요 생활조건 '{e['condition']}' - {e['reason']}")

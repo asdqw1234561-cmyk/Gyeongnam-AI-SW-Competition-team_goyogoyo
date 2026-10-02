@@ -78,6 +78,52 @@ class PagesFirstRenderTest(unittest.TestCase):
         self.assertEqual(saved["주거비 예산"], "")
         self.assertEqual(at.session_state["stage"], "done")
 
+    @staticmethod
+    def _fake_ollama(**kwargs):
+        """가중치 해석 프롬프트에는 '지원하지 않는 지표' 응답, 그 외(추가질문·계획)에는 빈 응답."""
+        system = kwargs["messages"][0]["content"]
+        if "가중치 조정" in system:
+            content = '{"type": "unsupported", "weights": null, "message": "주거비 데이터는 미확보입니다."}'
+        else:
+            content = '{"questions": [], "tool_calls": []}'
+        return {"message": {"content": content}}
+
+    def _not_used_captions(self, at: AppTest) -> list[str]:
+        return [c.value for c in at.caption if c.value.startswith("· ")]
+
+    def _finish_with_equal_weights(self, at: AppTest) -> None:
+        with mock.patch("ollama.chat", side_effect=self._fake_ollama):
+            next(b for b in at.button if b.label == "동일 가중치로 진행하기").click().run()
+        self.assertEqual([e.value for e in at.exception], [])
+        self.assertEqual(at.session_state["stage"], "done")
+
+    def test_not_used_inputs_no_duplicate_for_extra_request_ratio(self):
+        """D1: 추가 요청사항의 비율을 적용하지 못했을 때 'AI 추가질문(가중치 확인) 답변'으로 중복 표시하지 않는다."""
+        at = AppTest.from_file(os.path.join(PROJECT_ROOT, "app.py"), default_timeout=TIMEOUT_S).run()
+        at.multiselect[0].set_value(["교통", "의료"])
+        at.text_area[0].input("교통 70%, 주거비 30%")
+        with mock.patch("ollama.chat", side_effect=self._fake_ollama):
+            at.button[0].click().run()
+        self.assertEqual(at.session_state["stage"], "weight_confirm")
+        self._finish_with_equal_weights(at)
+        captions = self._not_used_captions(at)
+        self.assertTrue(any(c.startswith("· 추가 요청사항(") for c in captions))
+        self.assertFalse(any("AI 추가질문(가중치 확인) 답변" in c for c in captions))
+
+    def test_not_used_inputs_shows_followup_weight_answer(self):
+        """AI 추가질문(가중치 확인)에 답했는데 적용하지 못한 경우에는 그 줄이 그대로 나온다."""
+        at = AppTest.from_file(os.path.join(PROJECT_ROOT, "app.py"), default_timeout=TIMEOUT_S).run()
+        at.multiselect[0].set_value(["교통", "의료"])
+        with mock.patch("ollama.chat", side_effect=self._fake_ollama):
+            at.button[0].click().run()
+        self.assertEqual(at.session_state["stage"], "followup")
+        at.text_input[0].input("교통 70%, 주거비 30%")
+        with mock.patch("ollama.chat", side_effect=self._fake_ollama):
+            next(b for b in at.button if b.label == "답변 제출").click().run()
+        self.assertEqual(at.session_state["stage"], "weight_confirm")
+        self._finish_with_equal_weights(at)
+        self.assertTrue(any("AI 추가질문(가중치 확인) 답변" in c for c in self._not_used_captions(at)))
+
     def test_user_page(self):
         at = self._run("pages/user.py")
         self.assertTrue(any("관심 위치" in t.value for t in at.title))
