@@ -63,11 +63,11 @@
 - 결과: 2026-10-02 · analysis/scoring.py에 공개 함수 collect_confirmed_indicator() 추가(내부 _collect_confirmed_indicator에 그대로 위임 - 기존 테스트의 private 모킹이 계속 유효하도록 별칭 대신 위임 함수로 구현) · agent/planner.py, analysis/simulation.py 호출부를 공개 이름으로 변경 · scoring.py는 추가만 있고 계산 코드 삭제·수정 0줄 · 위임 테스트 2개 추가, 전체 271개 통과(skip 1), AppTest app.py·government.py 예외 0.
 
 ## B7. Streamlit 화면 스모크 테스트 추가
-- [ ] 상태
+- [x] 상태
 - 승인: 불필요
 - 범위: `streamlit.testing.v1.AppTest`로 `app.py`, `pages/user.py`, `pages/government.py`가 예외 없이 첫 화면을 그리는지 확인하는 테스트(`tests/test_pages_smoke.py`). Ollama·claude 호출은 모킹하거나 버튼을 누르지 않는 범위로 제한한다. folium 지도는 AppTest에서 렌더링되지 않을 수 있으니 예외 없이 지나가는지만 본다.
 - 완료 조건: 새 테스트가 실제 AI 호출 없이 통과, 전체 테스트 시간 큰 증가 없음(대략 +30초 이내).
-- 결과:
+- 결과: 2026-10-02 · 새 tests/test_pages_smoke.py 4개(app.py 입력 단계, user.py, government.py 첫 렌더링 + user.py에 검증 실패 Agent 결과 재렌더링 시 경고·답변 표시) · 첫 화면에서 ollama.chat/claude CLI가 호출되면 실패하도록 차단 · CLAUDE.md 7절에 안내 1줄 · 전체 275개 통과(skip 1), 전체 시간 1.2초→2.6초 · Stop hook 정상 동작 확인. 버튼 클릭 흐름은 범위 밖(브라우저 확인 필요).
 
 ## B8. CSV의 hospital_count 지표명을 "의료기관 수"로 변경
 - [ ] 상태

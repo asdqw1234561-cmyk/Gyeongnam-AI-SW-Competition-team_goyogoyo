@@ -90,6 +90,7 @@ python -m unittest tests.test_location_agent -v
 
 - Stop hook(`.claude/hooks/run_tests_on_stop.py`): 작업을 끝낼 때 `.claude/` 밖의 .py가 바뀌어 있으면 전체 테스트를 자동 실행하고, 실패하면 종료를 막아 고치게 한다(같은 실패로는 한 번만 막음).
 - 수정 기능 관련 테스트 + 전체 테스트를 모두 돌린다. 가능하면 `streamlit run app.py`로 화면도 확인한다.
+- `tests/test_pages_smoke.py`가 AppTest로 3개 화면의 첫 렌더링(예외 없음, 첫 화면에서 AI 미호출)을 확인한다. 버튼 클릭 흐름은 여전히 브라우저 확인이 필요하다.
 - 단위 테스트는 `ollama.chat`·`subprocess.run`(claude CLI)을 모킹한다. 실제 Ollama 스모크 테스트는 `LOCATION_AGENT_REAL_OLLAMA_TEST=1`일 때만 실행된다.
 - 보고할 때 모킹 테스트 / 실제 Claude·Ollama 호출 / 브라우저 확인을 구분한다. 브라우저에서만 확인 가능한 항목은 "브라우저 수동 확인 필요"라고 명시한다.
 - "테스트 통과"는 실제로 실행한 테스트에 대해서만 말한다.
