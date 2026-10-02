@@ -230,7 +230,7 @@ def generate_followup_questions(user_input: dict) -> list[str]:
 # analysis.scoring.compute_region_scores_from_weights()에 그대로 넘긴다.
 WEIGHT_FEEDBACK_SUPPORTED_INDICATORS = {
     "bus_stop_count": "교통(버스정류장 수)",
-    "hospital_count": "의료(병원 수)",
+    "hospital_count": "의료(의료기관 수)",
     "convenience_store_count": "생활편의(편의점 수)",
 }
 
@@ -240,7 +240,7 @@ WEIGHT_FEEDBACK_SYSTEM_PROMPT = """당신은 창원시 생활권 비교 앱에�
 
 [다룰 수 있는 지표 - 이 3개뿐]
 - bus_stop_count: 교통(버스정류장 수)
-- hospital_count: 의료(병원 수)
+- hospital_count: 의료(의료기관 수)
 - convenience_store_count: 생활편의(편의점 수)
 
 [판단 기준 - 아래 3가지 type 중 정확히 하나를 고르세요]

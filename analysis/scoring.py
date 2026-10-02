@@ -9,7 +9,7 @@ min-max 정규화해서 비교한 상대 점수"일 뿐이다. 인구나 면적�
 
 [점수 계산에 쓰는 지표] (요구사항: 현재 이 3개뿐)
     교통         -> bus_stop_count (버스정류장 수)
-    의료         -> hospital_count (병원 수)
+    의료         -> hospital_count (의료기관 수 - 의원·치과·한의원 등 전 종별 합산)
     생활편의     -> convenience_store_count (편의점 등록 업소 수)
 
 [쓰지 않는 것]

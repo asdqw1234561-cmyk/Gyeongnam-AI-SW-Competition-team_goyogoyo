@@ -108,7 +108,7 @@ PLANNER_SYSTEM_PROMPT = """당신은 경남 이주자 생활권 탐색 서비스
 
 [지원 지표 - 이 3개뿐, 그 외 지표는 존재하지 않습니다]
 - bus_stop_count: 교통(버스정류장 수)
-- hospital_count: 의료(병원 수)
+- hospital_count: 의료(의료기관 수)
 - convenience_store_count: 생활편의(편의점 수)
 
 [규칙]

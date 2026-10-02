@@ -19,7 +19,7 @@ FEEDBACK_SLIDER_KEYS = {
 }
 FEEDBACK_INDICATOR_LABELS = {
     "bus_stop_count": "교통 (버스정류장 수)",
-    "hospital_count": "의료 (병원 수)",
+    "hospital_count": "의료 (의료기관 수)",
     "convenience_store_count": "생활편의 (편의점 수)",
 }
 SPECIFIC_DISTRICT_NAMES = ["의창구", "성산구", "마산합포구", "마산회원구", "진해구"]
