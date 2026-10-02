@@ -57,6 +57,8 @@ import re
 
 import ollama
 
+from agent import llm  # LLM_BACKEND(.env)에 따라 Ollama 또는 Claude Code CLI 호출
+
 from services import bus_stops, convenience
 from services.bus_stops import PRESET_RADII_M as SUPPORTED_RADII_M
 
@@ -233,7 +235,7 @@ def call_location_planner(user_text: str, resolved_radius_m: int) -> dict:
     agent()가 이 예외 하나만 잡으면 "기본 절차" 폴백으로 안전하게 전환할 수
     있다."""
     try:
-        response = ollama.chat(
+        response = llm.chat(
             model=OLLAMA_MODEL,
             messages=[
                 {"role": "system", "content": LOCATION_AGENT_SYSTEM_PROMPT},

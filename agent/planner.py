@@ -31,6 +31,8 @@ import re
 
 import ollama
 
+from agent import llm  # LLM_BACKEND(.env)에 따라 Ollama 또는 Claude Code CLI 호출
+
 from analysis.scoring import (
     VALID_SCORABLE_INDICATOR_CODES,
     _collect_confirmed_indicator,
@@ -166,7 +168,7 @@ def call_planner(
     run_agent_plan()은 이 예외 하나만 잡으면 "기본 절차" 폴백으로 안전하게
     전환할 수 있다(에러 종류별로 상태를 분기하지 않아 흐름이 단순해진다)."""
     try:
-        response = ollama.chat(
+        response = llm.chat(
             model=OLLAMA_MODEL,
             messages=[
                 {"role": "system", "content": PLANNER_SYSTEM_PROMPT},
