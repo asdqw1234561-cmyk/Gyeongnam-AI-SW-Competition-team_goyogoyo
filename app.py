@@ -1112,7 +1112,7 @@ elif st.session_state.stage == "weight_confirm":
         with col_a:
             if st.button("✅ 이 가중치로 최초 추천 계산", type="primary"):
                 _apply_weight_confirmation(
-                    weights, "ai_approved", "AI 추가질문 답변을 승인해 가중치로 사용했습니다.",
+                    weights, "ai_approved", f"{origin_label}의 비율을 승인해 가중치로 사용했습니다.",
                     ai_confirmed_weights=weights,
                 )
                 st.rerun()
