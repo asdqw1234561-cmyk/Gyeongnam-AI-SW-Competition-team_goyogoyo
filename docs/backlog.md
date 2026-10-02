@@ -49,11 +49,11 @@
 - 결과: 2026-10-02 · agent/location_agent.py에 verify_answer_numbers() 추가(실행된 도구 결과의 숫자·문자열 속 숫자·YYYYMM(DD) 날짜 분해, 질문 숫자, 반경 m/km 허용) → 결과에 answer_verification, 실패 시 notes 기록, 답변 문장은 수정 안 함 · pages/user.py에 경고 표시 · 테스트 8개 추가, 전체 263개 통과(skip 1) · 실제 claude Agent 3개 질문 중 1건이 기준년월 "202606"→"2026년" 오탐이라 날짜 분해 규칙 추가 후 재실행 통과 · AppTest로 경고 렌더링 확인(예외 0). 실제 브라우저 클릭 흐름은 수동 확인 필요.
 
 ## B5. services 공통 유틸 중복 정리
-- [ ] 상태
+- [x] 상태
 - 승인: 불필요
 - 범위: `services/bus_stops.py`와 `services/convenience.py`에 같은 `_haversine_m`, `_to_float`, `_to_int`, `DISTRICTS`, `_CHANGWON_BBOX`가 있고 `pages/user.py:73`에도 `_CHANGWON_BBOX`가 있다. `services/geo.py`(가칭)로 옮겨 재사용한다. 지구 반지름·bbox 값은 그대로.
 - 완료 조건: 동작 변화 없음(버스 공식 집계 검증 포함 전체 테스트 통과), 중복 정의 제거.
-- 결과:
+- 결과: 2026-10-02 · 새 services/geo.py(DISTRICTS, CHANGWON_BBOX, EARTH_RADIUS_M, to_float, to_int, haversine_m, is_within_changwon_bbox) · bus_stops/convenience는 기존 이름으로 import(호출부 무변경), 미사용 math·numpy import 제거 · pages/user.py bbox 중복 제거 · tests/test_geo.py 7개 추가, 전체 269개 통과(skip 1) · `python -m services.bus_stops` 공식 집계 일치, 창원시청 예시 좌표 반경별 개수·최근접 거리 리팩터링 전과 동일, AppTest user.py 예외 0.
 
 ## B6. scoring의 private 함수 공개 이름 제공
 - [ ] 상태

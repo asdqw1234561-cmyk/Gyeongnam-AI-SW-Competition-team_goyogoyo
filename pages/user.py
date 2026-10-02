@@ -42,6 +42,7 @@ import streamlit as st
 from agent.location_agent import TOOL_LABELS as LOCATION_TOOL_LABELS
 from agent.location_agent import run_location_agent
 from services import bus_stops, convenience
+from services.geo import is_within_changwon_bbox
 from services.map_markers import (
     SEARCH_CENTER_MARKER_COLOR,
     SEARCH_CENTER_MARKER_ICON,
@@ -69,9 +70,6 @@ _DEFAULT_LOCATION_LABEL = next(iter(EXAMPLE_LOCATIONS))
 RADII_M = (300, 500, 1000)
 LOCATION_MODES = ["예시 위치 선택", "위도·경도 직접 입력", "지도 클릭으로 위치 선택"]
 
-# 창원시 대략 범위(참고용 경고 표시 - services 모듈의 bbox와 동일한 값)
-_CHANGWON_BBOX = {"lat": (34.9, 35.45), "lon": (128.35, 128.95)}
-
 DISTANCE_CAVEATS = [
     "반경은 직선거리(하버사인 공식) 기준입니다. 실제 도보 경로 거리가 아닙니다.",
     "지도의 반경 원은 구면상 직선거리 계산의 시각적 참고용이며, 실제 도보 가능 범위를 "
@@ -90,10 +88,7 @@ DISTANCE_CAVEATS = [
 
 
 def _is_outside_changwon(lat: float, lon: float) -> bool:
-    return not (
-        _CHANGWON_BBOX["lat"][0] <= lat <= _CHANGWON_BBOX["lat"][1]
-        and _CHANGWON_BBOX["lon"][0] <= lon <= _CHANGWON_BBOX["lon"][1]
-    )
+    return not is_within_changwon_bbox(lat, lon)
 
 
 def _is_valid_coord(lat, lon) -> bool:

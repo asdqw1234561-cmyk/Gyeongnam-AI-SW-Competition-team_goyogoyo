@@ -19,12 +19,16 @@ data_status / note)과 맞췄으므로 추천·점수 계산 쪽에서 그대로
 
 from __future__ import annotations
 
-import math
 import os
 from typing import Optional
 
-import numpy as np
 import pandas as pd
+
+from services.geo import CHANGWON_BBOX as _CHANGWON_BBOX
+from services.geo import DISTRICTS, EARTH_RADIUS_M  # noqa: F401  (기존 공개 이름 유지)
+from services.geo import haversine_m as _haversine_m
+from services.geo import to_float as _to_float
+from services.geo import to_int as _to_int
 
 _THIS_DIR = os.path.dirname(os.path.abspath(__file__))
 _DATA_DIR = os.path.join(os.path.dirname(_THIS_DIR), "data", "convenience")
@@ -34,13 +38,6 @@ COUNTS_CSV = os.path.join(_DATA_DIR, "changwon_convenience_counts.csv")
 
 NOT_SECURED = "미확보"
 
-DISTRICTS = {
-    "CW-UICHANG": "의창구",
-    "CW-SEONGSAN": "성산구",
-    "CW-MASANHAPPO": "마산합포구",
-    "CW-MASANHOEWON": "마산회원구",
-    "CW-JINHAE": "진해구",
-}
 
 # facility_type -> region_indicators.csv 의 indicator_code
 INDICATOR_CODES = {"편의점": "convenience_store_count", "대형마트": "mart_count"}
@@ -156,29 +153,9 @@ DISTANCE_NOTE = (
 PRESET_RADII_M = (300, 500, 1000)
 MAX_RADIUS_M = 5000
 MAX_RESULTS_LIMIT = 100
-EARTH_RADIUS_M = 6_371_008.8
 
-# 창원시 대략 범위(검색 위치가 크게 벗어났는지 안내용, 계산을 막지는 않음)
-_CHANGWON_BBOX = {"lat": (34.9, 35.45), "lon": (128.35, 128.95)}
 
 _coords_cache: dict = {"key": None, "df": None, "skipped": 0}
-
-
-def _to_float(value) -> Optional[float]:
-    if isinstance(value, bool):
-        return None
-    try:
-        number = float(value)
-    except (TypeError, ValueError):
-        return None
-    return number if math.isfinite(number) else None
-
-
-def _to_int(value) -> Optional[int]:
-    number = _to_float(value)
-    if number is None or number != int(number):
-        return None
-    return int(number)
 
 
 def _load_store_coords() -> tuple[pd.DataFrame, int]:
@@ -202,14 +179,6 @@ def _load_store_coords() -> tuple[pd.DataFrame, int]:
 
     _coords_cache.update(key=key, df=clean, skipped=skipped)
     return clean, skipped
-
-
-def _haversine_m(lat: float, lon: float, lats: np.ndarray, lons: np.ndarray) -> np.ndarray:
-    p1, p2 = np.radians(lat), np.radians(lats)
-    dphi = p2 - p1
-    dlmb = np.radians(lons - lon)
-    a = np.sin(dphi / 2) ** 2 + np.cos(p1) * np.cos(p2) * np.sin(dlmb / 2) ** 2
-    return 2 * EARTH_RADIUS_M * np.arcsin(np.sqrt(np.clip(a, 0, 1)))
 
 
 def _nearby_result(status: str, message: str, query: dict, **extra) -> dict:
