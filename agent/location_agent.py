@@ -340,7 +340,11 @@ LOCATION_AGENT_LOOP_PROMPT = """당신은 경남 이주자 생활권 탐색 서�
 - 실제 버스 이동시간·배차 간격·실시간 도착정보, 도보 경로, 의료기관 위치, 주거비·매물,
   범죄율·안전도, 종합 거주 적합도 확정 등은 데이터가 없습니다. 이런 요청은 도구를
   억지로 호출하지 말고 unsupported_requests에 적으세요.
-- 직선거리 기준 조회 결과일 뿐이라는 점을 답변에서 과장하지 마세요.
+- 답변은 Python이 검사하며, 아래를 어기면 답변 대신 Python 요약이 표시됩니다.
+  · "N개/곳/건"은 도구 결과의 전체 개수(total_count, 반경별 건수)만 쓰세요(목록 길이·합계·계산값 금지).
+  · 시설까지의 거리를 말할 때는 반드시 "직선거리"라고 쓰고, 가까운 순 상위 5곳의 거리만 인용하세요.
+  · "N분", "도보 N" 같은 이동시간, 배수·%·시간 같은 계산 값은 쓰지 마세요.
+  · 날짜·기준일 등 도구 결과에 없는 숫자는 쓰지 마세요. 답변은 800자 이내.
 
 [최종 출력 - 도구 호출을 모두 마친 뒤, 아래 JSON 객체 하나만 출력. markdown 금지]
 {"goals": ["분석 목표", ...],
@@ -736,73 +740,6 @@ def _execute_tool_calls(lat: float, lon: float, tool_calls: list[dict]) -> list[
     return log
 
 
-# ---------------------------------------------------------------------------
-# 답변 숫자 검증 - Claude 답변의 숫자가 실제 도구 결과에 있는지 Python이 확인
-# ---------------------------------------------------------------------------
-_NUMBER_PATTERN = re.compile(r"\d+(?:,\d{3})*(?:\.\d+)?")
-
-
-def _numbers_in_text(text: str) -> set[float]:
-    return {float(m.replace(",", "")) for m in _NUMBER_PATTERN.findall(text or "")}
-
-
-def _collect_result_numbers(value: object, out: set[float]) -> None:
-    """도구 결과 안의 모든 숫자(값, 숫자 형태의 dict 키, 문자열 속 숫자 - 주소·상호명·
-    기준일 등)를 모은다. 결과는 MCP 로그(JSON)를 거쳐 와서 반경별 counts의 키가
-    문자열("300")일 수 있으므로 키도 함께 본다."""
-    if isinstance(value, bool) or value is None:
-        return
-    if isinstance(value, (int, float)):
-        out.add(float(value))
-    elif isinstance(value, str):
-        out.update(_numbers_in_text(value))
-        # 기준년월 "202606"·기준일 "20251231"처럼 붙어 있는 날짜는 답변에서 "2026년 6월"로
-        # 풀어 쓰는 경우가 많아 연·월·일로도 나눠 허용한다.
-        for token in re.findall(r"\d+", value):
-            if len(token) in (6, 8):
-                out.update({float(token[:4]), float(token[4:6])})
-                if len(token) == 8:
-                    out.add(float(token[6:8]))
-    elif isinstance(value, dict):
-        for k, v in value.items():
-            _collect_result_numbers(k, out)
-            _collect_result_numbers(v, out)
-    elif isinstance(value, (list, tuple)):
-        for v in value:
-            _collect_result_numbers(v, out)
-
-
-def verify_answer_numbers(
-    answer: str, executed_tool_calls: list[dict], user_text: str, resolved_radius_m: int
-) -> dict:
-    """
-    Claude가 쓴 답변 문장 속 숫자가 "실제로 실행된 도구 결과"에서 확인되는지 검사한다.
-    답변 문장을 고치지 않고 검사 결과만 돌려준다(화면이 경고를 띄우는 데 쓴다).
-
-    허용하는 숫자: 실행된 도구 결과의 모든 숫자, 사용자 질문의 숫자, 적용 반경과
-    지원 반경(m 및 km 표기).
-
-    Returns:
-        {"status": "ok" | "no_numbers" | "unverified_numbers", "unverified": [str, ...]}
-    """
-    answer_numbers = _numbers_in_text(answer)
-    if not answer_numbers:
-        return {"status": "no_numbers", "unverified": []}
-
-    allowed: set[float] = set()
-    for entry in executed_tool_calls:
-        if entry.get("executed"):
-            _collect_result_numbers(entry.get("result"), allowed)
-    allowed |= _numbers_in_text(user_text)
-    for r in (resolved_radius_m, *SUPPORTED_RADII_M):
-        allowed |= {float(r), r / 1000}
-
-    unverified = sorted(n for n in answer_numbers if n not in allowed)
-    if not unverified:
-        return {"status": "ok", "unverified": []}
-    return {"status": "unverified_numbers", "unverified": [f"{n:g}" for n in unverified]}
-
-
 def _build_agent_result(
     agent_out: dict,
     user_text: str,
@@ -830,13 +767,20 @@ def _build_agent_result(
         elif s.get("note"):
             notes.append(f"'{label}': {s['note']}")
 
-    answer = str(final.get("answer") or "").strip()[:2000]
-    verification = verify_answer_numbers(answer, executed, user_text, resolved_radius_m)
-    if verification["status"] == "unverified_numbers":
-        notes.append(
-            "AI 답변의 일부 수치(" + ", ".join(verification["unverified"]) + ")를 실제 조회 결과에서 "
-            "확인하지 못했습니다."
-        )
+    # 답변 검증은 계획형 경로와 같은 agent_loop 기준을 쓴다(개수·거리는 실제 결과값, 거리엔
+    # "직선거리", 계산하지 않은 이동시간 금지). 통과하지 못하면 답변을 쓰지 않고 Python 요약으로 대체한다.
+    answer = str(final.get("answer") or "").strip()
+    observations = agent_loop.summarize_observations(executed)
+    ok, reject_reason = agent_loop.verify_answer(answer, observations, user_text, resolved_radius_m)
+    if ok:
+        final_answer = {"text": answer, "source": "ai_verified", "rejected_reason": None}
+    else:
+        final_answer = {
+            "text": agent_loop.python_summary(observations),
+            "source": "python_summary",
+            "rejected_reason": reject_reason,
+        }
+        notes.append(f"AI 답변을 검증하지 못해 Python 요약으로 대신했습니다: {reject_reason}")
 
     return {
         "status": "ok",
@@ -856,8 +800,8 @@ def _build_agent_result(
         "planner_error": None,
         "constraints": constraints,
         "corrections": [],
-        "agent_answer": answer,
-        "answer_verification": verification,
+        "final_answer": final_answer,
+        "review_error": None,
         "agent_steps": [
             {"tool": s.get("tool"), "reason": s.get("reason", ""), "blocked": bool(s.get("blocked")),
              "executed": bool(s.get("executed")), "error": s.get("error")}
@@ -903,9 +847,7 @@ def run_location_agent(
             "status": "ok" | "rejected_input",
             "message": str | None,              # status=="rejected_input"일 때만(예: 지원 안 하는 반경)
             "mode": "ai_agent" | "ai_planned" | "fallback_default" | None,
-            "agent_answer": str,                 # mode=="ai_agent"일 때만 - Claude의 최종 답변
             "agent_steps": [...],                # mode=="ai_agent"일 때만 - 차단 포함 호출 순서
-            "answer_verification": {"status", "unverified"},  # mode=="ai_agent"일 때만 - 답변 숫자 검증
             "user_text": str,
             "search_center": (lat, lon),         # 이 결과가 어느 좌표에서 실행됐는지(이후 비교용)
             "resolved_radius_m": int | None,

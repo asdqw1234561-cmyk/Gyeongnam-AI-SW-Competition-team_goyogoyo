@@ -950,7 +950,8 @@ class ClaudeMcpAgentTest(unittest.TestCase):
             result = location_agent.run_location_agent("편의점이랑 월세 알려줘", SEARCH_CENTER, 500, 10)
         mock_chat.assert_not_called()
         self.assertEqual(result["mode"], "ai_agent")
-        self.assertEqual(result["agent_answer"], "가장 가까운 편의점은 A입니다.")
+        self.assertEqual(result["final_answer"]["source"], "ai_verified")  # 숫자 없는 답변은 통과
+        self.assertEqual(result["final_answer"]["text"], "가장 가까운 편의점은 A입니다.")
         self.assertEqual([e["tool"] for e in result["executed_tool_calls"]], ["find_nearby_convenience_stores"])
         self.assertEqual(len(result["agent_steps"]), 2)
         self.assertTrue(any("차단" in n for n in result["notes"]))
@@ -972,66 +973,59 @@ class ClaudeMcpAgentTest(unittest.TestCase):
         self.assertEqual(result["status"], "rejected_input")
 
 
-class AnswerNumberVerificationTest(unittest.TestCase):
-    """Claude 답변 속 숫자가 실제 실행된 도구 결과에 있는지 Python이 확인한다."""
+class McpAnswerVerificationTest(unittest.TestCase):
+    """N2: MCP 반복형 답변도 계획형과 같은 agent_loop 기준으로 검사하고, 실패하면
+    답변 대신 Python 요약(final_answer.source == "python_summary")을 쓴다."""
 
-    BUS = {"tool": "find_nearby_bus_stops", "executed": True, "result": {
-        "total_count": 14, "query": {"radius_m": 500},
-        "stops": [{"rank": 1, "stop_name": "시청정문", "straight_distance_m": 128}],
-        "reference_date": "2025-12-31"}}
-    STORE = {"tool": "find_nearby_convenience_stores", "executed": True, "result": {
-        "total_count": 21, "stores": [{"rank": 1, "facility_name": "GS25창원정우점",
-                                       "road_address": "경상남도 창원시 성산구 원이대로 587",
-                                       "straight_distance_m": 154}]}}
+    BUS = {"tool": "find_nearby_bus_stops", "reason": "x", "blocked": False, "executed": True, "error": None,
+           "radius_m": 500, "max_results": 10,
+           "result": {"status": "ok", "total_count": 14,
+                      "stops": [{"rank": 1, "stop_name": "시청정문", "district": "성산구",
+                                 "straight_distance_m": 128}]}}
+    COMPARE = {"tool": "compare_nearby_facilities", "reason": "x", "blocked": False, "executed": True,
+               "error": None,
+               "result": {"bus_stops": {"counts": {"300": 9, "500": 14, "1000": 39}},
+                          "convenience_stores": {"counts": {"300": 12, "500": 21, "1000": 91}}}}
 
-    def _verify(self, answer, executed, user_text="주변 시설 알려줘", radius=500):
-        return location_agent.verify_answer_numbers(answer, executed, user_text, radius)
+    def setUp(self):
+        patcher = mock.patch.dict("os.environ", {location_agent.PLANNER_BACKEND_ENV: "claude_agent"})
+        patcher.start()
+        self.addCleanup(patcher.stop)
 
-    def test_numbers_from_results_and_addresses_ok(self):
-        answer = ("가장 가까운 정류장은 시청정문으로 약 128m, 500m 안에 14개입니다. "
-                  "가장 가까운 편의점은 GS25창원정우점(원이대로 587)으로 154m, 21개입니다.")
-        self.assertEqual(self._verify(answer, [self.BUS, self.STORE])["status"], "ok")
+    def _run(self, answer: str, steps: list[dict], user_text: str = "버스정류장 알려줘") -> dict:
+        agent_out = {"final": {"goals": [], "answer": answer, "unsupported_requests": []}, "steps": steps}
+        with mock.patch("agent.location_agent._run_location_mcp_agent", return_value=agent_out):
+            return location_agent.run_location_agent(user_text, SEARCH_CENTER, 500, 10)
 
-    def test_made_up_numbers_flagged(self):
-        result = self._verify("가장 가까운 정류장은 약 130m이고 20개 있습니다.", [self.BUS])
-        self.assertEqual(result["status"], "unverified_numbers")
-        self.assertEqual(result["unverified"], ["20", "130"])
+    def test_valid_answer_is_used(self):
+        r = self._run("가장 가까운 정류장은 시청정문으로 직선거리 128m이고, 500m 안에 14개 있습니다.", [self.BUS])
+        self.assertEqual(r["final_answer"]["source"], "ai_verified")
+        self.assertIsNone(r["final_answer"]["rejected_reason"])
+
+    def test_made_up_count_replaced_by_python_summary(self):
+        r = self._run("반경 안에 정류장이 50개 있습니다.", [self.BUS])
+        self.assertEqual(r["final_answer"]["source"], "python_summary")
+        self.assertIn("50", r["final_answer"]["rejected_reason"])
+        self.assertIn("14개", r["final_answer"]["text"])  # Python 요약은 실제 개수
+        self.assertTrue(any("Python 요약" in n for n in r["notes"]))
+
+    def test_distance_without_straight_line_wording_rejected(self):
+        r = self._run("가장 가까운 정류장은 128m 떨어져 있습니다.", [self.BUS])
+        self.assertEqual(r["final_answer"]["source"], "python_summary")
+        self.assertIn("직선거리", r["final_answer"]["rejected_reason"])
+
+    def test_travel_time_rejected(self):
+        r = self._run("직선거리 128m라 도보 2분이면 갑니다.", [self.BUS])
+        self.assertEqual(r["final_answer"]["source"], "python_summary")
 
     def test_compare_counts_with_string_keys(self):
-        """MCP 로그(JSON)를 거치면 반경별 counts 키가 문자열이 된다."""
-        compare = {"tool": "compare_nearby_facilities", "executed": True, "result": {
-            "bus_stops": {"counts": {"300": 9, "500": 14, "1000": 39}},
-            "convenience_stores": {"counts": {"300": 12, "500": 21, "1000": 91}}}}
-        answer = "300m 안 정류장 9개, 1km 안 편의점 91개입니다."
-        self.assertEqual(self._verify(answer, [compare])["status"], "ok")
+        """MCP 로그(JSON)를 거치면 반경별 counts의 키가 문자열이 된다."""
+        r = self._run("300m 안 정류장 9개, 1km 안 편의점 91개입니다.", [self.COMPARE], "반경별로 비교해줘")
+        self.assertEqual(r["final_answer"]["source"], "ai_verified")
 
-    def test_compact_reference_dates_allowed(self):
-        """실제 실행에서 '2026년 6월 기준'(데이터 값은 "202606")이 오탐된 사례."""
-        store = {**self.STORE, "result": {**self.STORE["result"], "reference_date": "202606"}}
-        self.assertEqual(self._verify("2026년 6월 기준 21개입니다.", [store])["status"], "ok")
-
-    def test_user_question_numbers_allowed(self):
-        self.assertEqual(self._verify("말씀하신 2곳 기준으로 14개입니다.", [self.BUS], "편의점 2곳 비교")["status"], "ok")
-
-    def test_not_executed_results_ignored(self):
-        failed = {"tool": "find_nearby_bus_stops", "executed": False, "result": {"total_count": 77}}
-        self.assertEqual(self._verify("77개입니다.", [failed])["unverified"], ["77"])
-
-    def test_no_numbers(self):
-        self.assertEqual(self._verify("가장 가까운 편의점은 A입니다.", [])["status"], "no_numbers")
-
-    def test_run_location_agent_attaches_verification(self):
-        agent_out = {
-            "final": {"goals": [], "answer": "정류장은 50개입니다.", "unsupported_requests": []},
-            "steps": [{**self.BUS, "reason": "x", "blocked": False, "error": None,
-                       "radius_m": 500, "max_results": 10}],
-        }
-        with mock.patch.dict("os.environ", {location_agent.PLANNER_BACKEND_ENV: "claude_agent"}), \
-             mock.patch("agent.location_agent._run_location_mcp_agent", return_value=agent_out):
-            result = location_agent.run_location_agent("버스정류장 몇 개야?", SEARCH_CENTER, 500, 10)
-        self.assertEqual(result["answer_verification"], {"status": "unverified_numbers", "unverified": ["50"]})
-        self.assertTrue(any("50" in n and "확인하지 못했습니다" in n for n in result["notes"]))
-        self.assertEqual(result["agent_answer"], "정류장은 50개입니다.")  # 답변 문장은 고치지 않는다
+    def test_answer_text_kept_verbatim_when_valid(self):
+        answer = "500m 안에 버스정류장 14개가 있습니다."
+        self.assertEqual(self._run(answer, [self.BUS])["final_answer"]["text"], answer)
 
 
 class BackendSelectionTest(unittest.TestCase):

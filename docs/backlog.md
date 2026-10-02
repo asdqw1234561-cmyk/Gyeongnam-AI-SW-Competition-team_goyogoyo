@@ -125,11 +125,11 @@
 - 결과: 2026-10-02 · agent/location_agent.py `_planner_backend()` - LOCATION_AGENT_BACKEND가 비어 있으면 LLM_BACKEND로 결정(claude_cli→claude_agent, 그 외→ollama), 명시 시 기존대로 덮어쓰기 · .env.example(LOCATION_AGENT_BACKEND= 비움)·CLAUDE.md·README 설명 갱신 · BackendSelectionTest 4개 추가, 전체 362개 통과(skip 1) · 실제 실행: LLM_BACKEND=ollama→계획형 ai_verified 답변, claude_cli→MCP ai_agent · ⚠️ 팀원 .env에 LOCATION_AGENT_BACKEND=claude_agent가 적혀 있으면 기존처럼 MCP로 동작(변화 없음), 비어 있으면 LLM_BACKEND를 따름.
 
 ## N2. 위치 Agent 답변 숫자 검증을 agent_loop 기준으로 통일
-- [ ] 상태
+- [x] 상태
 - 승인: 완료 (2026-10-02 사용자 승인, 브랜치 jhy-next)
 - 범위: MCP 경로(`_build_agent_result`)의 `verify_answer_numbers`(경고만 표시)를 제거하고, 팀원 `agent/agent_loop.py`의 단위별 검사(개수·거리 값 일치, 거리엔 "직선거리", 계산하지 않은 이동시간 금지)를 MCP 답변에도 적용한다. 실패하면 답변을 쓰지 않고 Python 요약으로 대체하고 사유를 남긴다(계획형과 같은 `final_answer` 형식). 화면(`pages/user.py`)도 하나의 표시 방식으로 맞춘다.
 - 완료 조건: MCP 경로 통과/실패 케이스 테스트, 기존 agent_loop 테스트 유지, 전체 테스트 통과, 실제 claude 실행으로 오탐 여부 확인.
-- 결과:
+- 결과: 2026-10-02 · agent/location_agent.py: verify_answer_numbers 등 제거, MCP 결과도 agent_loop.summarize_observations → verify_answer → 실패 시 python_summary로 `final_answer` 생성(agent_answer/answer_verification 키 제거), MCP 지시문에 검사 규칙 명시 · pages/user.py 답변 표시 한 경로로 통일, agent/agent_state.py 기억도 final_answer만 사용 · 테스트: McpAnswerVerificationTest 6개·화면 테스트 2개로 교체, 전체 361개 통과(skip 1) · 실제 claude MCP 5회 중 4회 ai_verified, 1회는 목록을 세어 만든 개수(2개)로 탈락→Python 요약(규칙상 의도된 엄격함) · README·CLAUDE.md 갱신.
 
 ## N3. 위치 Agent 경로 단순화 재평가 (N1·N2 이후)
 - [ ] 상태

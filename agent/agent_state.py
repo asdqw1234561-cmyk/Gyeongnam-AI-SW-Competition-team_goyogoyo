@@ -61,8 +61,8 @@ class ConversationMemory:
         if not result or result.get("status") != "ok":
             return
         final = result.get("final_answer") or {}
-        # 계획형은 final_answer, 반복형 Agent(claude -p + MCP)는 agent_answer 에 답변이 있다.
-        answer = final.get("text") or result.get("agent_answer") or ""
+        # 계획형·반복형(claude -p + MCP) 모두 final_answer 에 답변(또는 Python 요약)이 있다.
+        answer = final.get("text") or ""
         if not answer and result.get("unsupported_requests"):
             answer = "지원하지 않는 요청: " + ", ".join(u["request"] for u in result["unsupported_requests"])
         self.add_turn(

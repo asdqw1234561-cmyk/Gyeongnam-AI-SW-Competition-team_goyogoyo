@@ -493,17 +493,8 @@ def render_location_agent_result(result: dict) -> None:
     st.write(f"검색 중심: 위도 {lat:.6f}, 경도 {lon:.6f} · 검색 반경: {radius_label} ({source_label})")
 
     st.markdown("**C. AI 분석 결과**")
-    if result.get("agent_answer"):  # 반복형 Agent(claude -p + MCP) 답변
-        verification = result.get("answer_verification") or {}
-        if verification.get("status") == "unverified_numbers":
-            st.warning(
-                "⚠️ AI 답변의 일부 수치(" + ", ".join(verification["unverified"]) + ")를 실제 조회 "
-                "결과에서 확인하지 못했습니다 - 아래 표의 실제 조회 결과를 기준으로 보세요."
-            )
-        st.success(f"🤖 {result['agent_answer']}")
-        st.caption("아래 표는 AI가 답변에 사용한 실제 조회 결과입니다.")
-    else:  # 계획형(Ollama/Claude CLI 계획) - 관찰 -> 판단 -> 행동 루프의 최종 답변 또는 Python 요약
-        _render_final_answer(result.get("final_answer"))
+    # MCP 반복형·계획형 모두 같은 형식: 숫자 검증을 통과한 AI 답변 또는 Python 요약(agent/agent_loop.py)
+    _render_final_answer(result.get("final_answer"))
     if result["unsupported_requests"]:
         for item in result["unsupported_requests"]:
             st.info(f"ℹ️ 지원하지 않는 요청입니다: {item['request']} - {item['reason']}")
