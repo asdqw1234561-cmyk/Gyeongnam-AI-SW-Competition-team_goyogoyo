@@ -360,7 +360,7 @@ def render_location_agent_execution_log(result: dict) -> None:
             reason = call.get("reason", "") if isinstance(call, dict) else ""
             st.caption(f"· {LOCATION_TOOL_LABELS.get(tool, tool)}" + (f" — {reason}" if reason else ""))
     else:
-        st.caption("AI 계획 호출 자체가 없었습니다(Ollama 연결 실패 등).")
+        st.caption("AI 계획 호출 자체가 없었습니다(claude CLI·Ollama 연결 실패 등).")
 
     st.markdown("**3. Python 검증 결과**")
     if has_corrections:
@@ -616,7 +616,7 @@ else:
     st.divider()
     st.subheader("5. 🤖 AI에게 주변 생활시설 분석 요청하기")
     st.caption(
-        "자연어로 요청하면 로컬 Ollama(qwen3.5:4b)가 어떤 조회 도구를 쓸지 계획하고, "
+        "자연어로 요청하면 Claude(claude CLI, 실패 시 로컬 Ollama)가 어떤 조회 도구를 쓸지 계획하고, "
         "Python이 그 계획을 검증한 뒤 실제 데이터를 조회합니다. 검색 중심 좌표는 항상 "
         "위에서 확정한 좌표만 사용되며, AI가 임의로 바꿀 수 없습니다."
     )

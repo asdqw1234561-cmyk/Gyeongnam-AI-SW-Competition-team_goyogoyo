@@ -1,7 +1,8 @@
-# Ollama(Qwen3.5) 연동 - 위치 기반 주변 시설 분석 Agent
+# Claude CLI(claude -p) / Ollama(Qwen3.5) 연동 - 위치 기반 주변 시설 분석 Agent
 """
 pages/user.py에서 사용자가 지도로 "확정한" 검색 중심 좌표 주변의 생활시설을
-자연어로 물으면, 로컬 Ollama(qwen3.5:4b)가 어떤 조회 도구를 쓸지 계획하고
+자연어로 물으면, Claude Code CLI(`claude -p`, 기본) 또는 로컬 Ollama(qwen3.5:4b,
+LOCATION_AGENT_BACKEND=ollama 또는 CLI 실패 시)가 어떤 조회 도구를 쓸지 계획하고
 Python이 그 계획을 검증한 뒤 허용된 도구만 실제로 실행하는 작은 Agent다.
 
 agent/planner.py(창원시 5개 구 상대 비교 추천용 Agent)와는 별개의 독립된 모듈
@@ -53,7 +54,11 @@ agent/planner.py(창원시 5개 구 상대 비교 추천용 Agent)와는 별개�
 from __future__ import annotations
 
 import json
+import os
 import re
+import shutil
+import subprocess
+import tempfile
 
 import ollama
 
@@ -61,6 +66,12 @@ from services import bus_stops, convenience
 from services.bus_stops import PRESET_RADII_M as SUPPORTED_RADII_M
 
 OLLAMA_MODEL = "qwen3.5:4b"
+
+# 계획 수립 백엔드 - "claude_cli"(기본: Claude Code CLI `claude -p`) | "ollama"(로컬)
+# claude_cli 호출이 실패하면 ollama로 한 번 더 시도하고, 그것도 실패하면 기본 절차로 폴백한다.
+PLANNER_BACKEND_ENV = "LOCATION_AGENT_BACKEND"
+CLAUDE_CLI_MODEL_ENV = "LOCATION_AGENT_CLAUDE_MODEL"  # 비어 있으면 CLI 기본 모델 사용
+CLAUDE_CLI_TIMEOUT_S = 120
 
 ALLOWED_TOOLS: tuple[str, ...] = (
     "find_nearby_bus_stops",
@@ -227,11 +238,94 @@ def _parse_plan(raw_text: str) -> dict | None:
     return data if isinstance(data, dict) else None
 
 
+def _planner_backend() -> str:
+    return os.environ.get(PLANNER_BACKEND_ENV, "claude_cli").strip().lower()
+
+
+def _call_claude_cli_planner(user_text: str, resolved_radius_m: int) -> dict:
+    """Claude Code CLI(`claude -p`)를 비대화형으로 호출해 계획(JSON)을 받는다.
+
+    - 시스템 프롬프트와 사용자 요청은 전부 stdin으로 넘긴다(Windows의 claude.cmd
+      를 거치면 여러 줄·한글 인자가 깨질 수 있어 인자는 ASCII 옵션만 쓴다).
+    - --tools "" 로 내장 도구(파일 수정·Bash 등)를 모두 끄고, --system-prompt로
+      Claude Code 기본 코딩 프롬프트를 대체해 "계획 JSON만 출력"하게 한다.
+    - 프로젝트 CLAUDE.md·메모리가 섞이지 않도록 임시 디렉터리에서 실행한다.
+    """
+    exe = shutil.which("claude")
+    if exe is None:
+        raise RuntimeError("claude CLI를 찾을 수 없습니다(PATH에 claude가 없음).")
+
+    cmd = [
+        exe, "-p",
+        "--output-format", "json",
+        "--tools", "",
+        "--strict-mcp-config",
+        "--no-session-persistence",
+        "--disable-slash-commands",
+        "--effort", "low",
+        "--system-prompt",
+        "You are a planning assistant. Follow the instructions in the user message "
+        "and reply with a single JSON object only.",
+    ]
+    model = os.environ.get(CLAUDE_CLI_MODEL_ENV, "").strip()
+    if model:
+        cmd += ["--model", model]
+
+    stdin_text = (
+        f"{LOCATION_AGENT_SYSTEM_PROMPT}\n\n"
+        f"{_build_user_prompt(user_text, resolved_radius_m)}"
+    )
+    try:
+        proc = subprocess.run(
+            cmd,
+            input=stdin_text,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=CLAUDE_CLI_TIMEOUT_S,
+            cwd=tempfile.gettempdir(),
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise RuntimeError(f"claude CLI 실행에 실패했습니다: {exc}") from exc
+
+    if proc.returncode != 0:
+        detail = (proc.stderr or proc.stdout or "").strip()[:300]
+        raise RuntimeError(f"claude CLI가 오류로 종료했습니다(code={proc.returncode}): {detail}")
+
+    try:
+        envelope = json.loads(proc.stdout)
+    except json.JSONDecodeError as exc:
+        raise RuntimeError("claude CLI 출력(JSON)을 해석하지 못했습니다.") from exc
+    if not isinstance(envelope, dict) or envelope.get("is_error"):
+        detail = str(envelope.get("result") if isinstance(envelope, dict) else envelope)[:300]
+        raise RuntimeError(f"claude CLI가 오류 결과를 반환했습니다: {detail}")
+
+    plan = _parse_plan(str(envelope.get("result") or ""))
+    if plan is None:
+        raise RuntimeError("AI가 반환한 위치 분석 계획을 JSON으로 해석하지 못했습니다.")
+    return plan
+
+
 def call_location_planner(user_text: str, resolved_radius_m: int) -> dict:
-    """로컬 Ollama(qwen3.5:4b)를 호출해 위치 분석 계획(JSON)을 받는다. 연결
-    실패와 JSON 해석 실패를 모두 RuntimeError 하나로 통일한다 - run_location_
-    agent()가 이 예외 하나만 잡으면 "기본 절차" 폴백으로 안전하게 전환할 수
-    있다."""
+    """설정된 백엔드로 위치 분석 계획(JSON)을 받는다. 기본은 claude CLI이며,
+    실패하면 로컬 Ollama로 한 번 더 시도한다. 모든 실패는 RuntimeError 하나로
+    통일한다 - run_location_agent()가 이 예외 하나만 잡으면 "기본 절차"
+    폴백으로 안전하게 전환할 수 있다."""
+    if _planner_backend() != "claude_cli":
+        return _call_ollama_planner(user_text, resolved_radius_m)
+
+    try:
+        return _call_claude_cli_planner(user_text, resolved_radius_m)
+    except RuntimeError as claude_exc:
+        try:
+            return _call_ollama_planner(user_text, resolved_radius_m)
+        except RuntimeError as ollama_exc:
+            raise RuntimeError(f"{claude_exc} / Ollama 대체 호출도 실패: {ollama_exc}") from ollama_exc
+
+
+def _call_ollama_planner(user_text: str, resolved_radius_m: int) -> dict:
+    """로컬 Ollama(qwen3.5:4b)를 호출해 위치 분석 계획(JSON)을 받는다."""
     try:
         response = ollama.chat(
             model=OLLAMA_MODEL,

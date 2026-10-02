@@ -1,16 +1,30 @@
 """
 agent/location_agent.py의 위치 기반 주변 시설 분석 Agent 단위 테스트.
-ollama.chat을 모킹해서 실제 Ollama 서버 없이 계획 검증·실행 로직을 검증한다.
+ollama.chat / subprocess.run(claude -p)을 모킹해서 실제 AI 호출 없이 계획 검증·실행 로직을 검증한다.
 
     python -m unittest tests.test_location_agent -v
 """
 
+import json
+import subprocess
 import unittest
 from unittest import mock
 
 from agent import location_agent
 
 SEARCH_CENTER = (35.2280, 128.6811)  # 창원시청 부근 예시 좌표
+
+# 아래 테스트 대부분은 ollama.chat을 모킹하므로 Ollama 백엔드로 고정한다
+# (claude CLI 백엔드는 ClaudeCliPlannerTest에서 subprocess를 모킹해 따로 검증).
+_backend_patch = mock.patch.dict("os.environ", {location_agent.PLANNER_BACKEND_ENV: "ollama"})
+
+
+def setUpModule():
+    _backend_patch.start()
+
+
+def tearDownModule():
+    _backend_patch.stop()
 
 
 def _fake_chat_response(content: str) -> dict:
@@ -815,6 +829,55 @@ class RunLocationAgentScopeCorrectionTest(unittest.TestCase):
         self.assertIn("constraints", result)
         self.assertIn("corrections", result)
         self.assertIsInstance(result["corrections"], list)
+
+
+class ClaudeCliPlannerTest(unittest.TestCase):
+    """claude -p 백엔드 - subprocess를 모킹해 실제 CLI 없이 검증."""
+
+    def setUp(self):
+        patcher = mock.patch.dict("os.environ", {location_agent.PLANNER_BACKEND_ENV: "claude_cli"})
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        which = mock.patch("agent.location_agent.shutil.which", return_value="claude")
+        which.start()
+        self.addCleanup(which.stop)
+
+    @staticmethod
+    def _completed(result_text: str, is_error: bool = False, returncode: int = 0):
+        stdout = json.dumps({"type": "result", "is_error": is_error, "result": result_text})
+        return subprocess.CompletedProcess(args=[], returncode=returncode, stdout=stdout, stderr="")
+
+    def test_plan_parsed_from_cli_result(self):
+        plan_json = '{"tool_calls": [{"tool": "find_nearby_bus_stops", "reason": "a"}]}'
+        with mock.patch("agent.location_agent.subprocess.run", return_value=self._completed(plan_json)) as run, \
+             mock.patch("agent.location_agent.ollama.chat") as mock_chat:
+            plan = location_agent.call_location_planner("버스정류장 알려줘", 500)
+        self.assertEqual(plan["tool_calls"][0]["tool"], "find_nearby_bus_stops")
+        mock_chat.assert_not_called()
+        args, kwargs = run.call_args
+        cmd = args[0]
+        self.assertIn("-p", cmd)
+        self.assertEqual(cmd[cmd.index("--tools") + 1], "")  # 내장 도구 전부 비활성화
+        self.assertIn("버스정류장 알려줘", kwargs["input"])  # 프롬프트는 stdin으로 전달
+
+    def test_cli_failure_falls_back_to_ollama(self):
+        with mock.patch("agent.location_agent.subprocess.run",
+                        return_value=self._completed("", returncode=1)), \
+             mock.patch("agent.location_agent.ollama.chat") as mock_chat:
+            mock_chat.return_value = _fake_chat_response('{"tool_calls": []}')
+            plan = location_agent.call_location_planner("버스정류장 알려줘", 500)
+        self.assertEqual(plan, {"tool_calls": []})
+        mock_chat.assert_called_once()
+
+    def test_both_backends_fail_goes_to_default_procedure(self):
+        with mock.patch("agent.location_agent.subprocess.run",
+                        return_value=self._completed("rate limited", is_error=True)), \
+             mock.patch("agent.location_agent.ollama.chat", side_effect=ConnectionError("down")):
+            result = location_agent.run_location_agent(
+                "버스정류장 알려줘", SEARCH_CENTER, ui_radius_m=500, ui_max_results=10
+            )
+        self.assertEqual(result["mode"], "fallback_default")
+        self.assertIn("claude CLI", result["planner_error"])
 
 
 class RealOllamaIntegrationSmokeTest(unittest.TestCase):
