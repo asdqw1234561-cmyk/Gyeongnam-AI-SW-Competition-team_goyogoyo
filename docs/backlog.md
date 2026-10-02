@@ -117,12 +117,12 @@
 ---
 
 ## N1. AI 백엔드 설정 단일화 - 위치 Agent 기본 경로를 LLM_BACKEND에서 결정
-- [ ] 상태
+- [x] 상태
 - 승인: 완료 (2026-10-02 사용자 승인, 브랜치 jhy-next)
 - 범위: 지금은 위치 Agent가 `LOCATION_AGENT_BACKEND`(기본 claude_agent), 나머지 AI 호출이 `LLM_BACKEND`(기본 ollama)를 따로 본다. `LOCATION_AGENT_BACKEND`가 없으면 `LLM_BACKEND`로 기본 경로를 정한다: claude_cli → claude_agent(MCP), ollama → 계획형(ollama, agent_loop 검토 포함). `LOCATION_AGENT_BACKEND`는 명시했을 때만 덮어쓰는 선택 설정으로 유지한다.
 - 주의: 기본값 변화 - 아무 설정 없을 때 위치 Agent가 MCP(claude) 대신 Ollama 계획형으로 동작하게 된다. .env.example·CLAUDE.md·README·docs/claude_cli_agent.md 설명을 함께 맞춘다.
 - 완료 조건: 설정 조합별 단위 테스트(미설정, LLM_BACKEND만, 둘 다), 전체 테스트 통과, 실제 실행 확인.
-- 결과:
+- 결과: 2026-10-02 · agent/location_agent.py `_planner_backend()` - LOCATION_AGENT_BACKEND가 비어 있으면 LLM_BACKEND로 결정(claude_cli→claude_agent, 그 외→ollama), 명시 시 기존대로 덮어쓰기 · .env.example(LOCATION_AGENT_BACKEND= 비움)·CLAUDE.md·README 설명 갱신 · BackendSelectionTest 4개 추가, 전체 362개 통과(skip 1) · 실제 실행: LLM_BACKEND=ollama→계획형 ai_verified 답변, claude_cli→MCP ai_agent · ⚠️ 팀원 .env에 LOCATION_AGENT_BACKEND=claude_agent가 적혀 있으면 기존처럼 MCP로 동작(변화 없음), 비어 있으면 LLM_BACKEND를 따름.
 
 ## N2. 위치 Agent 답변 숫자 검증을 agent_loop 기준으로 통일
 - [ ] 상태

@@ -73,11 +73,11 @@ from services.bus_stops import PRESET_RADII_M as SUPPORTED_RADII_M
 
 OLLAMA_MODEL = "qwen3.5:4b"
 
-# 백엔드 (LOCATION_AGENT_BACKEND)
-#   "claude_agent"(기본): claude -p + location MCP 서버 - Claude가 도구를 직접 반복 호출.
-#                         실패하면 로컬 Ollama 계획 → 기본 절차 순으로 폴백.
-#   "claude_cli": claude -p가 계획 JSON만 세우고 Python이 실행(실패 시 Ollama 폴백).
-#   "ollama": 로컬 Ollama 계획만 사용.
+# 백엔드 (LOCATION_AGENT_BACKEND - 비워 두면 LLM_BACKEND를 따른다, _planner_backend() 참고)
+#   "claude_agent": claude -p + location MCP 서버 - Claude가 도구를 직접 반복 호출.
+#                   실패하면 llm.chat 계획 → 기본 절차 순으로 폴백. (LLM_BACKEND=claude_cli일 때 기본)
+#   "claude_cli": claude -p가 계획 JSON만 세우고 Python이 실행(실패 시 llm.chat 계획으로 폴백).
+#   "ollama": llm.chat 계획만 사용 + agent_loop 결과 검토. (LLM_BACKEND=ollama일 때 기본)
 PLANNER_BACKEND_ENV = "LOCATION_AGENT_BACKEND"
 CLAUDE_CLI_MODEL_ENV = "LOCATION_AGENT_CLAUDE_MODEL"  # 비어 있으면 CLI 기본 모델 사용
 # 계획 1회 호출 제한 시간은 agent/claude_cli.py 와 같은 CLAUDE_CLI_TIMEOUT(.env, 기본 200초)을 쓴다.
@@ -245,7 +245,14 @@ def _build_user_prompt(user_text: str, resolved_radius_m: int, history: list[dic
 
 
 def _planner_backend() -> str:
-    return os.environ.get(PLANNER_BACKEND_ENV, "claude_agent").strip().lower()
+    """위치 Agent 경로. LOCATION_AGENT_BACKEND를 명시하면 그 값을 쓰고, 비어 있으면
+    다른 AI 호출과 같은 LLM_BACKEND를 따른다(설정을 하나만 바꿔도 전체가 같은 AI를 쓰도록).
+        LLM_BACKEND=claude_cli -> "claude_agent"(claude -p + MCP 반복형)
+        LLM_BACKEND=ollama     -> "ollama"(llm.chat 계획형 + agent_loop 결과 검토)"""
+    explicit = os.environ.get(PLANNER_BACKEND_ENV, "").strip().lower()
+    if explicit:
+        return explicit
+    return "claude_agent" if llm.get_backend() == "claude_cli" else "ollama"
 
 
 def _call_claude_cli_planner(user_text: str, resolved_radius_m: int, history: list[dict] | None = None) -> dict:

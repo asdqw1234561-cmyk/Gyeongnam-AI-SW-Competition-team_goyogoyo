@@ -1034,6 +1034,41 @@ class AnswerNumberVerificationTest(unittest.TestCase):
         self.assertEqual(result["agent_answer"], "정류장은 50개입니다.")  # 답변 문장은 고치지 않는다
 
 
+class BackendSelectionTest(unittest.TestCase):
+    """N1: LOCATION_AGENT_BACKEND를 비워 두면 LLM_BACKEND를 따른다(설정 하나로 전체 AI 결정)."""
+
+    def _backend(self, env: dict) -> str:
+        import os
+        with mock.patch.dict("os.environ", env):
+            for key in ("LLM_BACKEND", location_agent.PLANNER_BACKEND_ENV):
+                if key not in env:
+                    os.environ.pop(key, None)
+            return location_agent._planner_backend()
+
+    def test_nothing_set_defaults_to_ollama_planner(self):
+        self.assertEqual(self._backend({}), "ollama")
+
+    def test_llm_backend_claude_cli_selects_mcp_agent(self):
+        self.assertEqual(self._backend({"LLM_BACKEND": "claude_cli"}), "claude_agent")
+
+    def test_empty_location_backend_follows_llm_backend(self):
+        """.env.example처럼 LOCATION_AGENT_BACKEND= 로 비워 둔 경우."""
+        env = {"LLM_BACKEND": "claude_cli", location_agent.PLANNER_BACKEND_ENV: ""}
+        self.assertEqual(self._backend(env), "claude_agent")
+        env = {"LLM_BACKEND": "ollama", location_agent.PLANNER_BACKEND_ENV: "  "}
+        self.assertEqual(self._backend(env), "ollama")
+
+    def test_explicit_location_backend_overrides(self):
+        self.assertEqual(
+            self._backend({"LLM_BACKEND": "ollama", location_agent.PLANNER_BACKEND_ENV: "claude_agent"}),
+            "claude_agent",
+        )
+        self.assertEqual(
+            self._backend({"LLM_BACKEND": "claude_cli", location_agent.PLANNER_BACKEND_ENV: "OLLAMA"}),
+            "ollama",
+        )
+
+
 class RealOllamaIntegrationSmokeTest(unittest.TestCase):
     """실제 qwen3.5:4b를 사용하는 통합 스모크 테스트 - 기본적으로 건너뛴다.
     LOCATION_AGENT_REAL_OLLAMA_TEST=1 환경변수가 설정됐을 때만 실행하며,

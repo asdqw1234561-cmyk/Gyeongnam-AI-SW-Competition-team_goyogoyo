@@ -29,7 +29,7 @@
 **AI Agent**
 - `agent/ollama_agent.py` (Ollama qwen3.5:4b): 추가질문 생성, 자연어 가중치 해석. 승인 전에는 적용하지 않는다.
 - `agent/planner.py` (Ollama): 5개 구 분석 도구 계획. 가중치는 항상 사용자가 승인한 값으로 강제 치환한다.
-- `agent/location_agent.py` + `agent/location_mcp_server.py`: 위치 기반 Agent. 기본은 `claude -p` + stdio MCP 서버(Claude가 도구를 반복 호출), 실패 시 Ollama 계획 → 기본 절차로 폴백. `LOCATION_AGENT_BACKEND`(`claude_agent`/`claude_cli`/`ollama`)로 전환.
+- `agent/location_agent.py` + `agent/location_mcp_server.py`: 위치 기반 Agent. `LLM_BACKEND=claude_cli`면 `claude -p` + stdio MCP 서버(Claude가 도구를 반복 호출), `ollama`면 계획형 + `agent_loop` 결과 검토로 동작하고, 실패 시 계획형 → 기본 절차로 폴백. `LOCATION_AGENT_BACKEND`(`claude_agent`/`claude_cli`/`ollama`)는 명시했을 때만 이를 덮어쓴다.
 - `agent/llm.py` + `agent/claude_cli.py`: LLM 호출 공통 창구. `LLM_BACKEND`(`ollama`/`claude_cli`)로 백엔드를 고르고, 세션·일일 호출 수와 입력 길이를 제한한다. 새 AI 호출은 `ollama.chat` 대신 `llm.chat`을 쓴다.
 - `agent/planner_loop.py`: 5개 구 점수 계산 뒤 AI가 결과를 보고 설명 작성·참고 지표 조회·가중치 가정 계산을 반복(최대 3회). 실제 추천 점수는 바꾸지 않는다.
 - `agent/agent_loop.py`: 위치 Agent 계획형 경로의 결과 검토 루프(관찰 → 판단 → 행동, 최대 3회). AI 답변 숫자를 검증해 실패하면 Python 요약으로 대체한다. `agent/agent_state.py`의 `ConversationMemory`가 같은 위치의 최근 대화를 후속 질문 맥락으로 넘긴다.
