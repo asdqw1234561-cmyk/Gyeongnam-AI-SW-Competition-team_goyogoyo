@@ -1,0 +1,41 @@
+region_id,region_name,category,indicator_code,indicator_name,value,unit,source,reference_date,data_status,note
+CW-UICHANG,의창구,교통,transit_avg_time_to_citycenter_min,대중교통 평균 소요시간(시청 기준),25,분,개발용 더미 데이터,2026-01-01,예시(개발용),실제 수치 아님. UI/로직 테스트 전용
+CW-UICHANG,의창구,교통,bus_stop_count,버스정류장 수,40,개,개발용 더미 데이터,2026-01-01,예시(개발용),실제 수치 아님. UI/로직 테스트 전용
+CW-UICHANG,의창구,의료,hospital_count,병원 수,15,개,개발용 더미 데이터,2026-01-01,예시(개발용),실제 수치 아님. UI/로직 테스트 전용
+CW-UICHANG,의창구,의료,emergency_hospital_count,응급실 운영 병원 수,1,개,개발용 더미 데이터,2026-01-01,예시(개발용),실제 수치 아님. UI/로직 테스트 전용
+CW-UICHANG,의창구,생활편의,mart_count,대형마트 수,3,개,개발용 더미 데이터,2026-01-01,예시(개발용),실제 수치 아님. UI/로직 테스트 전용
+CW-UICHANG,의창구,생활편의,convenience_store_count,편의점 수,60,개,개발용 더미 데이터,2026-01-01,예시(개발용),실제 수치 아님. UI/로직 테스트 전용
+CW-UICHANG,의창구,주거비,monthly_rent_avg,월세 평균,55,만원,개발용 더미 데이터,2026-01-01,예시(개발용),실제 수치 아님. UI/로직 테스트 전용
+CW-UICHANG,의창구,주거비,jeonse_avg,전세 평균,12000,만원,개발용 더미 데이터,2026-01-01,예시(개발용),실제 수치 아님. UI/로직 테스트 전용
+CW-SEONGSAN,성산구,교통,transit_avg_time_to_citycenter_min,대중교통 평균 소요시간(시청 기준),15,분,개발용 더미 데이터,2026-01-01,예시(개발용),실제 수치 아님. UI/로직 테스트 전용
+CW-SEONGSAN,성산구,교통,bus_stop_count,버스정류장 수,55,개,개발용 더미 데이터,2026-01-01,예시(개발용),실제 수치 아님. UI/로직 테스트 전용
+CW-SEONGSAN,성산구,의료,hospital_count,병원 수,25,개,개발용 더미 데이터,2026-01-01,예시(개발용),실제 수치 아님. UI/로직 테스트 전용
+CW-SEONGSAN,성산구,의료,emergency_hospital_count,응급실 운영 병원 수,2,개,개발용 더미 데이터,2026-01-01,예시(개발용),실제 수치 아님. UI/로직 테스트 전용
+CW-SEONGSAN,성산구,생활편의,mart_count,대형마트 수,5,개,개발용 더미 데이터,2026-01-01,예시(개발용),실제 수치 아님. UI/로직 테스트 전용
+CW-SEONGSAN,성산구,생활편의,convenience_store_count,편의점 수,90,개,개발용 더미 데이터,2026-01-01,예시(개발용),실제 수치 아님. UI/로직 테스트 전용
+CW-SEONGSAN,성산구,주거비,monthly_rent_avg,월세 평균,65,만원,개발용 더미 데이터,2026-01-01,예시(개발용),실제 수치 아님. UI/로직 테스트 전용
+CW-SEONGSAN,성산구,주거비,jeonse_avg,전세 평균,15000,만원,개발용 더미 데이터,2026-01-01,예시(개발용),실제 수치 아님. UI/로직 테스트 전용
+CW-MASANHAPPO,마산합포구,교통,transit_avg_time_to_citycenter_min,대중교통 평균 소요시간(시청 기준),35,분,개발용 더미 데이터,2026-01-01,예시(개발용),실제 수치 아님. UI/로직 테스트 전용
+CW-MASANHAPPO,마산합포구,교통,bus_stop_count,버스정류장 수,30,개,개발용 더미 데이터,2026-01-01,예시(개발용),실제 수치 아님. UI/로직 테스트 전용
+CW-MASANHAPPO,마산합포구,의료,hospital_count,병원 수,10,개,개발용 더미 데이터,2026-01-01,예시(개발용),실제 수치 아님. UI/로직 테스트 전용
+CW-MASANHAPPO,마산합포구,의료,emergency_hospital_count,응급실 운영 병원 수,1,개,개발용 더미 데이터,2026-01-01,예시(개발용),실제 수치 아님. UI/로직 테스트 전용
+CW-MASANHAPPO,마산합포구,생활편의,mart_count,대형마트 수,2,개,개발용 더미 데이터,2026-01-01,예시(개발용),실제 수치 아님. UI/로직 테스트 전용
+CW-MASANHAPPO,마산합포구,생활편의,convenience_store_count,편의점 수,45,개,개발용 더미 데이터,2026-01-01,예시(개발용),실제 수치 아님. UI/로직 테스트 전용
+CW-MASANHAPPO,마산합포구,주거비,monthly_rent_avg,월세 평균,45,만원,개발용 더미 데이터,2026-01-01,예시(개발용),실제 수치 아님. UI/로직 테스트 전용
+CW-MASANHAPPO,마산합포구,주거비,jeonse_avg,전세 평균,9000,만원,개발용 더미 데이터,2026-01-01,예시(개발용),실제 수치 아님. UI/로직 테스트 전용
+CW-MASANHOEWON,마산회원구,교통,transit_avg_time_to_citycenter_min,대중교통 평균 소요시간(시청 기준),30,분,개발용 더미 데이터,2026-01-01,예시(개발용),실제 수치 아님. UI/로직 테스트 전용
+CW-MASANHOEWON,마산회원구,교통,bus_stop_count,버스정류장 수,35,개,개발용 더미 데이터,2026-01-01,예시(개발용),실제 수치 아님. UI/로직 테스트 전용
+CW-MASANHOEWON,마산회원구,의료,hospital_count,병원 수,12,개,개발용 더미 데이터,2026-01-01,예시(개발용),실제 수치 아님. UI/로직 테스트 전용
+CW-MASANHOEWON,마산회원구,의료,emergency_hospital_count,응급실 운영 병원 수,1,개,개발용 더미 데이터,2026-01-01,예시(개발용),실제 수치 아님. UI/로직 테스트 전용
+CW-MASANHOEWON,마산회원구,생활편의,mart_count,대형마트 수,3,개,개발용 더미 데이터,2026-01-01,예시(개발용),실제 수치 아님. UI/로직 테스트 전용
+CW-MASANHOEWON,마산회원구,생활편의,convenience_store_count,편의점 수,50,개,개발용 더미 데이터,2026-01-01,예시(개발용),실제 수치 아님. UI/로직 테스트 전용
+CW-MASANHOEWON,마산회원구,주거비,monthly_rent_avg,월세 평균,48,만원,개발용 더미 데이터,2026-01-01,예시(개발용),실제 수치 아님. UI/로직 테스트 전용
+CW-MASANHOEWON,마산회원구,주거비,jeonse_avg,전세 평균,9500,만원,개발용 더미 데이터,2026-01-01,예시(개발용),실제 수치 아님. UI/로직 테스트 전용
+CW-JINHAE,진해구,교통,transit_avg_time_to_citycenter_min,대중교통 평균 소요시간(시청 기준),40,분,개발용 더미 데이터,2026-01-01,예시(개발용),실제 수치 아님. UI/로직 테스트 전용
+CW-JINHAE,진해구,교통,bus_stop_count,버스정류장 수,28,개,개발용 더미 데이터,2026-01-01,예시(개발용),실제 수치 아님. UI/로직 테스트 전용
+CW-JINHAE,진해구,의료,hospital_count,병원 수,9,개,개발용 더미 데이터,2026-01-01,예시(개발용),실제 수치 아님. UI/로직 테스트 전용
+CW-JINHAE,진해구,의료,emergency_hospital_count,응급실 운영 병원 수,1,개,개발용 더미 데이터,2026-01-01,예시(개발용),실제 수치 아님. UI/로직 테스트 전용
+CW-JINHAE,진해구,생활편의,mart_count,대형마트 수,2,개,개발용 더미 데이터,2026-01-01,예시(개발용),실제 수치 아님. UI/로직 테스트 전용
+CW-JINHAE,진해구,생활편의,convenience_store_count,편의점 수,40,개,개발용 더미 데이터,2026-01-01,예시(개발용),실제 수치 아님. UI/로직 테스트 전용
+CW-JINHAE,진해구,주거비,monthly_rent_avg,월세 평균,42,만원,개발용 더미 데이터,2026-01-01,예시(개발용),실제 수치 아님. UI/로직 테스트 전용
+CW-JINHAE,진해구,주거비,jeonse_avg,전세 평균,8500,만원,개발용 더미 데이터,2026-01-01,예시(개발용),실제 수치 아님. UI/로직 테스트 전용
