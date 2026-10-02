@@ -1,4 +1,18 @@
 {
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python \"$CLAUDE_PROJECT_DIR/.claude/hooks/run_tests_on_stop.py\"",
+            "timeout": 600,
+            "statusMessage": "변경된 .py가 있으면 단위 테스트 실행 중..."
+          }
+        ]
+      }
+    ]
+  },
   "permissions": {
     "allow": [
       "Bash(python -m unittest*)",
