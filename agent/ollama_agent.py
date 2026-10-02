@@ -215,7 +215,7 @@ def generate_followup_questions(user_input: dict) -> list[str]:
             options={"temperature": 0.3},
         )
     except Exception as exc:  # Ollama 서버 미실행 등
-        raise RuntimeError(f"Ollama 모델 호출에 실패했습니다: {exc}") from exc
+        raise RuntimeError(f"{llm.backend_label()} 호출에 실패했습니다: {exc}") from exc
 
     raw_text = response["message"]["content"]
     return _parse_questions(raw_text)
@@ -476,7 +476,7 @@ def interpret_weight_feedback(user_text: str) -> dict:
             "status": "ollama_error",
             "type": None,
             "weights": None,
-            "message": f"Ollama 호출에 실패했습니다: {exc}",
+            "message": f"{llm.backend_label()} 호출에 실패했습니다: {exc}",
         }
 
     raw_text = response["message"]["content"]
