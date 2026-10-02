@@ -26,11 +26,9 @@
 
 from __future__ import annotations
 
-import json
-import re
-
 import ollama
 
+from agent.llm_json import extract_json_object, sanitize_goals, sanitize_unsupported_requests
 from analysis.scoring import (
     VALID_SCORABLE_INDICATOR_CODES,
     _collect_confirmed_indicator,
@@ -143,17 +141,6 @@ def _build_planner_user_prompt(
     return "\n".join(lines)
 
 
-def _parse_plan(raw_text: str) -> dict | None:
-    match = re.search(r"\{.*\}", raw_text, re.DOTALL)
-    if not match:
-        return None
-    try:
-        data = json.loads(match.group(0))
-    except json.JSONDecodeError:
-        return None
-    return data if isinstance(data, dict) else None
-
-
 def call_planner(
     selected_conditions: list[str],
     approved_weights: dict[str, float],
@@ -186,7 +173,7 @@ def call_planner(
         raise RuntimeError(f"Ollama 분석 계획 호출에 실패했습니다: {exc}") from exc
 
     raw_text = response["message"]["content"]
-    plan = _parse_plan(raw_text)
+    plan = extract_json_object(raw_text)
     if plan is None:
         raise RuntimeError("AI가 반환한 분석 계획을 JSON으로 해석하지 못했습니다.")
     return plan
@@ -364,26 +351,6 @@ def _default_tool_calls(approved_weights: dict[str, float]) -> list[dict]:
     return calls
 
 
-def _sanitize_unsupported_requests(raw: object) -> list[dict]:
-    if not isinstance(raw, list):
-        return []
-    out: list[dict] = []
-    for item in raw[:10]:
-        if not isinstance(item, dict):
-            continue
-        request = str(item.get("request") or "").strip()[:100]
-        reason = str(item.get("reason") or "").strip()[:200]
-        if request:
-            out.append({"request": request, "reason": reason})
-    return out
-
-
-def _sanitize_goals(raw: object) -> list[str]:
-    if not isinstance(raw, list):
-        return []
-    return [str(g).strip()[:100] for g in raw[:10] if str(g).strip()]
-
-
 # ---------------------------------------------------------------------------
 # 최상위 진입점
 # ---------------------------------------------------------------------------
@@ -472,8 +439,8 @@ def run_agent_plan(
 
     return {
         "mode": mode,
-        "goals": _sanitize_goals(plan.get("goals")) if isinstance(plan, dict) else [],
-        "unsupported_requests": _sanitize_unsupported_requests(
+        "goals": sanitize_goals(plan.get("goals")) if isinstance(plan, dict) else [],
+        "unsupported_requests": sanitize_unsupported_requests(
             plan.get("unsupported_requests") if isinstance(plan, dict) else None
         ),
         "approved_weights": approved_weights,

@@ -63,6 +63,7 @@ import tempfile
 
 import ollama
 
+from agent.llm_json import extract_json_object, sanitize_goals, sanitize_unsupported_requests
 from services import bus_stops, convenience
 from services.bus_stops import PRESET_RADII_M as SUPPORTED_RADII_M
 
@@ -93,6 +94,7 @@ TOOL_LABELS: dict[str, str] = {
 DEFAULT_RADIUS_M = 500
 MAX_RESULTS_LIMIT = 30  # pages/user.py 슬라이더 상한과 동일하게 맞춤
 MAX_TOOL_CALLS = 4
+_UNSUPPORTED_REQUEST_MAX_LEN = 150  # 위치 요청 설명이 길어 planner(100자)보다 길게 허용
 
 # ---------------------------------------------------------------------------
 # 요청 키워드 패턴 - 도구 선택 범위 검증(guardrail)에만 사용하며 AI 계획을 대체하지 않음
@@ -232,17 +234,6 @@ def _build_user_prompt(user_text: str, resolved_radius_m: int) -> str:
     )
 
 
-def _parse_plan(raw_text: str) -> dict | None:
-    match = re.search(r"\{.*\}", raw_text, re.DOTALL)
-    if not match:
-        return None
-    try:
-        data = json.loads(match.group(0))
-    except json.JSONDecodeError:
-        return None
-    return data if isinstance(data, dict) else None
-
-
 def _planner_backend() -> str:
     return os.environ.get(PLANNER_BACKEND_ENV, "claude_agent").strip().lower()
 
@@ -306,7 +297,7 @@ def _call_claude_cli_planner(user_text: str, resolved_radius_m: int) -> dict:
         detail = str(envelope.get("result") if isinstance(envelope, dict) else envelope)[:300]
         raise RuntimeError(f"claude CLI가 오류 결과를 반환했습니다: {detail}")
 
-    plan = _parse_plan(str(envelope.get("result") or ""))
+    plan = extract_json_object(str(envelope.get("result") or ""))
     if plan is None:
         raise RuntimeError("AI가 반환한 위치 분석 계획을 JSON으로 해석하지 못했습니다.")
     return plan
@@ -439,7 +430,7 @@ def _run_location_mcp_agent(
         detail = str(envelope.get("result") if isinstance(envelope, dict) else envelope)[:300]
         raise RuntimeError(f"claude CLI Agent가 오류 결과를 반환했습니다: {detail}")
 
-    final = _parse_plan(str(envelope.get("result") or ""))
+    final = extract_json_object(str(envelope.get("result") or ""))
     if final is None or not str(final.get("answer") or "").strip():
         raise RuntimeError("AI Agent의 최종 답변을 JSON으로 해석하지 못했습니다.")
     return {"final": final, "steps": steps}
@@ -484,7 +475,7 @@ def _call_ollama_planner(user_text: str, resolved_radius_m: int) -> dict:
         raise RuntimeError(f"Ollama 위치 분석 계획 호출에 실패했습니다: {exc}") from exc
 
     raw_text = response["message"]["content"]
-    plan = _parse_plan(raw_text)
+    plan = extract_json_object(raw_text)
     if plan is None:
         raise RuntimeError("AI가 반환한 위치 분석 계획을 JSON으로 해석하지 못했습니다.")
     return plan
@@ -724,26 +715,6 @@ def _execute_tool_calls(lat: float, lon: float, tool_calls: list[dict]) -> list[
     return log
 
 
-def _sanitize_unsupported_requests(raw: object) -> list[dict]:
-    if not isinstance(raw, list):
-        return []
-    out: list[dict] = []
-    for item in raw[:10]:
-        if not isinstance(item, dict):
-            continue
-        request = str(item.get("request") or "").strip()[:150]
-        reason = str(item.get("reason") or "").strip()[:200]
-        if request:
-            out.append({"request": request, "reason": reason})
-    return out
-
-
-def _sanitize_goals(raw: object) -> list[str]:
-    if not isinstance(raw, list):
-        return []
-    return [str(g).strip()[:100] for g in raw[:10] if str(g).strip()]
-
-
 def _build_agent_result(
     agent_out: dict,
     user_text: str,
@@ -779,8 +750,10 @@ def _build_agent_result(
         "search_center": search_center,
         "resolved_radius_m": resolved_radius_m,
         "radius_source": radius_source,
-        "goals": _sanitize_goals(final.get("goals")),
-        "unsupported_requests": _sanitize_unsupported_requests(final.get("unsupported_requests")),
+        "goals": sanitize_goals(final.get("goals")),
+        "unsupported_requests": sanitize_unsupported_requests(
+            final.get("unsupported_requests"), request_max_len=_UNSUPPORTED_REQUEST_MAX_LEN
+        ),
         "planned_tool_calls": None,
         "executed_tool_calls": executed,
         "notes": notes,
@@ -909,8 +882,11 @@ def run_location_agent(
         tool_calls = validated["tool_calls"]
         notes = list(validated["notes"])
         corrections = list(validated.get("corrections", []))
-        unsupported = _sanitize_unsupported_requests(plan.get("unsupported_requests") if isinstance(plan, dict) else None)
-        goals = _sanitize_goals(plan.get("goals") if isinstance(plan, dict) else None)
+        unsupported = sanitize_unsupported_requests(
+            plan.get("unsupported_requests") if isinstance(plan, dict) else None,
+            request_max_len=_UNSUPPORTED_REQUEST_MAX_LEN,
+        )
+        goals = sanitize_goals(plan.get("goals") if isinstance(plan, dict) else None)
         if not tool_calls and not unsupported:
             # AI가 실행할 도구도, 지원 불가 사유도 제시하지 않은 빈 응답 - 기본 절차로.
             mode = "fallback_default"

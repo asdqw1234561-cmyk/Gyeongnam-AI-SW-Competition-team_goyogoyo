@@ -34,11 +34,11 @@
 - 결과: 2026-10-02 · app.py:1115 reason을 이미 출처별로 정해지는 `origin_label`로 생성(1줄) · py_compile OK, 전체 240개 통과(skip 1), AppTest로 app.py 첫 화면 예외 0건 · 이 reason은 승인 시 화면에 직접 표시되지 않아 화면상 변화 없음. 승인 버튼 클릭 흐름은 브라우저 수동 확인 필요.
 
 ## B3. AI 응답 JSON 추출을 안전하게 + 중복 함수 정리
-- [ ] 상태
+- [x] 상태
 - 승인: 불필요
 - 범위: `agent/planner.py:146`과 `agent/location_agent.py:235`의 `_parse_plan`(탐욕적 `\{.*\}` 정규식), `_sanitize_goals`/`_sanitize_unsupported_requests`가 두 파일에 중복. 공용 모듈(예: `agent/llm_json.py`)로 옮기고, 응답 안의 **첫 번째 완전한 JSON 객체**를 `json.JSONDecoder.raw_decode`로 찾도록 바꾼다. `agent/ollama_agent.py`의 같은 패턴(`_parse_questions`, `_parse_weight_feedback`)도 같은 헬퍼를 쓰게 한다.
 - 완료 조건: 기존 테스트 전부 통과 + "JSON 앞뒤에 설명 문장", "JSON 객체 2개" 응답 케이스 테스트 추가. 기존 반환 형식과 sanitize 길이 제한은 그대로.
-- 결과:
+- 결과: 2026-10-02 · 새 `agent/llm_json.py`(extract_json_object=raw_decode로 첫 완전한 객체, sanitize_goals, sanitize_unsupported_requests(request_max_len)) · planner/location_agent의 중복 함수 제거(길이 제한 100/150 유지), ollama_agent 두 파서 교체(오류 메시지 유지), 미사용 import 정리 · 새 tests/test_llm_json.py 15개 포함 전체 255개 통과(skip 1) · 실제 Ollama(planner·가중치 해석·추가질문·위치 계획)와 실제 claude Agent 각 1회 정상.
 
 ## B4. 위치 Agent 답변 속 숫자 검증
 - [ ] 상태

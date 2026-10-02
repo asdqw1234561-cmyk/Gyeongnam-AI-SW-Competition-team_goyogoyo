@@ -1,10 +1,10 @@
 # Ollama(Qwen3.5) 연동 - 입력정보 기반 추가질문 생성
-import json
 import math
 import re
 
 import ollama
 
+from agent.llm_json import extract_json_object
 from analysis.scoring import CONDITION_TO_INDICATOR_CODE
 
 OLLAMA_MODEL = "qwen3.5:4b"
@@ -186,12 +186,8 @@ def _build_user_prompt(user_input: dict) -> str:
 
 
 def _parse_questions(raw_text: str) -> list[str]:
-    match = re.search(r"\{.*\}", raw_text, re.DOTALL)
-    if not match:
-        return []
-    try:
-        data = json.loads(match.group(0))
-    except json.JSONDecodeError:
+    data = extract_json_object(raw_text)
+    if data is None:
         return []
 
     questions = data.get("questions", [])
@@ -317,8 +313,7 @@ def _parse_weight_feedback(raw_text: str) -> dict:
        "ask_clarification"으로 돌려 사용자에게 재확인을 요청한다(모자라면 "나머지를
        어디에 둘지", 넘치면 "합계가 X%로 100%를 넘는다"는 안내).
     """
-    match = re.search(r"\{.*\}", raw_text, re.DOTALL)
-    if not match:
+    if "{" not in (raw_text or ""):
         return {
             "status": "invalid_response",
             "type": None,
@@ -326,22 +321,13 @@ def _parse_weight_feedback(raw_text: str) -> dict:
             "message": "AI 응답에서 JSON을 찾지 못했습니다.",
         }
 
-    try:
-        data = json.loads(match.group(0))
-    except json.JSONDecodeError:
+    data = extract_json_object(raw_text)
+    if data is None:
         return {
             "status": "invalid_response",
             "type": None,
             "weights": None,
             "message": "AI 응답이 올바른 JSON 형식이 아닙니다.",
-        }
-
-    if not isinstance(data, dict):
-        return {
-            "status": "invalid_response",
-            "type": None,
-            "weights": None,
-            "message": "AI 응답 형식이 올바르지 않습니다.",
         }
 
     resp_type = data.get("type")
