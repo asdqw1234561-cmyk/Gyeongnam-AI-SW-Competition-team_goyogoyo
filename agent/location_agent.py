@@ -64,6 +64,10 @@ import tempfile
 import ollama
 
 from agent.llm_json import extract_json_object, sanitize_goals, sanitize_unsupported_requests
+from agent import llm  # LLM_BACKEND(.env)에 따라 Ollama 또는 Claude Code CLI 호출
+from agent import agent_loop  # 실행 결과 관찰 -> 추가 조회/답변 판단 반복
+from agent.agent_state import history_to_prompt  # 같은 위치의 이전 대화(후속 질문 맥락)
+
 from services import bus_stops, convenience
 from services.bus_stops import PRESET_RADII_M as SUPPORTED_RADII_M
 
@@ -76,8 +80,10 @@ OLLAMA_MODEL = "qwen3.5:4b"
 #   "ollama": 로컬 Ollama 계획만 사용.
 PLANNER_BACKEND_ENV = "LOCATION_AGENT_BACKEND"
 CLAUDE_CLI_MODEL_ENV = "LOCATION_AGENT_CLAUDE_MODEL"  # 비어 있으면 CLI 기본 모델 사용
-CLAUDE_CLI_TIMEOUT_S = 120
-CLAUDE_AGENT_TIMEOUT_S = 240
+# 계획 1회 호출 제한 시간은 agent/claude_cli.py 와 같은 CLAUDE_CLI_TIMEOUT(.env, 기본 200초)을 쓴다.
+# 반복형 Agent는 도구를 여러 번 부르므로 그보다 길게 둔다.
+CLAUDE_CLI_TIMEOUT_S = int(os.environ.get("CLAUDE_CLI_TIMEOUT") or 200)
+CLAUDE_AGENT_TIMEOUT_S = max(240, CLAUDE_CLI_TIMEOUT_S)
 
 ALLOWED_TOOLS: tuple[str, ...] = (
     "find_nearby_bus_stops",
@@ -126,7 +132,9 @@ def tool_compare_nearby_facilities(lat: float, lon: float) -> dict:
 # ---------------------------------------------------------------------------
 # 반경 해석 - 자연어에 명시된 반경을 Ollama 호출 전에 결정적으로 뽑아낸다
 # ---------------------------------------------------------------------------
-_RADIUS_PATTERN = re.compile(r"(\d+(?:\.\d+)?)\s*(킬로미터|킬로|km|미터|m)\b", re.IGNORECASE)
+# 단위 뒤에 한글 조사가 바로 붙는 경우("1km로", "500m에서")도 인식한다. \b 는 한글을 단어 문자로
+# 취급해 이런 표현을 놓쳤다. 뒤에 영문자·숫자가 붙는 경우("5mm", "15m2")는 계속 제외한다.
+_RADIUS_PATTERN = re.compile(r"(\d+(?:\.\d+)?)\s*(킬로미터|킬로|km|미터|m)(?![A-Za-z0-9])", re.IGNORECASE)
 
 
 def extract_explicit_radius_m(text: str) -> dict:
@@ -226,9 +234,11 @@ LOCATION_AGENT_SYSTEM_PROMPT = """당신은 경남 이주자 생활권 탐색 �
 """
 
 
-def _build_user_prompt(user_text: str, resolved_radius_m: int) -> str:
+def _build_user_prompt(user_text: str, resolved_radius_m: int, history: list[dict] | None = None) -> str:
+    context = history_to_prompt(history)
     return (
-        f"[사용자 요청]\n{user_text}\n\n"
+        (f"{context}\n\n" if context else "")
+        + f"[사용자 요청]\n{user_text}\n\n"
         f"[이번 조회에 실제로 적용될 반경(이미 결정됨)]\n{resolved_radius_m}m\n\n"
         "위 요청을 분석해 JSON 계획을 작성하세요."
     )
@@ -238,7 +248,7 @@ def _planner_backend() -> str:
     return os.environ.get(PLANNER_BACKEND_ENV, "claude_agent").strip().lower()
 
 
-def _call_claude_cli_planner(user_text: str, resolved_radius_m: int) -> dict:
+def _call_claude_cli_planner(user_text: str, resolved_radius_m: int, history: list[dict] | None = None) -> dict:
     """Claude Code CLI(`claude -p`)를 비대화형으로 호출해 계획(JSON)을 받는다.
 
     - 시스템 프롬프트와 사용자 요청은 전부 stdin으로 넘긴다(Windows의 claude.cmd
@@ -269,7 +279,7 @@ def _call_claude_cli_planner(user_text: str, resolved_radius_m: int) -> dict:
 
     stdin_text = (
         f"{LOCATION_AGENT_SYSTEM_PROMPT}\n\n"
-        f"{_build_user_prompt(user_text, resolved_radius_m)}"
+        f"{_build_user_prompt(user_text, resolved_radius_m, history)}"
     )
     try:
         proc = subprocess.run(
@@ -338,6 +348,7 @@ def _run_location_mcp_agent(
     resolved_radius_m: int,
     ui_max_results: int,
     constraints: dict,
+    history: list[dict] | None = None,
 ) -> dict:
     """claude -p에 location MCP 서버를 붙여 실행한다. Claude가 도구를 반복 호출
     하며 최종 답변 JSON을 만들고, MCP 서버가 남긴 호출 로그로 실제 실행 내역을
@@ -395,9 +406,11 @@ def _run_location_mcp_agent(
         if model:
             cmd += ["--model", model]
 
+        context = history_to_prompt(history)  # 같은 위치의 이전 대화(후속 질문 맥락, 숫자 재사용 금지)
         stdin_text = (
             f"{LOCATION_AGENT_LOOP_PROMPT}\n\n"
-            f"[사용자 요청]\n{user_text}\n\n"
+            + (f"{context}\n\n" if context else "")
+            + f"[사용자 요청]\n{user_text}\n\n"
             f"[이번 조회에 적용되는 반경(이미 결정됨)]\n{resolved_radius_m}m"
         )
         try:
@@ -436,31 +449,32 @@ def _run_location_mcp_agent(
     return {"final": final, "steps": steps}
 
 
-def call_location_planner(user_text: str, resolved_radius_m: int) -> dict:
+def call_location_planner(user_text: str, resolved_radius_m: int, history: list[dict] | None = None) -> dict:
     """설정된 백엔드로 위치 분석 계획(JSON)을 받는다. 기본은 claude CLI이며,
     실패하면 로컬 Ollama로 한 번 더 시도한다. 모든 실패는 RuntimeError 하나로
     통일한다 - run_location_agent()가 이 예외 하나만 잡으면 "기본 절차"
     폴백으로 안전하게 전환할 수 있다."""
     if _planner_backend() != "claude_cli":
-        return _call_ollama_planner(user_text, resolved_radius_m)
+        return _call_ollama_planner(user_text, resolved_radius_m, history)
 
     try:
-        return _call_claude_cli_planner(user_text, resolved_radius_m)
+        return _call_claude_cli_planner(user_text, resolved_radius_m, history)
     except RuntimeError as claude_exc:
         try:
-            return _call_ollama_planner(user_text, resolved_radius_m)
+            return _call_ollama_planner(user_text, resolved_radius_m, history)
         except RuntimeError as ollama_exc:
             raise RuntimeError(f"{claude_exc} / Ollama 대체 호출도 실패: {ollama_exc}") from ollama_exc
 
 
-def _call_ollama_planner(user_text: str, resolved_radius_m: int) -> dict:
-    """로컬 Ollama(qwen3.5:4b)를 호출해 위치 분석 계획(JSON)을 받는다."""
+def _call_ollama_planner(user_text: str, resolved_radius_m: int, history: list[dict] | None = None) -> dict:
+    """llm.chat 으로 위치 분석 계획(JSON)을 받는다. 기본은 로컬 Ollama(qwen3.5:4b)이며,
+    .env 의 LLM_BACKEND=claude_cli 이면 agent/claude_cli.py 를 거쳐 Claude CLI 로 호출된다."""
     try:
-        response = ollama.chat(
+        response = llm.chat(
             model=OLLAMA_MODEL,
             messages=[
                 {"role": "system", "content": LOCATION_AGENT_SYSTEM_PROMPT},
-                {"role": "user", "content": _build_user_prompt(user_text, resolved_radius_m)},
+                {"role": "user", "content": _build_user_prompt(user_text, resolved_radius_m, history)},
             ],
             options={"temperature": 0.0},
             # qwen3.5는 기본적으로 "생각 과정"(thinking)을 먼저 길게 생성한다 - 실측
@@ -472,7 +486,7 @@ def _call_ollama_planner(user_text: str, resolved_radius_m: int) -> dict:
             think=False,
         )
     except Exception as exc:  # Ollama 서버 미실행 등
-        raise RuntimeError(f"Ollama 위치 분석 계획 호출에 실패했습니다: {exc}") from exc
+        raise RuntimeError(f"{llm.backend_label()} 위치 분석 계획 호출에 실패했습니다: {exc}") from exc
 
     raw_text = response["message"]["content"]
     plan = extract_json_object(raw_text)
@@ -859,6 +873,7 @@ def run_location_agent(
     search_center: tuple[float, float],
     ui_radius_m: int,
     ui_max_results: int,
+    history: list[dict] | None = None,
 ) -> dict:
     """
     pages/user.py의 '🤖 AI 분석 실행' 버튼 클릭 시에만 호출해야 한다(지도 이동·
@@ -873,6 +888,8 @@ def run_location_agent(
             반경이 없을 때 기본값으로 쓰인다.
         ui_max_results: 화면에서 현재 선택된 최대 표시 개수. AI가 max_results를
             제안하지 않았을 때 기본값으로 쓰인다.
+        history: 같은 검색 위치에서의 이전 대화(agent.agent_state.ConversationMemory.recent()).
+            "그럼 버스는?" 같은 후속 질문의 맥락 파악에만 쓰며, 숫자는 재사용하지 않는다.
 
     Returns:
         {
@@ -892,6 +909,9 @@ def run_location_agent(
             "executed_tool_calls": [...],         # Python이 실제로 실행한 도구 호출 로그만
             "notes": [str, ...],
             "planner_error": str | None,
+            "agent_steps": [ {"round", "action", "reason", "requested", "executed_tools", "note"} ],
+            "final_answer": {"text", "source", "rejected_reason"} | None,
+            "review_error": str | None,
         }
     """
     lat, lon = search_center
@@ -915,6 +935,9 @@ def run_location_agent(
             "planner_error": None,
             "constraints": None,
             "corrections": [],
+            "agent_steps": [],
+            "final_answer": None,
+            "review_error": None,
         }
 
     if extract["found"]:
@@ -930,7 +953,7 @@ def run_location_agent(
     if _planner_backend() == "claude_agent":
         try:
             agent_out = _run_location_mcp_agent(
-                user_text, search_center, resolved_radius_m, ui_max_results, constraints
+                user_text, search_center, resolved_radius_m, ui_max_results, constraints, history
             )
         except RuntimeError as exc:
             agent_error = str(exc)
@@ -942,7 +965,7 @@ def run_location_agent(
     planner_error: str | None = None
     plan: dict | None = None
     try:
-        plan = call_location_planner(user_text, resolved_radius_m)
+        plan = call_location_planner(user_text, resolved_radius_m, history)
     except RuntimeError as exc:
         planner_error = str(exc)
     if agent_error is not None and planner_error is not None:
@@ -984,6 +1007,32 @@ def run_location_agent(
 
     executed = _execute_tool_calls(lat, lon, tool_calls)
 
+    # 관찰 -> 판단 -> 행동 반복: AI 계획으로 실행한 경우에만 결과를 AI에게 다시 보여주고
+    # 추가 조회 여부를 판단하게 한다. 기본 절차(fallback)일 때는 AI를 다시 부르지 않고
+    # Python 요약만 만든다. 자세한 안전장치는 agent/agent_loop.py 참고.
+    agent_steps: list[dict] = []
+    review_error: str | None = None
+    if mode == "ai_planned" and executed:
+        loop = agent_loop.run_review_loop(
+            user_text=user_text, lat=lat, lon=lon,
+            resolved_radius_m=resolved_radius_m, ui_max_results=ui_max_results,
+            constraints=constraints, executed=executed,
+            validate_fn=validate_and_normalize_plan, execute_fn=_execute_tool_calls,
+            model=OLLAMA_MODEL, history=history,
+        )
+        executed = loop["executed_tool_calls"]
+        agent_steps = loop["agent_steps"]
+        final_answer = loop["final_answer"]
+        review_error = loop["review_error"]
+    elif executed:
+        final_answer = {
+            "text": agent_loop.python_summary(agent_loop.summarize_observations(executed)),
+            "source": "python_summary",
+            "rejected_reason": None,
+        }
+    else:
+        final_answer = None
+
     return {
         "status": "ok",
         "message": None,
@@ -1000,4 +1049,7 @@ def run_location_agent(
         "planner_error": planner_error,
         "constraints": constraints,
         "corrections": corrections,
+        "agent_steps": agent_steps,          # 2회차 이후 AI 판단 기록(관찰 -> 판단 -> 행동)
+        "final_answer": final_answer,        # {"text", "source": "ai_verified"|"python_summary", "rejected_reason"}
+        "review_error": review_error,
     }

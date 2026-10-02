@@ -29,6 +29,9 @@ from __future__ import annotations
 import ollama
 
 from agent.llm_json import extract_json_object, sanitize_goals, sanitize_unsupported_requests
+from agent import llm  # LLM_BACKEND(.env)에 따라 Ollama 또는 Claude Code CLI 호출
+from agent import planner_loop  # 점수 계산 결과 관찰 -> 설명/추가 조회/가정 계산 판단 반복
+
 from analysis.scoring import (
     VALID_SCORABLE_INDICATOR_CODES,
     collect_confirmed_indicator,
@@ -153,7 +156,7 @@ def call_planner(
     run_agent_plan()은 이 예외 하나만 잡으면 "기본 절차" 폴백으로 안전하게
     전환할 수 있다(에러 종류별로 상태를 분기하지 않아 흐름이 단순해진다)."""
     try:
-        response = ollama.chat(
+        response = llm.chat(
             model=OLLAMA_MODEL,
             messages=[
                 {"role": "system", "content": PLANNER_SYSTEM_PROMPT},
@@ -170,7 +173,7 @@ def call_planner(
             think=False,
         )
     except Exception as exc:  # Ollama 서버 미실행 등
-        raise RuntimeError(f"Ollama 분석 계획 호출에 실패했습니다: {exc}") from exc
+        raise RuntimeError(f"{llm.backend_label()} 분석 계획 호출에 실패했습니다: {exc}") from exc
 
     raw_text = response["message"]["content"]
     plan = extract_json_object(raw_text)
@@ -437,6 +440,21 @@ def run_agent_plan(
         # 계획에 없었다는 뜻이므로, 기존과 동일한 "no_usable_conditions" 형태로 안전 반환.
         score_result = compute_region_scores_from_weights(approved_weights, candidate_count, regions=regions)
 
+    # 관찰 -> 판단 -> 행동 반복: AI 계획으로 점수를 계산한 경우에만 결과를 AI에게 보여주고
+    # 설명 작성 / 참고 지표 추가 조회 / 가중치 가정 계산 중 하나를 판단하게 한다.
+    # 실제 추천(score_result)은 승인된 가중치 결과 그대로이며 이 단계에서 바뀌지 않는다.
+    # 자세한 안전장치는 agent/planner_loop.py 참고.
+    review: dict = {"agent_steps": [], "review_tool_calls": [], "what_if_results": [],
+                    "extra_indicators": {}, "final_answer": None, "review_error": None}
+    if mode == "ai_planned" and score_result.get("status") == "ok":
+        review = planner_loop.run_review_loop(
+            regions=regions, score_result=score_result, approved_weights=approved_weights,
+            available_indicators=available_indicators, selected_conditions=selected_conditions,
+            candidate_count=candidate_count, model=OLLAMA_MODEL,
+            get_indicators_fn=tool_get_region_indicators,
+            simulate_fn=compute_region_scores_from_weights,
+        )
+
     return {
         "mode": mode,
         "goals": sanitize_goals(plan.get("goals")) if isinstance(plan, dict) else [],
@@ -451,4 +469,11 @@ def run_agent_plan(
         "notes": notes,
         "planner_error": planner_error,
         "score_result": score_result,
+        # 이하 결과 검토 단계(2회차 이후) - 표시 전용, score_result 에는 영향 없음
+        "agent_steps": review["agent_steps"],
+        "review_tool_calls": review["review_tool_calls"],
+        "what_if_results": review["what_if_results"],
+        "extra_indicators": review["extra_indicators"],
+        "final_answer": review["final_answer"],
+        "review_error": review["review_error"],
     }
