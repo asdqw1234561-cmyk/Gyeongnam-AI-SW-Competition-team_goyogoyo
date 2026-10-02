@@ -211,6 +211,9 @@ def generate_followup_questions(user_input: dict) -> list[str]:
                 {"role": "user", "content": _build_user_prompt(user_input)},
             ],
             options={"temperature": 0.3},
+            # qwen3.5의 생각 과정(thinking)이 응답 토큰을 다 써서 최종 JSON(content)이
+            # 비어 오는 경우가 있어 끈다(agent/location_agent.py와 동일한 이유).
+            think=False,
         )
     except Exception as exc:  # Ollama 서버 미실행 등
         raise RuntimeError(f"Ollama 모델 호출에 실패했습니다: {exc}") from exc
@@ -468,6 +471,7 @@ def interpret_weight_feedback(user_text: str) -> dict:
                 {"role": "user", "content": text},
             ],
             options={"temperature": 0.0},
+            think=False,  # generate_followup_questions()와 동일한 이유
         )
     except Exception as exc:  # Ollama 서버 미실행 등 - 수동 슬라이더는 계속 쓸 수 있어야 하므로 예외를 던지지 않는다
         return {

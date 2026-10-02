@@ -190,6 +190,17 @@ class ValidateAndNormalizePlanTest(unittest.TestCase):
         self.assertEqual(result["status"], "rejected")
 
 
+class CallPlannerTest(unittest.TestCase):
+    def test_thinking_mode_disabled_to_avoid_empty_content(self):
+        """qwen3.5의 think 모드가 켜져 있으면 생각 과정만으로 토큰을 다 써서 content가
+        빈 문자열로 올 수 있다 - think=False를 명시적으로 전달해야 한다."""
+        with mock.patch("agent.planner.ollama.chat") as mock_chat:
+            mock_chat.return_value = _fake_chat_response('{"tool_calls": []}')
+            planner.call_planner(["교통"], {"bus_stop_count": 100.0}, "창원시", {"bus_stop_count": True})
+        _, kwargs = mock_chat.call_args
+        self.assertIs(kwargs.get("think"), False)
+
+
 class RunAgentPlanTest(unittest.TestCase):
     """run_agent_plan()은 regions를 한 번만 조회해 모든 도구가 같은 스냅샷을
     공유하게 하고, 검증을 통과한 계획만 실행한다."""

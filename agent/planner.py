@@ -178,6 +178,9 @@ def call_planner(
                 },
             ],
             options={"temperature": 0.0},
+            # qwen3.5의 생각 과정(thinking)이 응답 토큰을 다 써서 최종 JSON(content)이
+            # 비어 오는 경우가 있어 끈다(agent/location_agent.py와 동일한 이유).
+            think=False,
         )
     except Exception as exc:  # Ollama 서버 미실행 등
         raise RuntimeError(f"Ollama 분석 계획 호출에 실패했습니다: {exc}") from exc

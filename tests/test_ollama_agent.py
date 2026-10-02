@@ -15,6 +15,23 @@ def _fake_response(content: str) -> dict:
     return {"message": {"content": content}}
 
 
+class ThinkingModeDisabledTest(unittest.TestCase):
+    """qwen3.5의 think 모드가 켜져 있으면 생각 과정만으로 토큰을 다 써서 content가
+    빈 문자열로 올 수 있다 - 두 Ollama 호출 모두 think=False를 전달해야 한다."""
+
+    def test_generate_followup_questions(self):
+        with mock.patch("agent.ollama_agent.ollama.chat") as mock_chat:
+            mock_chat.return_value = _fake_response('{"questions": []}')
+            ollama_agent.generate_followup_questions({"희망지역": "창원시"})
+        self.assertIs(mock_chat.call_args.kwargs.get("think"), False)
+
+    def test_interpret_weight_feedback(self):
+        with mock.patch("agent.ollama_agent.ollama.chat") as mock_chat:
+            mock_chat.return_value = _fake_response('{"type": "ask_clarification", "weights": null, "message": "?"}')
+            ollama_agent.interpret_weight_feedback("의료가 더 중요해")
+        self.assertIs(mock_chat.call_args.kwargs.get("think"), False)
+
+
 class InterpretWeightFeedbackTest(unittest.TestCase):
     def test_empty_text_does_not_call_ollama(self):
         with mock.patch("agent.ollama_agent.ollama.chat") as mock_chat:
