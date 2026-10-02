@@ -715,6 +715,73 @@ def _execute_tool_calls(lat: float, lon: float, tool_calls: list[dict]) -> list[
     return log
 
 
+# ---------------------------------------------------------------------------
+# 답변 숫자 검증 - Claude 답변의 숫자가 실제 도구 결과에 있는지 Python이 확인
+# ---------------------------------------------------------------------------
+_NUMBER_PATTERN = re.compile(r"\d+(?:,\d{3})*(?:\.\d+)?")
+
+
+def _numbers_in_text(text: str) -> set[float]:
+    return {float(m.replace(",", "")) for m in _NUMBER_PATTERN.findall(text or "")}
+
+
+def _collect_result_numbers(value: object, out: set[float]) -> None:
+    """도구 결과 안의 모든 숫자(값, 숫자 형태의 dict 키, 문자열 속 숫자 - 주소·상호명·
+    기준일 등)를 모은다. 결과는 MCP 로그(JSON)를 거쳐 와서 반경별 counts의 키가
+    문자열("300")일 수 있으므로 키도 함께 본다."""
+    if isinstance(value, bool) or value is None:
+        return
+    if isinstance(value, (int, float)):
+        out.add(float(value))
+    elif isinstance(value, str):
+        out.update(_numbers_in_text(value))
+        # 기준년월 "202606"·기준일 "20251231"처럼 붙어 있는 날짜는 답변에서 "2026년 6월"로
+        # 풀어 쓰는 경우가 많아 연·월·일로도 나눠 허용한다.
+        for token in re.findall(r"\d+", value):
+            if len(token) in (6, 8):
+                out.update({float(token[:4]), float(token[4:6])})
+                if len(token) == 8:
+                    out.add(float(token[6:8]))
+    elif isinstance(value, dict):
+        for k, v in value.items():
+            _collect_result_numbers(k, out)
+            _collect_result_numbers(v, out)
+    elif isinstance(value, (list, tuple)):
+        for v in value:
+            _collect_result_numbers(v, out)
+
+
+def verify_answer_numbers(
+    answer: str, executed_tool_calls: list[dict], user_text: str, resolved_radius_m: int
+) -> dict:
+    """
+    Claude가 쓴 답변 문장 속 숫자가 "실제로 실행된 도구 결과"에서 확인되는지 검사한다.
+    답변 문장을 고치지 않고 검사 결과만 돌려준다(화면이 경고를 띄우는 데 쓴다).
+
+    허용하는 숫자: 실행된 도구 결과의 모든 숫자, 사용자 질문의 숫자, 적용 반경과
+    지원 반경(m 및 km 표기).
+
+    Returns:
+        {"status": "ok" | "no_numbers" | "unverified_numbers", "unverified": [str, ...]}
+    """
+    answer_numbers = _numbers_in_text(answer)
+    if not answer_numbers:
+        return {"status": "no_numbers", "unverified": []}
+
+    allowed: set[float] = set()
+    for entry in executed_tool_calls:
+        if entry.get("executed"):
+            _collect_result_numbers(entry.get("result"), allowed)
+    allowed |= _numbers_in_text(user_text)
+    for r in (resolved_radius_m, *SUPPORTED_RADII_M):
+        allowed |= {float(r), r / 1000}
+
+    unverified = sorted(n for n in answer_numbers if n not in allowed)
+    if not unverified:
+        return {"status": "ok", "unverified": []}
+    return {"status": "unverified_numbers", "unverified": [f"{n:g}" for n in unverified]}
+
+
 def _build_agent_result(
     agent_out: dict,
     user_text: str,
@@ -742,6 +809,14 @@ def _build_agent_result(
         elif s.get("note"):
             notes.append(f"'{label}': {s['note']}")
 
+    answer = str(final.get("answer") or "").strip()[:2000]
+    verification = verify_answer_numbers(answer, executed, user_text, resolved_radius_m)
+    if verification["status"] == "unverified_numbers":
+        notes.append(
+            "AI 답변의 일부 수치(" + ", ".join(verification["unverified"]) + ")를 실제 조회 결과에서 "
+            "확인하지 못했습니다."
+        )
+
     return {
         "status": "ok",
         "message": None,
@@ -760,7 +835,8 @@ def _build_agent_result(
         "planner_error": None,
         "constraints": constraints,
         "corrections": [],
-        "agent_answer": str(final.get("answer") or "").strip()[:2000],
+        "agent_answer": answer,
+        "answer_verification": verification,
         "agent_steps": [
             {"tool": s.get("tool"), "reason": s.get("reason", ""), "blocked": bool(s.get("blocked")),
              "executed": bool(s.get("executed")), "error": s.get("error")}
@@ -805,6 +881,7 @@ def run_location_agent(
             "mode": "ai_agent" | "ai_planned" | "fallback_default" | None,
             "agent_answer": str,                 # mode=="ai_agent"일 때만 - Claude의 최종 답변
             "agent_steps": [...],                # mode=="ai_agent"일 때만 - 차단 포함 호출 순서
+            "answer_verification": {"status", "unverified"},  # mode=="ai_agent"일 때만 - 답변 숫자 검증
             "user_text": str,
             "search_center": (lat, lon),         # 이 결과가 어느 좌표에서 실행됐는지(이후 비교용)
             "resolved_radius_m": int | None,

@@ -41,12 +41,12 @@
 - 결과: 2026-10-02 · 새 `agent/llm_json.py`(extract_json_object=raw_decode로 첫 완전한 객체, sanitize_goals, sanitize_unsupported_requests(request_max_len)) · planner/location_agent의 중복 함수 제거(길이 제한 100/150 유지), ollama_agent 두 파서 교체(오류 메시지 유지), 미사용 import 정리 · 새 tests/test_llm_json.py 15개 포함 전체 255개 통과(skip 1) · 실제 Ollama(planner·가중치 해석·추가질문·위치 계획)와 실제 claude Agent 각 1회 정상.
 
 ## B4. 위치 Agent 답변 속 숫자 검증
-- [ ] 상태
+- [x] 상태
 - 승인: 불필요
 - 범위: `agent/location_agent.py`의 `_build_agent_result()`. Claude의 `agent_answer`에 나온 숫자(개수·거리 m)가 실제 실행한 도구 결과(`total_count`, `straight_distance_m`, 반경별 counts 등)에 존재하는지 Python이 확인한다. 반경(300/500/1000)·순위 같은 질문 맥락 숫자는 허용 목록으로 처리.
   - 근거 없는 숫자가 있으면 결과에 `answer_verification`(검증 결과·문제 숫자)을 담고, `pages/user.py`에서 답변 위에 "⚠️ 일부 수치를 실제 조회 결과에서 확인하지 못했습니다 - 아래 표를 기준으로 보세요"를 표시한다. 답변 문장을 임의로 고치지는 않는다.
 - 완료 조건: 일치/불일치 케이스 단위 테스트, 전체 테스트 통과, 화면 반영(브라우저 확인 못 하면 "수동 확인 필요" 기록).
-- 결과:
+- 결과: 2026-10-02 · agent/location_agent.py에 verify_answer_numbers() 추가(실행된 도구 결과의 숫자·문자열 속 숫자·YYYYMM(DD) 날짜 분해, 질문 숫자, 반경 m/km 허용) → 결과에 answer_verification, 실패 시 notes 기록, 답변 문장은 수정 안 함 · pages/user.py에 경고 표시 · 테스트 8개 추가, 전체 263개 통과(skip 1) · 실제 claude Agent 3개 질문 중 1건이 기준년월 "202606"→"2026년" 오탐이라 날짜 분해 규칙 추가 후 재실행 통과 · AppTest로 경고 렌더링 확인(예외 0). 실제 브라우저 클릭 흐름은 수동 확인 필요.
 
 ## B5. services 공통 유틸 중복 정리
 - [ ] 상태

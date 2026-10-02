@@ -457,6 +457,12 @@ def render_location_agent_result(result: dict) -> None:
 
     st.markdown("**C. AI 분석 결과**")
     if result.get("agent_answer"):
+        verification = result.get("answer_verification") or {}
+        if verification.get("status") == "unverified_numbers":
+            st.warning(
+                "⚠️ AI 답변의 일부 수치(" + ", ".join(verification["unverified"]) + ")를 실제 조회 "
+                "결과에서 확인하지 못했습니다 - 아래 표의 실제 조회 결과를 기준으로 보세요."
+            )
         st.success(f"🤖 {result['agent_answer']}")
         st.caption("아래 표는 AI가 답변에 사용한 실제 조회 결과입니다.")
     if result["unsupported_requests"]:
