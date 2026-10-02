@@ -1,6 +1,6 @@
 # 건강보험심사평가원(HIRA) 병원정보서비스 -> data/region_indicators.csv 반영 스크립트
 """
-건강보험심사평가원(HIRA) 병원정보서비스 Open API에서 창원시 5개 구의 병원 수를
+건강보험심사평가원(HIRA) 병원정보서비스 Open API에서 창원시 5개 구의 의료기관 수를
 수집해 data/region_indicators.csv의 hospital_count 지표에 반영하는 1회성 수집 스크립트.
 
 [무료 인증키 발급 절차]
@@ -369,6 +369,8 @@ def _write_hospital_counts_to_csv(counts: dict, source: str, reference_date: str
     updated = 0
     for row in rows:
         if row["indicator_code"] == "hospital_count" and row["region_id"] in counts:
+            # 전 종별 합산이라 "병원 수"가 아니라 "의료기관 수"로 표기한다(CLAUDE.md 3절).
+            row["indicator_name"] = "의료기관 수"
             row["value"] = str(counts[row["region_id"]])
             row["source"] = source
             row["reference_date"] = reference_date

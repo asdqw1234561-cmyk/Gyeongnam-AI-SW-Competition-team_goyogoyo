@@ -70,10 +70,10 @@
 - 결과: 2026-10-02 · 새 tests/test_pages_smoke.py 4개(app.py 입력 단계, user.py, government.py 첫 렌더링 + user.py에 검증 실패 Agent 결과 재렌더링 시 경고·답변 표시) · 첫 화면에서 ollama.chat/claude CLI가 호출되면 실패하도록 차단 · CLAUDE.md 7절에 안내 1줄 · 전체 275개 통과(skip 1), 전체 시간 1.2초→2.6초 · Stop hook 정상 동작 확인. 버튼 클릭 흐름은 범위 밖(브라우저 확인 필요).
 
 ## B8. CSV의 hospital_count 지표명을 "의료기관 수"로 변경
-- [!] 상태
+- [x] 상태
 - 승인: 완료 (2026-10-02 사용자 승인. 단 `.claude/settings.json`의 `Edit(./data/region_indicators.csv)` 차단은 **아직 유지 중**이며 사용자가 직접 해제해야 한다. 해제 전에는 CSV 수정 단계에서 `[!]`로 멈추고, Bash 등으로 우회 수정하지 않는다. 이 항목 범위 밖의 값·행은 수정하지 않는다)
 - 범위: 5개 행의 `indicator_name` "병원 수" → "의료기관 수". 수치·출처·기준일은 그대로. 수집 스크립트(`scripts/ingest_hira_hospital_data.py`)가 다시 생성할 때도 같은 이름을 쓰도록 맞춘다.
-- 결과: 2026-10-02 막힘 · `.claude/settings.json`의 deny에 `Edit(./data/region_indicators.csv)`가 아직 있어 CSV를 수정할 수 없음(Agent가 권한 규칙을 직접 고치는 것은 auto 모드에서 차단됨). 사용자가 그 한 줄을 지운 뒤 상태를 `[ ]`로 되돌리면 처리 가능. 코드 변경 없음.
+- 결과: 2026-10-02 · 사용자가 settings.json의 CSV 차단을 해제(e30f4e1) · data/region_indicators.csv의 hospital_count 5행 indicator_name "병원 수"→"의료기관 수"(값·출처·기준일·상태 불변, UTF-8/LF 유지, 40행 유지) · scripts/ingest_hira_hospital_data.py가 재수집 시에도 같은 이름을 쓰도록 명시 + docstring 표현 수정 · 전체 279개 통과(skip 1), AppTest로 government.py에 "의료기관 수" 표시·"병원 수" 미표시 확인, 점수 결과 지표명 확인.
 
 ## B9. 빈 스텁 파일 정리
 - [x] 상태
