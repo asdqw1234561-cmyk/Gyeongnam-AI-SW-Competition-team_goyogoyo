@@ -116,6 +116,36 @@
 
 ---
 
+## N1. AI 백엔드 설정 단일화 - 위치 Agent 기본 경로를 LLM_BACKEND에서 결정
+- [ ] 상태
+- 승인: 완료 (2026-10-02 사용자 승인, 브랜치 jhy-next)
+- 범위: 지금은 위치 Agent가 `LOCATION_AGENT_BACKEND`(기본 claude_agent), 나머지 AI 호출이 `LLM_BACKEND`(기본 ollama)를 따로 본다. `LOCATION_AGENT_BACKEND`가 없으면 `LLM_BACKEND`로 기본 경로를 정한다: claude_cli → claude_agent(MCP), ollama → 계획형(ollama, agent_loop 검토 포함). `LOCATION_AGENT_BACKEND`는 명시했을 때만 덮어쓰는 선택 설정으로 유지한다.
+- 주의: 기본값 변화 - 아무 설정 없을 때 위치 Agent가 MCP(claude) 대신 Ollama 계획형으로 동작하게 된다. .env.example·CLAUDE.md·README·docs/claude_cli_agent.md 설명을 함께 맞춘다.
+- 완료 조건: 설정 조합별 단위 테스트(미설정, LLM_BACKEND만, 둘 다), 전체 테스트 통과, 실제 실행 확인.
+- 결과:
+
+## N2. 위치 Agent 답변 숫자 검증을 agent_loop 기준으로 통일
+- [ ] 상태
+- 승인: 완료 (2026-10-02 사용자 승인, 브랜치 jhy-next)
+- 범위: MCP 경로(`_build_agent_result`)의 `verify_answer_numbers`(경고만 표시)를 제거하고, 팀원 `agent/agent_loop.py`의 단위별 검사(개수·거리 값 일치, 거리엔 "직선거리", 계산하지 않은 이동시간 금지)를 MCP 답변에도 적용한다. 실패하면 답변을 쓰지 않고 Python 요약으로 대체하고 사유를 남긴다(계획형과 같은 `final_answer` 형식). 화면(`pages/user.py`)도 하나의 표시 방식으로 맞춘다.
+- 완료 조건: MCP 경로 통과/실패 케이스 테스트, 기존 agent_loop 테스트 유지, 전체 테스트 통과, 실제 claude 실행으로 오탐 여부 확인.
+- 결과:
+
+## N3. 위치 Agent 경로 단순화 재평가 (N1·N2 이후)
+- [ ] 상태
+- 승인: 불필요
+- 범위: N1·N2 반영 후에도 남는 중복(결과 형식, 화면 분기, 테스트)을 점검해 정리할 수 있는 것만 최소 수정한다. 경로 자체(MCP/계획형)를 없애는 변경은 하지 않고, 필요하면 "발견된 작업"에 제안으로만 남긴다.
+- 결과:
+
+## N4. 브라우저 자동 확인 절차 정식화
+- [ ] 상태
+- 승인: 불필요
+- 범위: Playwright(헤드리스 Chromium)로 Streamlit을 띄워 주요 버튼 흐름을 확인하는 스크립트(`scripts/e2e_smoke.py`)와, 그 실행법을 담은 프로젝트 skill(`.claude/skills/run-app/SKILL.md`)을 만든다. 실제 AI 호출이 필요한 단계는 옵션으로 분리한다. 단위 테스트 묶음에는 넣지 않는다(브라우저 설치 필요). playwright는 개발용 의존성으로만 안내(requirements에 넣지 않음).
+- 완료 조건: 스크립트가 3개 화면 + 위치 Agent 실행 흐름을 스크린샷으로 남기고 콘솔 오류를 보고, skill 문서대로 재현 가능.
+- 결과:
+
+---
+
 ## 발견된 작업
 (처리 중 새로 발견한 일을 여기에 추가)
 
