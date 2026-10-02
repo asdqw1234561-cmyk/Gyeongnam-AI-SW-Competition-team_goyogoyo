@@ -51,6 +51,16 @@ class FakeRun:
         return resp
 
 
+def _as_runner(fake):
+    """FakeRun(subprocess.run 형태)을 claude_cli._run_process 형태로 바꿔 끼운다."""
+    def runner(cmd, prompt, cwd, timeout):
+        try:
+            return fake(cmd, input=prompt, cwd=cwd, encoding="utf-8", timeout=timeout), False, ""
+        except subprocess.TimeoutExpired:
+            return None, True, "partial stderr"
+    return runner
+
+
 class ClaudeCliTest(unittest.TestCase):
     def setUp(self):
         self.which = mock.patch.object(cc, "find_cli", return_value="/usr/bin/claude")
@@ -65,7 +75,7 @@ class ClaudeCliTest(unittest.TestCase):
         self.env.stop()
 
     def _run(self, fake, *args, **kwargs):
-        with mock.patch.object(cc.subprocess, "run", fake):
+        with mock.patch.object(cc, "_run_process", _as_runner(fake)):
             return cc.run(*args, **kwargs)
 
     def test_success_and_safety_flags(self):
@@ -101,6 +111,7 @@ class ClaudeCliTest(unittest.TestCase):
         r = self._run(FakeRun(subprocess.TimeoutExpired(cmd="claude", timeout=5)), "q", timeout=5)
         self.assertFalse(r["ok"])
         self.assertIn("5초", r["error"])
+        self.assertIn("partial stderr", r["error"])          # 시간초과 시 CLI 출력 일부 표시
 
     def test_os_error(self):
         r = self._run(FakeRun(OSError("권한 없음")), "q")
@@ -156,7 +167,7 @@ class ClaudeCliTest(unittest.TestCase):
 
     # ------------------------------------------------------------ chat (ollama 호환)
     def _chat(self, fake, **kwargs):
-        with mock.patch.object(cc.subprocess, "run", fake):
+        with mock.patch.object(cc, "_run_process", _as_runner(fake)):
             return cc.chat(**kwargs)
 
     def test_chat_ollama_compatible(self):
@@ -232,6 +243,28 @@ class BackendTest(unittest.TestCase):
     def test_unknown_backend_falls_back(self):
         with mock.patch.dict(os.environ, {"LLM_BACKEND": "gpt"}):
             self.assertEqual(llm.get_backend(), "ollama")
+
+
+class ProcessRunnerTest(unittest.TestCase):
+    """_run_process: 실제 하위 프로세스로 정상 종료·시간초과(프로세스 트리 종료)를 확인."""
+
+    def test_normal(self):
+        cp, timed_out, _ = cc._run_process(
+            [sys.executable, "-c", "import sys; print(sys.stdin.read().upper())"], "abc", ".", 20)
+        self.assertFalse(timed_out)
+        self.assertEqual(cp.stdout.strip(), "ABC")
+
+    def test_timeout_kills_child_tree(self):
+        import time as _t
+        # 손자 프로세스가 출력 파이프를 물고 오래 버티는 상황(Windows claude.cmd -> node 와 유사)
+        code = ("import subprocess, sys, time; "
+                "subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(30)']); "
+                "sys.stderr.write('started'); sys.stderr.flush(); time.sleep(30)")
+        start = _t.monotonic()
+        cp, timed_out, partial = cc._run_process([sys.executable, "-c", code], "", ".", 2)
+        self.assertTrue(timed_out)
+        self.assertIsNone(cp)
+        self.assertLess(_t.monotonic() - start, 20)
 
 
 if __name__ == "__main__":
