@@ -47,7 +47,7 @@
   - 근거 없는 숫자가 있으면 결과에 `answer_verification`(검증 결과·문제 숫자)을 담고, `pages/user.py`에서 답변 위에 "⚠️ 일부 수치를 실제 조회 결과에서 확인하지 못했습니다 - 아래 표를 기준으로 보세요"를 표시한다. 답변 문장을 임의로 고치지는 않는다.
 - 완료 조건: 일치/불일치 케이스 단위 테스트, 전체 테스트 통과, 화면 반영(브라우저 확인 못 하면 "수동 확인 필요" 기록).
 - 결과: 2026-10-02 · agent/location_agent.py에 verify_answer_numbers() 추가(실행된 도구 결과의 숫자·문자열 속 숫자·YYYYMM(DD) 날짜 분해, 질문 숫자, 반경 m/km 허용) → 결과에 answer_verification, 실패 시 notes 기록, 답변 문장은 수정 안 함 · pages/user.py에 경고 표시 · 테스트 8개 추가, 전체 263개 통과(skip 1) · 실제 claude Agent 3개 질문 중 1건이 기준년월 "202606"→"2026년" 오탐이라 날짜 분해 규칙 추가 후 재실행 통과 · AppTest로 경고 렌더링 확인(예외 0). 실제 브라우저 클릭 흐름은 수동 확인 필요.
-- 이후: 2026-10-02 hwang2 통합(M1, 방식 A)으로 verify_answer_numbers와 MCP Agent는 제거되고, `agent/agent_loop.py`의 단위별 숫자 검증(실패 시 Python 요약으로 대체)으로 대체됨.
+- 이후: M1(방식 A)에서 잠시 제거됐다가 M2(팀원 hwang3 기준 통합)에서 다시 살아남. 현재는 MCP 반복형 Agent의 답변 검증으로 유지.
 
 ## B5. services 공통 유틸 중복 정리
 - [x] 상태
@@ -101,9 +101,18 @@
 
 ## M1. hwang2(팀원 브랜치) 통합 병합 - 방식 A (사용자 요청)
 - [x] 상태
+- ⚠️ 취소됨: 팀원이 MCP 위치 Agent를 계속 쓰므로 M2에서 팀원의 hwang3 통합 결과로 되돌림(MCP 유지).
 - 승인: 완료(사용자 직접 요청)
 - 범위: origin/hwang2(OHunCoin, 4커밋: llm.chat 단일 호출 계층·Claude CLI 백엔드·사용량 제한, 위치/추천 결과 검토 루프, 대화 기억, 반경 인식 버그 수정)를 jhy에 병합. 위치 Agent 반복 방식은 팀원의 agent_loop로 통일(A).
 - 결과: 2026-10-02 · 충돌 6개 해결 — requirements.txt(hwang2, mcp 불필요), ollama_agent.py·planner.py(llm.chat + think=False + llm_json 모두 유지), location_agent.py(hwang2 기준 + llm_json 공용화만 재적용), pages/user.py(hwang2 결과 표시 + jhy geo 유지, ai_agent 분기 제거), app.py(jhy 선택지 폼 + hwang2 AI 설명·max_chars) · 삭제: agent/location_mcp_server.py, MCP/claude 백엔드/답변 검증 테스트 · planner_loop 라벨 "병원 수"→"의료기관 수" · CLAUDE.md·README 아키텍처 갱신 · 전체 338개 통과(skip 1, hwang2 테스트 5개 파일 포함) · 실제 실행: LLM_BACKEND=ollama/claude_cli 각각 위치 Agent·planner·가중치 해석 정상.
+
+---
+
+## M2. 팀원의 hwang3 통합 결과로 재정렬 - MCP 위치 Agent 유지 (사용자 요청)
+- [x] 상태
+- 승인: 완료(사용자 직접 요청)
+- 범위: 팀원(OHunCoin)이 jhy@f82e67d 위에 hwang2를 병합하며 MCP 위치 Agent를 살린 origin/hwang3를 기준으로 삼는다. jhy의 M1(MCP 제거)을 결과적으로 취소하고, hwang3에 없던 jhy 커밋(B9 빈 파일 설명, 권한 설정 조정, B8 CSV 지표명)만 다시 적용.
+- 결과: 2026-10-02 · origin/hwang3 병합(파일 내용은 hwang3 그대로) + B9·권한·B8 재적용 + planner_loop/agent_loop 문서의 "병원 수"→"의료기관 수" + README Agent 표 보강 · 위치 Agent: LOCATION_AGENT_BACKEND=claude_agent(기본, MCP) / 그 외 AI 호출: LLM_BACKEND · 테스트·실제 실행 결과는 커밋 메시지 참고.
 
 ---
 

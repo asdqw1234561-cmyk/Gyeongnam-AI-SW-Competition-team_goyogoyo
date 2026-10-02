@@ -26,7 +26,7 @@ def _no_ai_calls():
     return (
         mock.patch("ollama.chat", side_effect=AssertionError("첫 화면에서 Ollama가 호출됨")),
         mock.patch(
-            "agent.claude_cli.subprocess.run",
+            "agent.location_agent.subprocess.run",
             side_effect=AssertionError("첫 화면에서 claude CLI가 호출됨"),
         ),
     )
@@ -135,31 +135,21 @@ class PagesFirstRenderTest(unittest.TestCase):
         # 원본 지표 표와 가상 시뮬레이션 섹션이 모두 그려졌는지
         self.assertTrue(any("가상 시설 증감 시뮬레이션" in h.value for h in at.header))
 
-    @staticmethod
-    def _location_result(final_answer: dict) -> dict:
-        return {
-            "status": "ok", "message": None, "mode": "ai_planned", "user_text": "버스정류장 몇 개야?",
+    def test_user_page_renders_agent_result_with_verification_warning(self):
+        """저장된 위치 Agent 결과(답변 숫자 검증 실패)를 다시 그릴 때 경고와 답변이 함께 보인다."""
+        result = {
+            "status": "ok", "message": None, "mode": "ai_agent", "user_text": "버스정류장 몇 개야?",
             "search_center": SEARCH_CENTER, "resolved_radius_m": 500, "radius_source": "ui_default",
-            "goals": ["주변 버스정류장 조회"], "unsupported_requests": [], "planned_tool_calls": [],
+            "goals": ["주변 버스정류장 조회"], "unsupported_requests": [], "planned_tool_calls": None,
             "executed_tool_calls": [], "planner_error": None, "constraints": {}, "corrections": [],
-            "notes": [], "agent_steps": [], "final_answer": final_answer, "review_error": None,
+            "notes": ["AI 답변의 일부 수치(50)를 실제 조회 결과에서 확인하지 못했습니다."],
+            "agent_answer": "정류장은 50개입니다.",
+            "answer_verification": {"status": "unverified_numbers", "unverified": ["50"]},
+            "agent_steps": [],
         }
-
-    def test_user_page_renders_rejected_ai_answer_as_python_summary(self):
-        """AI 답변이 숫자 검증에 실패하면(agent/agent_loop.py) Python 요약과 버린 사유가 보인다."""
-        final = {"text": "반경 500m 버스정류장 14개", "source": "python_summary",
-                 "rejected_reason": "답변 속 숫자 50이 실제 조회 결과에 없음"}
-        at = self._run("pages/user.py", {"search_center": SEARCH_CENTER,
-                                         "location_agent_result": self._location_result(final)})
-        self.assertTrue(any("조회 결과 요약" in i.value and "50이 실제 조회 결과에 없음" in i.value for i in at.info))
-        self.assertFalse(any("AI 답변" in s.value for s in at.success))
-
-    def test_user_page_renders_verified_ai_answer(self):
-        final = {"text": "반경 500m 안에 버스정류장 14개가 있습니다(직선거리).", "source": "ai_verified",
-                 "rejected_reason": None}
-        at = self._run("pages/user.py", {"search_center": SEARCH_CENTER,
-                                         "location_agent_result": self._location_result(final)})
-        self.assertTrue(any("AI 답변" in s.value for s in at.success))
+        at = self._run("pages/user.py", {"search_center": SEARCH_CENTER, "location_agent_result": result})
+        self.assertTrue(any("확인하지 못했습니다" in w.value for w in at.warning))
+        self.assertTrue(any("50개" in s.value for s in at.success))
 
 
 if __name__ == "__main__":

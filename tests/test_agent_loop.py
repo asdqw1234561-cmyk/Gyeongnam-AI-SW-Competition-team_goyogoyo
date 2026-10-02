@@ -16,6 +16,19 @@ from unittest import mock
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from agent import agent_loop, location_agent  # noqa: E402
+
+
+# 이 파일은 계획형 경로(Ollama/Claude CLI 계획 -> 결과 검토 루프)를 검증한다.
+# 위치 Agent 기본값(claude_agent: claude -p + MCP)이 실제 CLI를 부르지 않도록 고정한다.
+_backend_patch = mock.patch.dict("os.environ", {"LOCATION_AGENT_BACKEND": "ollama"})
+
+
+def setUpModule():
+    _backend_patch.start()
+
+
+def tearDownModule():
+    _backend_patch.stop()
 from services import bus_stops, convenience  # noqa: E402
 
 CENTER = (35.2280, 128.6811)  # 창원시청 부근(근사)

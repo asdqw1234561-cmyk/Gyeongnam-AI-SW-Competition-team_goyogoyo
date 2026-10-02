@@ -4,8 +4,9 @@ import re
 
 import ollama
 
-from agent import llm  # LLM_BACKEND(.env)에 따라 Ollama 또는 Claude Code CLI 호출
 from agent.llm_json import extract_json_object
+from agent import llm  # LLM_BACKEND(.env)에 따라 Ollama 또는 Claude Code CLI 호출
+
 from analysis.scoring import CONDITION_TO_INDICATOR_CODE
 
 OLLAMA_MODEL = "qwen3.5:4b"

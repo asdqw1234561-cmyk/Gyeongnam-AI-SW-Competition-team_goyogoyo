@@ -41,7 +41,8 @@ API 키 없이, CLI에 로그인한 Claude 구독 계정으로 동작한다.
 [환경변수 (.env)]
     CLAUDE_CLI_PATH      claude 실행 파일 경로 (기본: PATH에서 자동 탐색)
     CLAUDE_CLI_MODEL     모델 별칭: sonnet / haiku / opus (기본: 계정 기본 모델)
-    CLAUDE_CLI_TIMEOUT   호출 제한 시간(초, 기본 120)
+    CLAUDE_CLI_TIMEOUT   호출 제한 시간(초, 기본 200)
+    CLAUDE_CLI_DEBUG_FILE  (진단용) 지정하면 CLI 디버그 로그를 이 파일에 남긴다
 """
 
 from __future__ import annotations
@@ -54,7 +55,7 @@ import tempfile
 import time
 from typing import Optional
 
-DEFAULT_TIMEOUT_S = 120
+DEFAULT_TIMEOUT_S = 200
 DEFAULT_MAX_TURNS = 2  # 도구를 모두 껐으므로 한 번의 답변이면 충분. 여유분 1
 
 # 버전에 따라 없을 수 있는 옵션. 'unknown option' 오류가 나면 빼고 한 번 더 시도한다.
@@ -138,7 +139,56 @@ def _build_command(exe: str, system_file: str, model: Optional[str],
         cmd += ["--model", model]
     if json_schema is not None:
         cmd += ["--json-schema", json.dumps(json_schema, ensure_ascii=True)]
+    debug_file = os.environ.get("CLAUDE_CLI_DEBUG_FILE")
+    if debug_file:  # 문제 진단용: CLI 내부 동작 로그를 파일로 남긴다
+        cmd += ["--debug-file", debug_file]
     return cmd
+
+
+def _kill_tree(proc: subprocess.Popen) -> None:
+    """시간 초과 시 claude 와 그 하위 프로세스(node 등)를 모두 종료한다.
+    Windows 에서 claude.cmd 로 실행되면 proc.kill() 은 cmd.exe 만 끝내고 node 가 남아
+    출력 파이프를 붙잡는 바람에 제한 시간이 지나도 한참 더 기다리게 된다."""
+    try:
+        if os.name == "nt":
+            subprocess.run(["taskkill", "/F", "/T", "/PID", str(proc.pid)],
+                           capture_output=True, timeout=15)
+        else:
+            import signal
+            os.killpg(proc.pid, signal.SIGKILL)  # start_new_session 으로 만든 그룹 전체
+    except Exception:
+        try:
+            proc.kill()
+        except Exception:
+            pass
+
+
+def _run_process(cmd: list[str], prompt: str, cwd: str, timeout: int):
+    """(CompletedProcess | None, 시간초과 여부, 시간초과 시 받은 stderr 일부)"""
+    popen_kwargs = {}
+    if os.name == "nt":
+        popen_kwargs["creationflags"] = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+    else:
+        popen_kwargs["start_new_session"] = True
+    proc = subprocess.Popen(
+        cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, cwd=cwd,
+        text=True, encoding="utf-8", errors="replace", **popen_kwargs,
+    )
+    try:
+        out, err = proc.communicate(input=prompt, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        _kill_tree(proc)
+        try:
+            out, err = proc.communicate(timeout=10)
+        except Exception:
+            out, err = "", ""
+            for stream in (proc.stdout, proc.stderr):
+                try:
+                    stream.close()
+                except Exception:
+                    pass
+        return None, True, (err or out or "").strip()[-400:]
+    return subprocess.CompletedProcess(cmd, proc.returncode, out, err), False, ""
 
 
 def _unknown_flag(stderr: str) -> Optional[str]:
@@ -183,15 +233,14 @@ def run(prompt: str, system: Optional[str] = None, *, model: Optional[str] = Non
         for _ in range(len(_OPTIONAL_FLAGS) + 1):
             cmd = _build_command(exe, system_file, model, json_schema, max_turns, skip)
             try:
-                proc = subprocess.run(
-                    cmd, input=prompt, cwd=workdir, capture_output=True,
-                    text=True, encoding="utf-8", errors="replace", timeout=timeout,
-                )
-            except subprocess.TimeoutExpired:
-                result["error"] = f"Claude CLI 응답이 {timeout}초 안에 오지 않았습니다."
-                return result
+                proc, timed_out, partial = _run_process(cmd, prompt, workdir, timeout)
             except OSError as exc:
                 result["error"] = f"Claude CLI 실행 실패: {exc}"
+                return result
+            if timed_out:
+                result["error"] = f"Claude CLI 응답이 {timeout}초 안에 오지 않았습니다."
+                if partial:
+                    result["error"] += f" (CLI 출력: {partial})"
                 return result
 
             bad_flag = _unknown_flag(proc.stderr)

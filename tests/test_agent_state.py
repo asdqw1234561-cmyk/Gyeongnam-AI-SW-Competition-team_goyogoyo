@@ -15,6 +15,19 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from agent import location_agent  # noqa: E402
 from agent.agent_state import ConversationMemory, history_to_prompt  # noqa: E402
 
+
+# 이 파일은 계획형 경로(Ollama/Claude CLI 계획 -> 결과 검토 루프)를 검증한다.
+# 위치 Agent 기본값(claude_agent: claude -p + MCP)이 실제 CLI를 부르지 않도록 고정한다.
+_backend_patch = mock.patch.dict("os.environ", {"LOCATION_AGENT_BACKEND": "ollama"})
+
+
+def setUpModule():
+    _backend_patch.start()
+
+
+def tearDownModule():
+    _backend_patch.stop()
+
 A = (35.2280, 128.6811)
 B = (35.1900, 128.5700)
 

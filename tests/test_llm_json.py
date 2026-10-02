@@ -75,7 +75,8 @@ class AgentsAcceptPreviouslyFailingResponsesTest(unittest.TestCase):
 
     def test_location_planner_with_explanation_braces(self):
         raw = '분석 {요약} 결과: {"tool_calls": [{"tool": "find_nearby_bus_stops", "reason": "a"}]}'
-        with mock.patch("agent.location_agent.ollama.chat", return_value={"message": {"content": raw}}):
+        with mock.patch.dict("os.environ", {location_agent.PLANNER_BACKEND_ENV: "ollama"}), \
+             mock.patch("agent.location_agent.ollama.chat", return_value={"message": {"content": raw}}):
             plan = location_agent.call_location_planner("버스정류장", 500)
         self.assertEqual(plan["tool_calls"][0]["tool"], "find_nearby_bus_stops")
 

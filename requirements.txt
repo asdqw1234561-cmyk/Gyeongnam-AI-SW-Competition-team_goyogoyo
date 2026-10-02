@@ -7,6 +7,7 @@ numpy>=1.26,<3
 shapely>=2.0,<3          # services/bus_stops.py 가 정류장-행정구 경계 판정에 사용
 python-dotenv>=1.0,<2
 ollama>=0.6,<1           # LLM_BACKEND=ollama 일 때 사용 (agent 코드가 import 하므로 항상 설치)
+mcp>=2,<3                # agent/location_mcp_server.py (claude -p 위치 Agent 의 MCP 도구 서버)
 
 # ---- 데이터 수집·가공 스크립트(scripts/)에서만 사용 ----
 requests>=2.31,<3

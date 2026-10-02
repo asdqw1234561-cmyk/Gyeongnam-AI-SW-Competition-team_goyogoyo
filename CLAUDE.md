@@ -26,18 +26,14 @@
 | 데이터 조회 | `services/region_data.py`, `services/bus_stops.py`, `services/convenience.py`, `services/map_markers.py` | CSV 읽기 전용 |
 | 수집·집계 | `scripts/` | 공공데이터 수집, 버스정류장 공간판정·집계 |
 
-**AI 호출 계층** — 모든 AI 호출은 `agent/llm.py`의 `llm.chat()` 한 곳을 지난다.
-- `.env`의 `LLM_BACKEND`로 `ollama`(기본, 로컬 qwen3.5:4b) / `claude_cli`(`agent/claude_cli.py`, `claude -p`를 도구 없이 잠근 채 호출)를 고른다.
-- 사용량 제한(세션당·하루 호출 수, 입력 글자 수)도 여기서 건다. 제한에 걸리면 `LLMLimitError` → 각 Agent가 기본 절차로 폴백한다.
-- `ollama.chat`을 직접 부르지 않는다. 호출 인자에는 `think=False`를 유지한다(qwen3.5의 thinking이 토큰을 소모해 응답이 비는 문제, Claude 백엔드는 이 인자를 무시).
-- LLM 응답의 JSON 추출·정리는 `agent/llm_json.py`를 쓴다.
-
 **AI Agent**
-- `agent/ollama_agent.py`: 추가질문 생성, 자연어 가중치 해석. 승인 전에는 적용하지 않는다.
-- `agent/planner.py` + `agent/planner_loop.py`: 5개 구 분석 도구 계획(가중치는 항상 승인값으로 강제 치환) → 점수 계산 뒤 AI가 결과를 보고 설명 작성·참고 지표 조회·가중치 가정 계산을 판단. 가정 계산은 참고용이며 실제 추천에는 반영하지 않는다.
-- `agent/location_agent.py` + `agent/agent_loop.py`: 위치 기반 Agent. AI가 도구 계획을 세우면 Python이 검증·실행하고, 결과를 다시 AI에게 보여 추가 조회 또는 답변을 판단하게 한다(관찰 → 판단 → 행동, 횟수 제한). 도구 실행은 항상 Python이 한다.
-- AI 최종 답변은 Python이 숫자를 단위별로 검사(개수·거리는 실제 결과값, 거리는 "직선거리" 표기, 계산하지 않은 이동시간 금지)하고, 통과하지 못하면 Python 요약으로 대체한다.
-- `agent/agent_state.py`: 같은 검색 위치에서의 대화 기억(후속 질문 맥락용, 숫자는 재사용하지 않음).
+- `agent/ollama_agent.py` (Ollama qwen3.5:4b): 추가질문 생성, 자연어 가중치 해석. 승인 전에는 적용하지 않는다.
+- `agent/planner.py` (Ollama): 5개 구 분석 도구 계획. 가중치는 항상 사용자가 승인한 값으로 강제 치환한다.
+- `agent/location_agent.py` + `agent/location_mcp_server.py`: 위치 기반 Agent. 기본은 `claude -p` + stdio MCP 서버(Claude가 도구를 반복 호출), 실패 시 Ollama 계획 → 기본 절차로 폴백. `LOCATION_AGENT_BACKEND`(`claude_agent`/`claude_cli`/`ollama`)로 전환.
+- `agent/llm.py` + `agent/claude_cli.py`: LLM 호출 공통 창구. `LLM_BACKEND`(`ollama`/`claude_cli`)로 백엔드를 고르고, 세션·일일 호출 수와 입력 길이를 제한한다. 새 AI 호출은 `ollama.chat` 대신 `llm.chat`을 쓴다.
+- `agent/planner_loop.py`: 5개 구 점수 계산 뒤 AI가 결과를 보고 설명 작성·참고 지표 조회·가중치 가정 계산을 반복(최대 3회). 실제 추천 점수는 바꾸지 않는다.
+- `agent/agent_loop.py`: 위치 Agent 계획형 경로의 결과 검토 루프(관찰 → 판단 → 행동, 최대 3회). AI 답변 숫자를 검증해 실패하면 Python 요약으로 대체한다. `agent/agent_state.py`의 `ConversationMemory`가 같은 위치의 최근 대화를 후속 질문 맥락으로 넘긴다.
+- 모든 Ollama 호출은 `think=False`를 유지한다(qwen3.5의 thinking이 토큰을 소모해 응답이 비는 문제).
 
 `app.py`의 구별 점수와 `pages/user.py`의 위치 주변 시설 수는 **서로 다른 분석**이다. 둘을 섞어 새 점수를 만들지 않는다.
 
@@ -68,7 +64,7 @@
 
 ## 5. 위치 Agent 고유 규칙
 
-- 검색 중심 좌표와 반경은 Python이 소유한다. AI가 계획에 lat/lon/radius를 적어도 무시하고, 추가 조회도 같은 검증을 거친다.
+- 검색 중심 좌표와 반경은 Python이 소유한다. AI는 바꿀 수 없고, MCP 도구 인자에 lat/lon/radius를 노출하지 않는다.
 - 자연어에 명시된 반경이 300/500/1000m가 아니면 AI를 호출하지 않고 거절한다.
 - 사용자가 요청하지 않은 시설·비교 도구는 Python guardrail이 차단한다. "가장 가까운" 요청은 max_results=1.
 - 지도 클릭 좌표(`map_click_candidate`)는 사용자 승인 전까지 검색에 쓰지 않는다. Agent는 버튼 클릭 때만 실행한다.
@@ -114,4 +110,4 @@ python -m unittest tests.test_location_agent -v
 - Python 3.12, `pip install -r requirements.txt`
 - 공공데이터 키는 `.env`(`.env.example` 참고): `HIRA_SERVICE_KEY`, `SBIZ_SERVICE_KEY` — 수집 스크립트에만 필요.
 - Ollama: `ollama pull qwen3.5:4b` 후 서버 실행.
-- AI 백엔드는 `.env`의 `LLM_BACKEND`(기본 `ollama`). `claude_cli`를 쓰려면 실행 PC에 Claude Code CLI(`claude`) 설치·로그인이 필요하다(`docs/claude_cli_agent.md`). 사용량 제한 변수는 `.env.example` 참고.
+- 위치 Agent 기본 모드는 실행 PC에 Claude Code CLI(`claude`) 설치·로그인이 필요하다. 없으면 자동으로 Ollama로 폴백한다.

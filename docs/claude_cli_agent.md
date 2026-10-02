@@ -29,7 +29,7 @@ claude auth status        # "loggedIn": true 이면 준비 완료
 ```
 LLM_BACKEND=claude_cli     # ollama 로 두면 기존처럼 Ollama 사용
 CLAUDE_CLI_MODEL=sonnet    # 선택: sonnet / haiku / opus (비우면 계정 기본 모델)
-CLAUDE_CLI_TIMEOUT=120     # 선택: 호출 제한 시간(초)
+CLAUDE_CLI_TIMEOUT=200     # 선택: 호출 제한 시간(초)
 # CLAUDE_CLI_PATH=         # 선택: claude 를 PATH에서 못 찾을 때 실행 파일 경로
 ```
 
@@ -130,7 +130,7 @@ Claude Code는 원래 파일 수정·명령 실행 도구가 있는 코딩 에�
 
 ## 5. 주의사항
 
-- **속도:** 호출마다 CLI 프로세스를 새로 띄워서 1회에 보통 2~9초가 걸립니다. 서버 상황에 따라 같은 요청이 20~90초까지 걸린 적도 있어서, 기본 제한 시간은 120초(`CLAUDE_CLI_TIMEOUT`)로 두었습니다. 한 화면에서 여러 번 부르면 체감이 큽니다. `CLAUDE_CLI_MODEL=haiku`가 가장 빠릅니다.
+- **속도:** 호출마다 CLI 프로세스를 새로 띄워서 1회에 보통 2~9초가 걸립니다. 서버 상황에 따라 같은 요청이 20~90초까지 걸린 적도 있어서, 기본 제한 시간은 200초(`CLAUDE_CLI_TIMEOUT`)로 두었습니다. 한 화면에서 여러 번 부르면 체감이 큽니다. `CLAUDE_CLI_MODEL=haiku`가 가장 빠릅니다.
 - **사용량:** 사용량은 CLI에 로그인한 계정의 구독 한도에서 차감됩니다. 별도 결제는 없지만 무제한은 아닙니다.
 - **이용 정책:** Anthropic 정책상 구독 로그인(Free/Pro/Max)은 본인의 일반적인 사용을 위한 것입니다. 다른 사람이 쓰는 서비스를 만들어 **다른 사용자의 요청을 내 구독 계정으로 처리하는 것은 허용되지 않고**, 그런 경우 API 키를 써야 합니다. 팀원 각자가 자기 PC에서 자기 계정으로 개발·테스트하는 용도로 쓰고, 외부에 배포하는 단계에서는 인증 방식을 다시 정해야 합니다.
   - 근거: [Claude Code Legal and compliance — Authentication and credential use](https://code.claude.com/docs/en/legal-and-compliance)

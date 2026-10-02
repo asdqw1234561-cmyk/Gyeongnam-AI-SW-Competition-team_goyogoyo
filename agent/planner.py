@@ -28,9 +28,10 @@ from __future__ import annotations
 
 import ollama
 
+from agent.llm_json import extract_json_object, sanitize_goals, sanitize_unsupported_requests
 from agent import llm  # LLM_BACKEND(.env)에 따라 Ollama 또는 Claude Code CLI 호출
 from agent import planner_loop  # 점수 계산 결과 관찰 -> 설명/추가 조회/가정 계산 판단 반복
-from agent.llm_json import extract_json_object, sanitize_goals, sanitize_unsupported_requests
+
 from analysis.scoring import (
     VALID_SCORABLE_INDICATOR_CODES,
     collect_confirmed_indicator,
