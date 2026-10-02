@@ -5,7 +5,7 @@
 > 상세 구조·규칙은 `CLAUDE.md`, 작업 이력은 `docs/backlog.md`.
 
 - 최종 확인: 2026-10-02
-- 브랜치: `jhy-next` · 기준 커밋: `78ec6e0` ([N2] MCP 위치 Agent 답변 검증을 agent_loop 기준으로 통일)
+- 브랜치: `jhy-next` · 기준 커밋: `219a4f2` ([R1] 정착 후보군 역할 부여 + Critic 점검)
 - 제출 마감: 2026-10-06 12:00 (R-SCH-2, 재확인 필요) — 확인일 기준 D-4
 
 ## 구현된 기능 (IMPLEMENTED)
@@ -17,7 +17,7 @@
 | F3 | 결과 검토 루프: AI 설명 → 숫자 검증 → 실패 시 재작성/Python 요약, 자연어·슬라이더 피드백 재계산 | `agent/planner_loop.py`, `app.py` | 동작 |
 | F4 | 위치 기반 주변 시설 탐색(300m/500m/1km 직선거리, 버스정류장·편의점, 지도 클릭 승인) | `pages/user.py`, `services/bus_stops.py`, `services/convenience.py` | 동작 |
 | F5 | 위치 AI Agent: MCP 반복형(claude_cli) / 계획형+검토 루프(ollama) / 기본 절차 폴백, 답변 숫자 검증, 같은 위치 대화 기억 | `agent/location_agent.py`, `agent/location_mcp_server.py`, `agent/agent_loop.py`, `agent/agent_state.py` | 동작 |
-| F7 | 정착 후보군 + Critic: 최적·균형·대안(가성비는 주거비 미확보로 산출 불가), 6개 평가축 상태, Critic 점검·지배된 대안 수정 — 최초·피드백 결과 모두 | `analysis/candidates.py`, `agent/planner.py`(`candidate_review`), `app.py` `_render_candidate_set` | 동작(단위·AppTest), 실제 Ollama·브라우저 미확인, **미커밋** |
+| F7 | 정착 후보군 + Critic: 최적·균형·대안(가성비는 주거비 미확보로 산출 불가), 6개 평가축 상태, Critic 점검·지배된 대안 수정 — 최초·피드백 결과 모두 | `analysis/candidates.py`, `agent/planner.py`(`candidate_review`), `app.py` `_render_candidate_set` | 동작(단위·AppTest), 실제 Ollama·브라우저 미확인 |
 | F6 | 정부용 구별 시설 현황·가상 증감 시뮬레이션 | `pages/government.py`, `analysis/simulation.py` | 동작 (주제 연결은 OPEN-3) |
 
 공통: `agent/llm.py`(백엔드 선택·호출 수·입력 길이 제한), `agent/llm_json.py`(JSON 추출).
@@ -62,7 +62,7 @@
 
 선택(STEP 6): G1+G2를 하나의 결정적 모듈로 묶어 먼저 구현한다 — 새 점수식 없이 기존 `score_result`의 축별 정규화 점수만으로 후보 역할 부여와 Critic 점검을 수행한다. G3는 다음 후보.
 
-**진행 (2026-10-02, backlog R1):** G1·G2 구현 완료(F7, 미커밋). 흐름은 이제 Goal → Planning → Tool Use → 평가(scoring) → **후보 생성 → Critic(점검·대안 수정)** → 결과 → Feedback(재평가 시 후보·Critic 다시 계산)까지 이어진다.
+**진행 (2026-10-02, backlog R1):** G1·G2 구현 완료(F7, 커밋 219a4f2). 흐름은 이제 Goal → Planning → Tool Use → 평가(scoring) → **후보 생성 → Critic(점검·대안 수정)** → 결과 → Feedback(재평가 시 후보·Critic 다시 계산)까지 이어진다.
 남은 것: **G3**(방향성 피드백·피드백 이력 Memory), Critic 결과가 아직 AI 설명(planner_loop 관찰)에는 들어가지 않음, "같은 생활권 쏠림"은 행정동 단위 데이터가 없어 판단 불가로 표시만 함.
 
 ## 알려진 문제 / 공백
