@@ -58,6 +58,7 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 import tempfile
 
 import ollama
@@ -67,11 +68,15 @@ from services.bus_stops import PRESET_RADII_M as SUPPORTED_RADII_M
 
 OLLAMA_MODEL = "qwen3.5:4b"
 
-# 계획 수립 백엔드 - "claude_cli"(기본: Claude Code CLI `claude -p`) | "ollama"(로컬)
-# claude_cli 호출이 실패하면 ollama로 한 번 더 시도하고, 그것도 실패하면 기본 절차로 폴백한다.
+# 백엔드 (LOCATION_AGENT_BACKEND)
+#   "claude_agent"(기본): claude -p + location MCP 서버 - Claude가 도구를 직접 반복 호출.
+#                         실패하면 로컬 Ollama 계획 → 기본 절차 순으로 폴백.
+#   "claude_cli": claude -p가 계획 JSON만 세우고 Python이 실행(실패 시 Ollama 폴백).
+#   "ollama": 로컬 Ollama 계획만 사용.
 PLANNER_BACKEND_ENV = "LOCATION_AGENT_BACKEND"
 CLAUDE_CLI_MODEL_ENV = "LOCATION_AGENT_CLAUDE_MODEL"  # 비어 있으면 CLI 기본 모델 사용
 CLAUDE_CLI_TIMEOUT_S = 120
+CLAUDE_AGENT_TIMEOUT_S = 240
 
 ALLOWED_TOOLS: tuple[str, ...] = (
     "find_nearby_bus_stops",
@@ -239,7 +244,7 @@ def _parse_plan(raw_text: str) -> dict | None:
 
 
 def _planner_backend() -> str:
-    return os.environ.get(PLANNER_BACKEND_ENV, "claude_cli").strip().lower()
+    return os.environ.get(PLANNER_BACKEND_ENV, "claude_agent").strip().lower()
 
 
 def _call_claude_cli_planner(user_text: str, resolved_radius_m: int) -> dict:
@@ -305,6 +310,139 @@ def _call_claude_cli_planner(user_text: str, resolved_radius_m: int) -> dict:
     if plan is None:
         raise RuntimeError("AI가 반환한 위치 분석 계획을 JSON으로 해석하지 못했습니다.")
     return plan
+
+
+# ---------------------------------------------------------------------------
+# 반복형 Agent (claude -p + MCP 서버) - Claude가 도구를 직접 반복 호출
+# ---------------------------------------------------------------------------
+LOCATION_AGENT_LOOP_PROMPT = """당신은 경남 이주자 생활권 탐색 서비스의 위치 기반 분석 Agent입니다.
+사용자가 이미 지도에서 확정한 위치 주변의 생활시설에 대한 질문에, 제공된 도구를 직접
+호출해 실제 데이터를 확인한 뒤 답하세요.
+
+[도구 - location MCP 서버의 3개뿐]
+- find_nearby_bus_stops: 확정 위치 주변 버스정류장(가까운 순, 이미 결정된 반경)
+- find_nearby_convenience_stores: 확정 위치 주변 편의점(가까운 순, 이미 결정된 반경)
+- compare_nearby_facilities: 300m/500m/1km 반경별 두 시설 전체 건수 비교
+
+[규칙]
+- 검색 위치와 반경은 이미 Python이 정했습니다. 도구에는 좌표·반경 인자가 없습니다.
+- 필요한 도구만 호출하세요. 도구 결과를 보고 정보가 부족하면 다른 도구를 더 호출해도
+  됩니다. 도구가 error를 돌려주면 그 안내를 따라 다시 고르세요.
+- 숫자·이름·거리·주소는 반드시 도구 결과에 있는 값만 쓰세요. 절대 지어내지 마세요.
+- 실제 버스 이동시간·배차 간격·실시간 도착정보, 도보 경로, 의료기관 위치, 주거비·매물,
+  범죄율·안전도, 종합 거주 적합도 확정 등은 데이터가 없습니다. 이런 요청은 도구를
+  억지로 호출하지 말고 unsupported_requests에 적으세요.
+- 직선거리 기준 조회 결과일 뿐이라는 점을 답변에서 과장하지 마세요.
+
+[최종 출력 - 도구 호출을 모두 마친 뒤, 아래 JSON 객체 하나만 출력. markdown 금지]
+{"goals": ["분석 목표", ...],
+ "answer": "사용자 질문에 대한 한국어 답변(3~6문장, 도구 결과 수치 인용)",
+ "unsupported_requests": [{"request": "...", "reason": "..."}]}
+"""
+
+
+def _run_location_mcp_agent(
+    user_text: str,
+    search_center: tuple[float, float],
+    resolved_radius_m: int,
+    ui_max_results: int,
+    constraints: dict,
+) -> dict:
+    """claude -p에 location MCP 서버를 붙여 실행한다. Claude가 도구를 반복 호출
+    하며 최종 답변 JSON을 만들고, MCP 서버가 남긴 호출 로그로 실제 실행 내역을
+    복원한다. 실패는 모두 RuntimeError로 통일한다.
+
+    Returns: {"final": dict, "steps": [MCP 호출 로그 entry, ...]}
+    """
+    from agent import location_mcp_server as srv  # 순환 import 방지를 위해 지연 import
+
+    exe = shutil.which("claude")
+    if exe is None:
+        raise RuntimeError("claude CLI를 찾을 수 없습니다(PATH에 claude가 없음).")
+
+    lat, lon = search_center
+    with tempfile.TemporaryDirectory(prefix="location_agent_") as work_dir:
+        log_path = os.path.join(work_dir, "tool_calls.jsonl")
+        mcp_config_path = os.path.join(work_dir, "mcp.json")
+        mcp_config = {
+            "mcpServers": {
+                srv.SERVER_NAME: {
+                    "type": "stdio",
+                    "command": sys.executable,
+                    "args": [os.path.abspath(srv.__file__)],
+                    "env": {
+                        srv.ENV_LAT: repr(lat),
+                        srv.ENV_LON: repr(lon),
+                        srv.ENV_RADIUS_M: str(resolved_radius_m),
+                        srv.ENV_MAX_RESULTS: str(ui_max_results),
+                        srv.ENV_CONSTRAINTS: json.dumps(constraints, ensure_ascii=False),
+                        srv.ENV_LOG: log_path,
+                        "PYTHONIOENCODING": "utf-8",
+                    },
+                }
+            }
+        }
+        with open(mcp_config_path, "w", encoding="utf-8") as f:
+            json.dump(mcp_config, f, ensure_ascii=False)
+
+        allowed = ",".join(f"mcp__{srv.SERVER_NAME}__{t}" for t in ALLOWED_TOOLS)
+        cmd = [
+            exe, "-p",
+            "--output-format", "json",
+            "--tools", "",
+            "--mcp-config", mcp_config_path,
+            "--strict-mcp-config",
+            "--allowedTools", allowed,
+            "--no-session-persistence",
+            "--disable-slash-commands",
+            "--effort", "low",
+            "--system-prompt",
+            "You are a location analysis agent. Use the provided MCP tools as instructed "
+            "in the user message, then reply with a single JSON object only.",
+        ]
+        model = os.environ.get(CLAUDE_CLI_MODEL_ENV, "").strip()
+        if model:
+            cmd += ["--model", model]
+
+        stdin_text = (
+            f"{LOCATION_AGENT_LOOP_PROMPT}\n\n"
+            f"[사용자 요청]\n{user_text}\n\n"
+            f"[이번 조회에 적용되는 반경(이미 결정됨)]\n{resolved_radius_m}m"
+        )
+        try:
+            proc = subprocess.run(
+                cmd,
+                input=stdin_text,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=CLAUDE_AGENT_TIMEOUT_S,
+                cwd=work_dir,
+            )
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            raise RuntimeError(f"claude CLI Agent 실행에 실패했습니다: {exc}") from exc
+
+        steps: list[dict] = []
+        if os.path.exists(log_path):
+            with open(log_path, encoding="utf-8") as f:
+                steps = [json.loads(line) for line in f if line.strip()]
+
+    if proc.returncode != 0:
+        detail = (proc.stderr or proc.stdout or "").strip()[:300]
+        raise RuntimeError(f"claude CLI Agent가 오류로 종료했습니다(code={proc.returncode}): {detail}")
+    try:
+        envelope = json.loads(proc.stdout)
+    except json.JSONDecodeError as exc:
+        raise RuntimeError("claude CLI Agent 출력(JSON)을 해석하지 못했습니다.") from exc
+    if not isinstance(envelope, dict) or envelope.get("is_error"):
+        detail = str(envelope.get("result") if isinstance(envelope, dict) else envelope)[:300]
+        raise RuntimeError(f"claude CLI Agent가 오류 결과를 반환했습니다: {detail}")
+
+    final = _parse_plan(str(envelope.get("result") or ""))
+    if final is None or not str(final.get("answer") or "").strip():
+        raise RuntimeError("AI Agent의 최종 답변을 JSON으로 해석하지 못했습니다.")
+    return {"final": final, "steps": steps}
 
 
 def call_location_planner(user_text: str, resolved_radius_m: int) -> dict:
@@ -606,6 +744,58 @@ def _sanitize_goals(raw: object) -> list[str]:
     return [str(g).strip()[:100] for g in raw[:10] if str(g).strip()]
 
 
+def _build_agent_result(
+    agent_out: dict,
+    user_text: str,
+    search_center: tuple[float, float],
+    resolved_radius_m: int,
+    radius_source: str,
+    constraints: dict,
+) -> dict:
+    """반복형 Agent 결과를 run_location_agent()의 공통 반환 형식으로 맞춘다.
+    executed_tool_calls에는 MCP 서버가 실제로 실행한 호출만 담고(차단된 호출은
+    agent_steps와 notes로만 표시), 화면이 기존 렌더러를 그대로 쓸 수 있게 한다."""
+    final = agent_out["final"]
+    steps = agent_out["steps"]
+
+    executed = [
+        {k: s.get(k) for k in ("tool", "reason", "radius_m", "max_results", "result", "executed", "error")}
+        for s in steps
+        if not s.get("blocked")
+    ]
+    notes: list[str] = []
+    for s in steps:
+        label = TOOL_LABELS.get(s.get("tool"), s.get("tool"))
+        if s.get("blocked"):
+            notes.append(f"Python이 '{label}' 호출을 차단하고 AI에게 다시 고르게 했습니다: {s.get('error')}")
+        elif s.get("note"):
+            notes.append(f"'{label}': {s['note']}")
+
+    return {
+        "status": "ok",
+        "message": None,
+        "mode": "ai_agent",
+        "user_text": user_text,
+        "search_center": search_center,
+        "resolved_radius_m": resolved_radius_m,
+        "radius_source": radius_source,
+        "goals": _sanitize_goals(final.get("goals")),
+        "unsupported_requests": _sanitize_unsupported_requests(final.get("unsupported_requests")),
+        "planned_tool_calls": None,
+        "executed_tool_calls": executed,
+        "notes": notes,
+        "planner_error": None,
+        "constraints": constraints,
+        "corrections": [],
+        "agent_answer": str(final.get("answer") or "").strip()[:2000],
+        "agent_steps": [
+            {"tool": s.get("tool"), "reason": s.get("reason", ""), "blocked": bool(s.get("blocked")),
+             "executed": bool(s.get("executed")), "error": s.get("error")}
+            for s in steps
+        ],
+    }
+
+
 _DEFAULT_FALLBACK_CALL = {
     "tool": "compare_nearby_facilities",
     "reason": "(기본 절차) AI 계획을 사용할 수 없어 반경별 기본 비교를 실행",
@@ -639,7 +829,9 @@ def run_location_agent(
         {
             "status": "ok" | "rejected_input",
             "message": str | None,              # status=="rejected_input"일 때만(예: 지원 안 하는 반경)
-            "mode": "ai_planned" | "fallback_default" | None,
+            "mode": "ai_agent" | "ai_planned" | "fallback_default" | None,
+            "agent_answer": str,                 # mode=="ai_agent"일 때만 - Claude의 최종 답변
+            "agent_steps": [...],                # mode=="ai_agent"일 때만 - 차단 포함 호출 순서
             "user_text": str,
             "search_center": (lat, lon),         # 이 결과가 어느 좌표에서 실행됐는지(이후 비교용)
             "resolved_radius_m": int | None,
@@ -684,12 +876,27 @@ def run_location_agent(
 
     constraints = extract_request_constraints(user_text)
 
+    agent_error: str | None = None
+    if _planner_backend() == "claude_agent":
+        try:
+            agent_out = _run_location_mcp_agent(
+                user_text, search_center, resolved_radius_m, ui_max_results, constraints
+            )
+        except RuntimeError as exc:
+            agent_error = str(exc)
+        else:
+            return _build_agent_result(
+                agent_out, user_text, search_center, resolved_radius_m, radius_source, constraints
+            )
+
     planner_error: str | None = None
     plan: dict | None = None
     try:
         plan = call_location_planner(user_text, resolved_radius_m)
     except RuntimeError as exc:
         planner_error = str(exc)
+    if agent_error is not None and planner_error is not None:
+        planner_error = f"{agent_error} / {planner_error}"
 
     if planner_error is None:
         validated = validate_and_normalize_plan(plan, resolved_radius_m, ui_max_results, constraints=constraints)
@@ -718,6 +925,9 @@ def run_location_agent(
         goals = []
         if planner_error is None:
             notes.append(f"AI 계획을 검증하지 못해 기본 절차로 전환했습니다: {validated['reason']}")
+
+    if agent_error is not None and planner_error is None:
+        notes.insert(0, f"Claude Agent 실행에 실패해 로컬 Ollama 계획으로 전환했습니다: {agent_error}")
 
     executed = _execute_tool_calls(lat, lon, tool_calls)
 

@@ -880,6 +880,98 @@ class ClaudeCliPlannerTest(unittest.TestCase):
         self.assertIn("claude CLI", result["planner_error"])
 
 
+class LocationToolboxGuardrailTest(unittest.TestCase):
+    """MCP 서버 도구의 guardrail - 좌표·반경 고정, 요청 범위 밖 도구 차단."""
+
+    def _box(self, text: str, radius: int = 500, ui_max: int = 10):
+        from agent.location_mcp_server import LocationToolbox
+        return LocationToolbox(*SEARCH_CENTER, radius, ui_max, location_agent.extract_request_constraints(text))
+
+    def test_bus_tool_uses_fixed_center_and_radius(self):
+        box = self._box("버스정류장 알려줘", radius=300)
+        with mock.patch("agent.location_agent.tool_find_nearby_bus_stops", return_value={"status": "ok"}) as fn:
+            payload = box.call("find_nearby_bus_stops", "r", max_results=5)
+        fn.assert_called_once_with(*SEARCH_CENTER, 300, 5)
+        self.assertEqual(payload["status"], "ok")
+        self.assertEqual(payload["applied_radius_m"], 300)
+
+    def test_unrequested_facility_blocked(self):
+        box = self._box("편의점 알려줘")
+        with mock.patch("agent.location_agent.tool_find_nearby_bus_stops") as fn:
+            payload = box.call("find_nearby_bus_stops", "r")
+        fn.assert_not_called()
+        self.assertEqual(payload["status"], "error")
+        self.assertIn("find_nearby_convenience_stores", payload["error"])
+
+    def test_compare_blocked_without_comparison_request(self):
+        box = self._box("버스정류장 몇 개야?")
+        payload = box.call("compare_nearby_facilities", "r")
+        self.assertEqual(payload["status"], "error")
+        self.assertIn("find_nearby_bus_stops", payload["error"])
+
+    def test_nearest_forces_single_result(self):
+        box = self._box("가장 가까운 편의점 어디야?")
+        with mock.patch("agent.location_agent.tool_find_nearby_convenience_stores", return_value={}) as fn:
+            payload = box.call("find_nearby_convenience_stores", "r", max_results=10)
+        self.assertEqual(fn.call_args.args[3], 1)
+        self.assertIn("note", payload)
+
+    def test_call_limit(self):
+        from agent.location_mcp_server import MAX_AGENT_TOOL_CALLS
+        box = self._box("버스정류장 알려줘")
+        with mock.patch("agent.location_agent.tool_find_nearby_bus_stops", return_value={}):
+            for _ in range(MAX_AGENT_TOOL_CALLS):
+                box.call("find_nearby_bus_stops", "r")
+            payload = box.call("find_nearby_bus_stops", "r")
+        self.assertEqual(payload["status"], "error")
+
+
+class ClaudeMcpAgentTest(unittest.TestCase):
+    """반복형 Agent 모드(run_location_agent 통합) - _run_location_mcp_agent를 모킹."""
+
+    def setUp(self):
+        patcher = mock.patch.dict("os.environ", {location_agent.PLANNER_BACKEND_ENV: "claude_agent"})
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def test_agent_result_shape(self):
+        agent_out = {
+            "final": {"goals": ["편의점 조회"], "answer": "가장 가까운 편의점은 A입니다.",
+                      "unsupported_requests": [{"request": "월세", "reason": "데이터 없음"}]},
+            "steps": [
+                {"tool": "find_nearby_bus_stops", "reason": "x", "blocked": True, "executed": False,
+                 "error": "사용자는 버스정류장을 요청하지 않았습니다."},
+                {"tool": "find_nearby_convenience_stores", "reason": "y", "blocked": False, "executed": True,
+                 "error": None, "radius_m": 500, "max_results": 10, "result": {"status": "ok"}},
+            ],
+        }
+        with mock.patch("agent.location_agent._run_location_mcp_agent", return_value=agent_out), \
+             mock.patch("agent.location_agent.ollama.chat") as mock_chat:
+            result = location_agent.run_location_agent("편의점이랑 월세 알려줘", SEARCH_CENTER, 500, 10)
+        mock_chat.assert_not_called()
+        self.assertEqual(result["mode"], "ai_agent")
+        self.assertEqual(result["agent_answer"], "가장 가까운 편의점은 A입니다.")
+        self.assertEqual([e["tool"] for e in result["executed_tool_calls"]], ["find_nearby_convenience_stores"])
+        self.assertEqual(len(result["agent_steps"]), 2)
+        self.assertTrue(any("차단" in n for n in result["notes"]))
+        self.assertEqual(result["unsupported_requests"][0]["request"], "월세")
+
+    def test_agent_failure_falls_back_to_ollama_plan(self):
+        plan_json = '{"tool_calls": [{"tool": "find_nearby_bus_stops", "reason": "a"}]}'
+        with mock.patch("agent.location_agent._run_location_mcp_agent", side_effect=RuntimeError("cli down")), \
+             mock.patch("agent.location_agent.ollama.chat") as mock_chat:
+            mock_chat.return_value = _fake_chat_response(plan_json)
+            result = location_agent.run_location_agent("버스정류장 알려줘", SEARCH_CENTER, 500, 10)
+        self.assertEqual(result["mode"], "ai_planned")
+        self.assertTrue(any("cli down" in n for n in result["notes"]))
+
+    def test_unsupported_radius_skips_agent(self):
+        with mock.patch("agent.location_agent._run_location_mcp_agent") as run:
+            result = location_agent.run_location_agent("200m 안 편의점", SEARCH_CENTER, 500, 10)
+        run.assert_not_called()
+        self.assertEqual(result["status"], "rejected_input")
+
+
 class RealOllamaIntegrationSmokeTest(unittest.TestCase):
     """실제 qwen3.5:4b를 사용하는 통합 스모크 테스트 - 기본적으로 건너뛴다.
     LOCATION_AGENT_REAL_OLLAMA_TEST=1 환경변수가 설정됐을 때만 실행하며,

@@ -329,10 +329,48 @@ def _render_agent_executed_entry(entry: dict) -> None:
         _render_agent_compare_result(entry["result"])
 
 
+def _render_agent_loop_log(result: dict) -> None:
+    """반복형 Agent(claude -p + MCP) 실행 과정 - Claude가 호출한 순서 그대로,
+    Python이 차단한 호출까지 구분해서 보여준다."""
+    st.success("✅ Claude가 조회 도구를 직접 호출하며 분석했습니다(좌표·반경·호출 범위는 Python이 통제).")
+
+    st.markdown("**1. AI가 세운 분석 목표**")
+    for g in result["goals"] or ["(없음)"]:
+        st.caption(f"· {g}")
+
+    st.markdown("**2. AI의 도구 호출 순서**")
+    steps = result.get("agent_steps") or []
+    if steps:
+        for i, s in enumerate(steps, start=1):
+            label = LOCATION_TOOL_LABELS.get(s["tool"], s["tool"])
+            if s["blocked"]:
+                icon = "⛔"
+            else:
+                icon = "✅" if s["executed"] else "❌"
+            reason = f" — {s['reason']}" if s.get("reason") else ""
+            st.caption(f"{icon} {i}. {label}{reason}")
+            if s["blocked"] or s.get("error"):
+                st.caption(f"  ↳ {s['error']}")
+    else:
+        st.caption("AI가 도구를 호출하지 않았습니다(지원하지 않는 요청 등).")
+
+    st.markdown("**3. Python 검증 결과**")
+    for n in result["notes"] or ["모든 도구 호출이 사용자 요청 범위 안에 있어 그대로 실행했습니다."]:
+        st.caption(f"· {n}")
+
+    with st.expander("사용 가능한 도구 목록"):
+        for tool_name, label in LOCATION_TOOL_LABELS.items():
+            st.caption(f"· {label} ({tool_name})")
+
+
 def render_location_agent_execution_log(result: dict) -> None:
     """'🔍 AI 위치 분석 실행 과정 보기' 접기 영역 - run_location_agent()의 반환값을
     그대로 보여줄 뿐 여기서 새로 판단하거나 숫자를 만들지 않는다. "AI가 제안한
     계획"과 "Python이 실제 실행한 작업"을 항상 구분해서 표시한다."""
+    if result["mode"] == "ai_agent":
+        _render_agent_loop_log(result)
+        return
+
     corrections = result.get("corrections", [])
     has_corrections = bool(corrections)
 
@@ -418,6 +456,9 @@ def render_location_agent_result(result: dict) -> None:
     st.write(f"검색 중심: 위도 {lat:.6f}, 경도 {lon:.6f} · 검색 반경: {radius_label} ({source_label})")
 
     st.markdown("**C. AI 분석 결과**")
+    if result.get("agent_answer"):
+        st.success(f"🤖 {result['agent_answer']}")
+        st.caption("아래 표는 AI가 답변에 사용한 실제 조회 결과입니다.")
     if result["unsupported_requests"]:
         for item in result["unsupported_requests"]:
             st.info(f"ℹ️ 지원하지 않는 요청입니다: {item['request']} - {item['reason']}")
@@ -616,8 +657,8 @@ else:
     st.divider()
     st.subheader("5. 🤖 AI에게 주변 생활시설 분석 요청하기")
     st.caption(
-        "자연어로 요청하면 Claude(claude CLI, 실패 시 로컬 Ollama)가 어떤 조회 도구를 쓸지 계획하고, "
-        "Python이 그 계획을 검증한 뒤 실제 데이터를 조회합니다. 검색 중심 좌표는 항상 "
+        "자연어로 요청하면 Claude(claude CLI + MCP)가 조회 도구를 직접 호출하며 결과를 보고 "
+        "답변합니다(실패 시 로컬 Ollama 계획으로 전환). 도구 호출 범위는 Python이 검증합니다. 검색 중심 좌표는 항상 "
         "위에서 확정한 좌표만 사용되며, AI가 임의로 바꿀 수 없습니다."
     )
     agent_request_text = st.text_input(

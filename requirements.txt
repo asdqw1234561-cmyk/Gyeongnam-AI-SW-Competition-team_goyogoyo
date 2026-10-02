@@ -1,6 +1,7 @@
 streamlit>=1.36
 anthropic
 ollama
+mcp>=2
 pandas
 python-dotenv
 requests
