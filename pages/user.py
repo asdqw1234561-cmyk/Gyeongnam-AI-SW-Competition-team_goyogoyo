@@ -40,6 +40,8 @@ import pandas as pd
 import streamlit as st
 
 from agent.location_agent import TOOL_LABELS as LOCATION_TOOL_LABELS
+from agent import llm
+from agent.agent_state import ConversationMemory
 from agent.location_agent import run_location_agent
 from services import bus_stops, convenience
 from services.geo import is_within_changwon_bbox
@@ -312,7 +314,8 @@ def _render_agent_compare_result(result: dict) -> None:
 
 def _render_agent_executed_entry(entry: dict) -> None:
     icon = "✅" if entry["executed"] else "❌"
-    st.caption(f"{icon} {LOCATION_TOOL_LABELS.get(entry['tool'], entry['tool'])}" + (f" — {entry['reason']}" if entry.get("reason") else ""))
+    extra = " (AI 추가 조회)" if entry.get("step", 1) > 1 else ""
+    st.caption(f"{icon} {LOCATION_TOOL_LABELS.get(entry['tool'], entry['tool'])}{extra}" + (f" — {entry['reason']}" if entry.get("reason") else ""))
     if not entry["executed"]:
         st.error(f"⚠️ 실행 중 오류: {entry['error']}")
         return
@@ -324,48 +327,46 @@ def _render_agent_executed_entry(entry: dict) -> None:
         _render_agent_compare_result(entry["result"])
 
 
-def _render_agent_loop_log(result: dict) -> None:
-    """반복형 Agent(claude -p + MCP) 실행 과정 - Claude가 호출한 순서 그대로,
-    Python이 차단한 호출까지 구분해서 보여준다."""
-    st.success("✅ Claude가 조회 도구를 직접 호출하며 분석했습니다(좌표·반경·호출 범위는 Python이 통제).")
-
-    st.markdown("**1. AI가 세운 분석 목표**")
-    for g in result["goals"] or ["(없음)"]:
-        st.caption(f"· {g}")
-
-    st.markdown("**2. AI의 도구 호출 순서**")
-    steps = result.get("agent_steps") or []
-    if steps:
-        for i, s in enumerate(steps, start=1):
-            label = LOCATION_TOOL_LABELS.get(s["tool"], s["tool"])
-            if s["blocked"]:
-                icon = "⛔"
-            else:
-                icon = "✅" if s["executed"] else "❌"
-            reason = f" — {s['reason']}" if s.get("reason") else ""
-            st.caption(f"{icon} {i}. {label}{reason}")
-            if s["blocked"] or s.get("error"):
-                st.caption(f"  ↳ {s['error']}")
+def _render_final_answer(final: dict | None) -> None:
+    """AI 최종 답변(숫자 검증 통과분) 또는 Python 요약을 구분해서 보여준다."""
+    if not final:
+        return
+    if final["source"] == "ai_verified":
+        st.success("🤖 **AI 답변** · 답변 속 숫자를 실제 조회 결과와 대조해 검증했습니다")
+        st.write(final["text"])
     else:
-        st.caption("AI가 도구를 호출하지 않았습니다(지원하지 않는 요청 등).")
+        reason = f" (AI 답변을 쓰지 않은 이유: {final['rejected_reason']})" if final.get("rejected_reason") else ""
+        st.info(f"📋 **조회 결과 요약** · Python이 실제 조회 결과로 작성했습니다{reason}")
+        st.text(final["text"])
 
-    st.markdown("**3. Python 검증 결과**")
-    for n in result["notes"] or ["모든 도구 호출이 사용자 요청 범위 안에 있어 그대로 실행했습니다."]:
-        st.caption(f"· {n}")
 
-    with st.expander("사용 가능한 도구 목록"):
-        for tool_name, label in LOCATION_TOOL_LABELS.items():
-            st.caption(f"· {label} ({tool_name})")
+_STEP_ACTION_LABELS = {"answer": "답변 작성", "call_tools": "추가 조회 요청", "error": "판단 실패"}
+
+
+def _render_agent_steps(result: dict) -> None:
+    st.markdown("**6. 결과 확인 후 AI 판단 (관찰 → 판단 → 행동)**")
+    steps = result.get("agent_steps") or []
+    if not steps:
+        st.caption("없음 — AI 계획으로 실행하지 않아 결과 재검토 단계를 건너뛰었습니다."
+                   if result["mode"] != "ai_planned" else "없음")
+        return
+    for step in steps:
+        label = _STEP_ACTION_LABELS.get(step["action"], step["action"])
+        line = f"· {step['round']}회차: {label}"
+        if step.get("reason"):
+            line += f" — {step['reason']}"
+        st.caption(line)
+        if step.get("executed_tools"):
+            tools = ", ".join(LOCATION_TOOL_LABELS.get(t, t) for t in step["executed_tools"])
+            st.caption(f"  → 실행: {tools}")
+        if step.get("note"):
+            st.caption(f"  → {step['note']}")
 
 
 def render_location_agent_execution_log(result: dict) -> None:
     """'🔍 AI 위치 분석 실행 과정 보기' 접기 영역 - run_location_agent()의 반환값을
     그대로 보여줄 뿐 여기서 새로 판단하거나 숫자를 만들지 않는다. "AI가 제안한
     계획"과 "Python이 실제 실행한 작업"을 항상 구분해서 표시한다."""
-    if result["mode"] == "ai_agent":
-        _render_agent_loop_log(result)
-        return
-
     corrections = result.get("corrections", [])
     has_corrections = bool(corrections)
 
@@ -393,7 +394,7 @@ def render_location_agent_execution_log(result: dict) -> None:
             reason = call.get("reason", "") if isinstance(call, dict) else ""
             st.caption(f"· {LOCATION_TOOL_LABELS.get(tool, tool)}" + (f" — {reason}" if reason else ""))
     else:
-        st.caption("AI 계획 호출 자체가 없었습니다(claude CLI·Ollama 연결 실패 등).")
+        st.caption("AI 계획 호출 자체가 없었습니다(AI 연결 실패, 사용량 제한 등).")
 
     st.markdown("**3. Python 검증 결과**")
     if has_corrections:
@@ -413,7 +414,8 @@ def render_location_agent_execution_log(result: dict) -> None:
         for i, entry in enumerate(result["executed_tool_calls"], start=1):
             icon = "✅" if entry["executed"] else "❌"
             err = f" — 오류: {entry['error']}" if entry.get("error") else ""
-            st.caption(f"{icon} {i}. {LOCATION_TOOL_LABELS.get(entry['tool'], entry['tool'])}{err}")
+            step = f" [{entry['step']}단계]" if entry.get("step") else ""
+            st.caption(f"{icon} {i}. {LOCATION_TOOL_LABELS.get(entry['tool'], entry['tool'])}{step}{err}")
     else:
         st.caption("실행된 도구가 없습니다(지원하지 않는 요청이었거나 실행할 내용이 없었습니다).")
 
@@ -422,6 +424,8 @@ def render_location_agent_execution_log(result: dict) -> None:
         st.caption("예 — AI 계획을 사용할 수 없어 기본 조회 절차(반경별 전체 비교)로 전환했습니다.")
     else:
         st.caption("아니오 — AI 계획을 사용했습니다.")
+
+    _render_agent_steps(result)
 
     with st.expander("사용 가능한 도구 목록"):
         for tool_name, label in LOCATION_TOOL_LABELS.items():
@@ -451,15 +455,7 @@ def render_location_agent_result(result: dict) -> None:
     st.write(f"검색 중심: 위도 {lat:.6f}, 경도 {lon:.6f} · 검색 반경: {radius_label} ({source_label})")
 
     st.markdown("**C. AI 분석 결과**")
-    if result.get("agent_answer"):
-        verification = result.get("answer_verification") or {}
-        if verification.get("status") == "unverified_numbers":
-            st.warning(
-                "⚠️ AI 답변의 일부 수치(" + ", ".join(verification["unverified"]) + ")를 실제 조회 "
-                "결과에서 확인하지 못했습니다 - 아래 표의 실제 조회 결과를 기준으로 보세요."
-            )
-        st.success(f"🤖 {result['agent_answer']}")
-        st.caption("아래 표는 AI가 답변에 사용한 실제 조회 결과입니다.")
+    _render_final_answer(result.get("final_answer"))
     if result["unsupported_requests"]:
         for item in result["unsupported_requests"]:
             st.info(f"ℹ️ 지원하지 않는 요청입니다: {item['request']} - {item['reason']}")
@@ -658,8 +654,8 @@ else:
     st.divider()
     st.subheader("5. 🤖 AI에게 주변 생활시설 분석 요청하기")
     st.caption(
-        "자연어로 요청하면 Claude(claude CLI + MCP)가 조회 도구를 직접 호출하며 결과를 보고 "
-        "답변합니다(실패 시 로컬 Ollama 계획으로 전환). 도구 호출 범위는 Python이 검증합니다. 검색 중심 좌표는 항상 "
+        f"자연어로 요청하면 AI({llm.backend_label()})가 어떤 조회 도구를 쓸지 계획하고, "
+        "Python이 그 계획을 검증한 뒤 실제 데이터를 조회합니다. 검색 중심 좌표는 항상 "
         "위에서 확정한 좌표만 사용되며, AI가 임의로 바꿀 수 없습니다."
     )
     agent_request_text = st.text_input(
@@ -667,7 +663,13 @@ else:
         key="location_agent_input",
         placeholder="예: 이 위치에서 500m 안에 버스정류장과 편의점이 얼마나 있어?",
         label_visibility="collapsed",
+        max_chars=300,
     )
+    # 같은 검색 위치에서의 이전 질문·답변을 기억해 "그럼 버스는?" 같은 후속 질문을 이해한다.
+    # 위치가 바뀌면 이전 위치의 대화는 맥락에 넣지 않는다(agent/agent_state.py).
+    memory = ConversationMemory(st.session_state)
+    history = memory.recent(search_center=st.session_state.search_center)
+
     # 버튼을 눌렀을 때만 run_location_agent()(Ollama 호출 포함)를 실행한다 - 지도
     # 이동·레이어 토글·반경 변경 등 다른 재실행에서는 절대 호출되지 않는다.
     if st.button("🤖 AI 분석 실행", type="primary"):
@@ -682,7 +684,19 @@ else:
                     search_center=st.session_state.search_center,
                     ui_radius_m=radius_choice,
                     ui_max_results=max_results,
+                    history=history,
                 )
+            memory.add_from_result(st.session_state.location_agent_result)
+
+    # 방금 실행한 대화까지 반영된 최신 기억 상태를 보여준다(지우기는 콜백으로 먼저 처리).
+    remembered = memory.recent(search_center=st.session_state.search_center)
+    if remembered:
+        mem_col, clear_col = st.columns([4, 1])
+        mem_col.caption(
+            f"💬 이 위치에서 나눈 대화 {len(remembered)}개를 기억하고 있어요. "
+            "'그럼 버스는?', '1km로 넓히면?'처럼 이어서 물어볼 수 있습니다."
+        )
+        clear_col.button("대화 지우기", on_click=memory.clear)
 
     if st.session_state.location_agent_result is not None:
         render_location_agent_result(st.session_state.location_agent_result)

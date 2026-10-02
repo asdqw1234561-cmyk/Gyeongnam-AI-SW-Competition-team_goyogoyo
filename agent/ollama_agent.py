@@ -4,6 +4,7 @@ import re
 
 import ollama
 
+from agent import llm  # LLM_BACKEND(.env)에 따라 Ollama 또는 Claude Code CLI 호출
 from agent.llm_json import extract_json_object
 from analysis.scoring import CONDITION_TO_INDICATOR_CODE
 
@@ -200,7 +201,7 @@ def _parse_questions(raw_text: str) -> list[str]:
 def generate_followup_questions(user_input: dict) -> list[str]:
     """사용자 입력 정보를 바탕으로 Qwen3.5에게 추가 질문(최대 2개)을 생성받는다."""
     try:
-        response = ollama.chat(
+        response = llm.chat(
             model=OLLAMA_MODEL,
             messages=[
                 {"role": "system", "content": SYSTEM_PROMPT},
@@ -212,7 +213,7 @@ def generate_followup_questions(user_input: dict) -> list[str]:
             think=False,
         )
     except Exception as exc:  # Ollama 서버 미실행 등
-        raise RuntimeError(f"Ollama 모델 호출에 실패했습니다: {exc}") from exc
+        raise RuntimeError(f"{llm.backend_label()} 호출에 실패했습니다: {exc}") from exc
 
     raw_text = response["message"]["content"]
     return _parse_questions(raw_text)
@@ -450,7 +451,7 @@ def interpret_weight_feedback(user_text: str) -> dict:
         }
 
     try:
-        response = ollama.chat(
+        response = llm.chat(
             model=OLLAMA_MODEL,
             messages=[
                 {"role": "system", "content": WEIGHT_FEEDBACK_SYSTEM_PROMPT},
@@ -464,7 +465,7 @@ def interpret_weight_feedback(user_text: str) -> dict:
             "status": "ollama_error",
             "type": None,
             "weights": None,
-            "message": f"Ollama 호출에 실패했습니다: {exc}",
+            "message": f"{llm.backend_label()} 호출에 실패했습니다: {exc}",
         }
 
     raw_text = response["message"]["content"]

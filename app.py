@@ -2,8 +2,10 @@
 import pandas as pd
 import streamlit as st
 
+from agent import llm
 from agent.ollama_agent import interpret_weight_feedback, plan_followup_questions
 from agent.planner import TOOL_LABELS, run_agent_plan
+from agent.planner_loop import REVIEW_TOOL_LABELS
 from analysis import scoring
 from services.region_data import get_all_changwon_regions, is_supported_region
 
@@ -304,6 +306,57 @@ def render_agent_execution_log() -> None:
         st.markdown("**Python의 보완/안내**")
         for n in log["notes"]:
             st.caption(f"· {n}")
+
+    _render_review_steps(log)
+
+
+_REVIEW_ACTION_LABELS = {"answer": "설명 작성", "call_tools": "추가 도구 요청", "error": "판단 실패"}
+
+
+def _render_review_steps(log: dict) -> None:
+    """점수 계산 후 AI가 결과를 보고 판단한 과정(관찰 -> 판단 -> 행동). 표시 전용."""
+    steps = log.get("agent_steps") or []
+    st.markdown("**결과 확인 후 AI 판단 (관찰 → 판단 → 행동)**")
+    if not steps:
+        st.caption("없음 — AI 계획으로 계산하지 않아 결과 검토 단계를 건너뛰었습니다."
+                   if log["mode"] != "ai_planned" else "없음")
+        return
+    for step in steps:
+        line = f"· {step['round']}회차: {_REVIEW_ACTION_LABELS.get(step['action'], step['action'])}"
+        if step.get("reason"):
+            line += f" — {step['reason']}"
+        st.caption(line)
+        if step.get("executed_tools"):
+            st.caption("  → 실행: " + ", ".join(REVIEW_TOOL_LABELS.get(t, t) for t in step["executed_tools"]))
+        if step.get("note"):
+            st.caption(f"  → {step['note']}")
+
+
+def render_ai_recommendation_explanation() -> None:
+    """AI가 점수 계산 결과를 보고 작성한 설명(숫자 검증 통과분)과 가중치 가정 시뮬레이션 결과.
+    실제 추천 순위는 위의 결과(승인된 가중치) 그대로이며, 여기 내용은 참고 정보다."""
+    log = st.session_state.get("agent_execution_log")
+    if not log or not log.get("final_answer"):
+        return
+    final = log["final_answer"]
+    st.markdown("### 🤖 AI의 추천 결과 설명")
+    if final["source"] == "ai_verified":
+        st.success("AI가 계산 결과를 직접 확인하고 작성한 설명입니다 · 설명 속 숫자를 실제 결과와 대조해 검증했습니다")
+        st.write(final["text"])
+    else:
+        reason = f" (AI 설명을 쓰지 않은 이유: {final['rejected_reason']})" if final.get("rejected_reason") else ""
+        st.info(f"📋 계산 결과 요약 · Python이 실제 계산 결과로 작성했습니다{reason}")
+        st.text(final["text"])
+
+    for sim in log.get("what_if_results") or []:
+        weights = ", ".join(f"{FEEDBACK_INDICATOR_LABELS.get(c, c)} {v}%" for c, v in sim["weights_percent"].items())
+        with st.expander(f"🔍 AI가 확인한 가정: 가중치를 {weights}로 바꾼다면 (실제 추천에는 미적용)"):
+            st.dataframe(
+                pd.DataFrame([{"순위": r["rank"], "구": r["region_name"], "종합점수(가정)": r["total_score"]}
+                              for r in sim["ranking"]]),
+                hide_index=True, width="stretch",
+            )
+            st.caption("이 가정을 실제로 적용하려면 아래 '🔄 조건 조정 후 다시 비교하기'에서 가중치를 바꿔 승인하세요.")
 
 
 def render_recommendation_section() -> None:
@@ -633,16 +686,18 @@ def render_feedback_section() -> None:
 
     st.markdown("**② 자연어로 요청 (AI 해석)**")
     st.caption(
-        "예: '의료 80%, 교통 20%로 비교해줘'. 버튼을 누를 때만 로컬 Ollama(qwen3.5:4b)를 "
+        f"예: '의료 80%, 교통 20%로 비교해줘'. 버튼을 누를 때만 AI({llm.backend_label()})를 "
         "호출하며, AI는 요청을 가중치 '제안'으로 해석만 할 뿐 점수는 계산하지 않습니다 - "
         "실제 재계산은 아래에서 승인해야 적용됩니다."
     )
-    nl_text = st.text_input("자연어 요청", key="nl_feedback_input", label_visibility="collapsed")
+    nl_text = st.text_input(
+        "자연어 요청", key="nl_feedback_input", label_visibility="collapsed", max_chars=300
+    )
     if st.button("AI로 해석하기"):
         if not nl_text.strip():
             st.warning("문장을 입력해 주세요.")
         else:
-            with st.spinner("Ollama가 요청을 해석하고 있습니다..."):
+            with st.spinner("AI가 요청을 해석하고 있습니다..."):
                 st.session_state.nl_feedback_proposal = interpret_weight_feedback(nl_text)
             st.session_state.nl_feedback_proposal_text = nl_text
 
@@ -944,6 +999,7 @@ if st.session_state.stage == "input":
             "추가 요청사항 (선택, 예: '교통 70%, 의료 30%'처럼 비율을 적으면 AI가 해석해 "
             "최초 추천에 반영할 수 있습니다)",
             value=prev.get("추가 요청사항", ""),
+            max_chars=500,
         )
 
         submitted = st.form_submit_button("다음 단계로")
@@ -1036,7 +1092,7 @@ elif st.session_state.stage == "followup":
         for i, question in enumerate(st.session_state.followup_questions, start=1):
             if weight_question and question == weight_question["text"]:
                 st.caption("⚖️ 이 질문의 답변은 다음 화면에서 승인하시면 실제 추천 계산의 가중치로 사용됩니다.")
-            answers[question] = st.text_input(f"{i}. {question}", key=f"followup_{i}")
+            answers[question] = st.text_input(f"{i}. {question}", key=f"followup_{i}", max_chars=300)
 
         followup_submitted = st.form_submit_button("답변 제출")
 
@@ -1044,7 +1100,7 @@ elif st.session_state.stage == "followup":
         st.session_state.followup_answers = answers
         if weight_question:
             weight_answer = answers.get(weight_question["text"], "")
-            with st.spinner("Ollama가 답변을 해석하고 있습니다..."):
+            with st.spinner("AI가 답변을 해석하고 있습니다..."):
                 st.session_state.weight_interpretation = interpret_weight_feedback(weight_answer)
             st.session_state.weight_interpretation_source = "followup_answer"
             st.session_state.stage = "weight_confirm"
@@ -1097,7 +1153,7 @@ elif st.session_state.stage == "weight_confirm":
         st.error(f"⚠️ {interpretation['message']}")
         if st.button("동일 가중치로 진행하기", type="primary"):
             _apply_weight_confirmation(
-                None, "equal_fallback", f"Ollama 연결에 실패해 답변을 해석하지 못했습니다: {interpretation['message']}"
+                None, "equal_fallback", f"AI 연결에 실패해 답변을 해석하지 못했습니다: {interpretation['message']}"
             )
             st.rerun()
 
@@ -1215,6 +1271,7 @@ elif st.session_state.stage == "done":
 
     st.divider()
     render_recommendation_section()
+    render_ai_recommendation_explanation()
 
     with st.expander("🤖 AI 분석 실행 과정 보기"):
         render_agent_execution_log()

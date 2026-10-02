@@ -34,12 +34,14 @@
 
 | 모듈 | 역할 |
 |---|---|
-| `agent/ollama_agent.py` | 추가질문 생성, 자연어 가중치 해석(로컬 Ollama `qwen3.5:4b`, 적용은 사용자 승인 후) |
-| `agent/planner.py` | 5개 구 분석 도구 계획(Ollama) → Python 검증 후 실행, 가중치는 승인값으로 강제 |
-| `agent/location_agent.py` + `agent/location_mcp_server.py` | 위치 주변 시설 Agent. 기본은 Claude Code CLI(`claude -p`) + MCP 도구 반복 호출, 실패 시 Ollama → 기본 조회로 폴백. 좌표·반경은 Python이 고정하고, 답변 속 숫자를 실제 조회 결과와 대조 |
+| `agent/llm.py`, `agent/claude_cli.py` | 모든 AI 호출의 단일 창구. `LLM_BACKEND`로 로컬 Ollama(`qwen3.5:4b`, 기본) / Claude Code CLI 선택, 사용량 제한 |
+| `agent/ollama_agent.py` | 추가질문 생성, 자연어 가중치 해석(적용은 사용자 승인 후) |
+| `agent/planner.py` + `agent/planner_loop.py` | 5개 구 분석 도구 계획 → Python 검증 후 실행(가중치는 승인값으로 강제) → AI가 결과 설명·참고 지표 조회·가정 계산 판단(실제 추천 불변) |
+| `agent/location_agent.py` + `agent/agent_loop.py` | 위치 주변 시설 Agent. 계획 → Python 검증·실행 → 결과를 본 AI가 추가 조회/답변 판단(관찰 → 판단 → 행동). 좌표·반경은 Python이 고정하고, 답변 숫자를 검사해 통과 못 하면 Python 요약으로 대체 |
+| `agent/agent_state.py` | 같은 위치에서의 대화 기억("그럼 버스는?" 같은 후속 질문) |
 | `agent/llm_json.py` | LLM 응답 JSON 추출·정리 공용 헬퍼 |
 
-위치 Agent 백엔드는 `LOCATION_AGENT_BACKEND` 환경변수(`claude_agent` 기본 / `claude_cli` / `ollama`)로 바꿀 수 있다.
+AI 백엔드는 `.env`의 `LLM_BACKEND`(`ollama` 기본 / `claude_cli`)로 바꾼다. 설정·사용량 제한은 [`.env.example`](.env.example), [`docs/claude_cli_agent.md`](docs/claude_cli_agent.md), 반복 루프 설계는 [`docs/agent_loop.md`](docs/agent_loop.md) 참고.
 
 ## 실행
 
@@ -49,7 +51,7 @@ ollama pull qwen3.5:4b           # Ollama 서버 실행 필요
 streamlit run app.py             # 사이드바에서 user / government 화면으로 이동
 ```
 
-- 위치 Agent 기본 모드는 실행 PC에 Claude Code CLI(`claude`) 설치·로그인이 필요하다. 없으면 자동으로 Ollama로 폴백한다.
+- `LLM_BACKEND=claude_cli`를 쓰려면 실행 PC에 Claude Code CLI(`claude`) 설치·로그인이 필요하다.
 - 공공데이터 키(`.env`, `.env.example` 참고)는 `scripts/`의 수집 스크립트에만 필요하다. 앱 실행에는 필요 없다.
 
 ## 테스트
