@@ -8,3 +8,6 @@ database/app.db
 # SGIS 전국 단위 원본 경계 데이터(수백 MB) - 커밋 금지, 창원시 5개 구만 추출한
 # 소형 GeoJSON만 data/raw/changwon_district_boundaries.geojson 로 별도 커밋
 data/raw/sgis_boundarie/
+
+# 개발 Agent: references/ 추출 결과(텍스트·페이지 이미지)는 ref_scan.py extract --all 로 재생성 가능
+.agent_state/extracted/

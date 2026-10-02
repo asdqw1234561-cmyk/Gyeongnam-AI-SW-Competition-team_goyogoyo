@@ -75,6 +75,11 @@ python -m unittest discover -s tests
 | `.claude/settings.json` | 팀 공용 권한(테스트·조회 자동 허용, force push·`.env`·원본 데이터 직접 수정 차단) |
 | `.claude/hooks/run_tests_on_stop.py` | 작업 종료 시 바뀐 `.py`가 있으면 전체 테스트 자동 실행, 실패하면 종료를 막음 |
 | `.claude/skills/dev/SKILL.md` | `/dev <요청>` — 확인 → 구현 → 테스트 → diff 검토 → 보고 |
-| `docs/backlog.md` | `/loop`가 위에서부터 처리하는 작업 목록 |
+| `.claude/skills/steward/SKILL.md` | `/steward` — 대회 자료·상태·코드를 읽고 가장 중요한 작업 하나를 찾아 진행, 상태 문서 자동 갱신 (`/loop /steward`로 반복) |
+| `.claude/hooks/session_status.py` | 세션 시작 시 브랜치·새 참고자료·상태 문서 이후 커밋·제출 마감 D-day 안내 |
+| `.claude/scripts/ref_scan.py` | `references/` 자료 변화 감지·텍스트 추출(PDF·HWP·DOCX 등)·색인 (`requirements-dev.txt`) |
+| `docs/agent/` | Agent 기억 저장소 — 프로젝트 헌법, 대회 요구사항(출처·쪽), 평가 증거 매트릭스, 현재 상태, 결정 기록, 자료 색인 |
+| `references/` | 공식 대회자료·팀 자료 원본(읽기 전용) |
+| `docs/backlog.md` | Agent가 관리하는 작업 큐·처리 이력 |
 
 개인 설정은 `.claude/settings.local.json`, `CLAUDE.local.md`에 두고 커밋하지 않는다.

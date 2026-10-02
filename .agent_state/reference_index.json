@@ -1,0 +1,97 @@
+{
+  "version": 1,
+  "files": {
+    "references/competition/공고문_2026년_제4회_경남_AI.SW_경진대회_참가자팀_모집_20260908 (1).hwp": {
+      "sha256": "1f2fc639a69f7f9d7cc15e9f0d90ede3089da2cf8ce97aafb149282641ceba67",
+      "size": 90112,
+      "kind": "hwp",
+      "extract_method": "olefile(hwp5)",
+      "pages": null,
+      "image_pages": [],
+      "extracted_at": "2026-10-02T21:13:15",
+      "extracted_text": ".agent_state/extracted/공고문_2026년_제4회_경남_AI.SW_경진대회_참가자팀_모집_20260908_1__3f3d9e0b/text.txt",
+      "chars": 7836,
+      "status": "analyzed",
+      "categories": [
+        "대회필수요건",
+        "주제제약",
+        "제출요구사항",
+        "평가기준"
+      ],
+      "summary": "공식 모집 공고(우선순위 1): 일정, 5개 지정주제(분야 외 불인정), 참가자격, 시상, 운영 기본원칙(핵심기능 3~5개·E2E 1개), Level 2 최소/Level 3 권장, 필수 제출물 5종, 출처·신규개발분 공개",
+      "analyzed_at": "2026-10-02T21:18:04",
+      "used_in": [
+        "docs/agent/COMPETITION_REQUIREMENTS.md"
+      ]
+    },
+    "references/competition/교육자료_제4회_경남AI_SW경진대회_AI_Agent_8일완성.pdf": {
+      "sha256": "199ebd332900f8702e0279e7e83a9bdbe1b444323436dc2bc35c49f58ac61b04",
+      "size": 527853,
+      "kind": "pdf",
+      "extract_method": "pymupdf",
+      "pages": 32,
+      "image_pages": [],
+      "extracted_at": "2026-10-02T21:13:16",
+      "extracted_text": ".agent_state/extracted/교육자료_제4회_경남AI_SW경진대회_AI_Agent_8일완성_565b194e/text.txt",
+      "chars": 11263,
+      "status": "analyzed",
+      "categories": [
+        "대회필수요건",
+        "평가기준",
+        "기술요구사항",
+        "발표시연요구사항",
+        "제출요구사항"
+      ],
+      "summary": "공식 AI Agent 교육자료(우선순위 3): 6요소 정의·인정 기준, 8일 로드맵, D5 테스트 5관점, D6 3분 영상 구성, 제출 마감 10-06 12시, 예상 Q&A(ChatGPT 차이·실패 대응), 최종 체크리스트",
+      "analyzed_at": "2026-10-02T21:18:04",
+      "used_in": [
+        "docs/agent/COMPETITION_REQUIREMENTS.md",
+        "docs/agent/EVAL_MATRIX.md"
+      ]
+    },
+    "references/competition/발표자료_경진대회 사업설명회V0.1_최창석부회장_20260929.pdf": {
+      "sha256": "573f86cfb4b85652cdbcb5e3cc863e5164863aefb9b3f371dc1c008d0322448f",
+      "size": 4692852,
+      "kind": "pdf",
+      "extract_method": "pymupdf",
+      "pages": 18,
+      "image_pages": [
+        ".agent_state/extracted/발표자료_경진대회_사업설명회V0.1_최창석부회장_20260929_a76e187c/p01.png",
+        ".agent_state/extracted/발표자료_경진대회_사업설명회V0.1_최창석부회장_20260929_a76e187c/p02.png",
+        ".agent_state/extracted/발표자료_경진대회_사업설명회V0.1_최창석부회장_20260929_a76e187c/p03.png",
+        ".agent_state/extracted/발표자료_경진대회_사업설명회V0.1_최창석부회장_20260929_a76e187c/p04.png",
+        ".agent_state/extracted/발표자료_경진대회_사업설명회V0.1_최창석부회장_20260929_a76e187c/p05.png",
+        ".agent_state/extracted/발표자료_경진대회_사업설명회V0.1_최창석부회장_20260929_a76e187c/p06.png",
+        ".agent_state/extracted/발표자료_경진대회_사업설명회V0.1_최창석부회장_20260929_a76e187c/p07.png",
+        ".agent_state/extracted/발표자료_경진대회_사업설명회V0.1_최창석부회장_20260929_a76e187c/p08.png",
+        ".agent_state/extracted/발표자료_경진대회_사업설명회V0.1_최창석부회장_20260929_a76e187c/p09.png",
+        ".agent_state/extracted/발표자료_경진대회_사업설명회V0.1_최창석부회장_20260929_a76e187c/p10.png",
+        ".agent_state/extracted/발표자료_경진대회_사업설명회V0.1_최창석부회장_20260929_a76e187c/p11.png",
+        ".agent_state/extracted/발표자료_경진대회_사업설명회V0.1_최창석부회장_20260929_a76e187c/p12.png",
+        ".agent_state/extracted/발표자료_경진대회_사업설명회V0.1_최창석부회장_20260929_a76e187c/p13.png",
+        ".agent_state/extracted/발표자료_경진대회_사업설명회V0.1_최창석부회장_20260929_a76e187c/p14.png",
+        ".agent_state/extracted/발표자료_경진대회_사업설명회V0.1_최창석부회장_20260929_a76e187c/p15.png",
+        ".agent_state/extracted/발표자료_경진대회_사업설명회V0.1_최창석부회장_20260929_a76e187c/p16.png",
+        ".agent_state/extracted/발표자료_경진대회_사업설명회V0.1_최창석부회장_20260929_a76e187c/p17.png"
+      ],
+      "extracted_at": "2026-10-02T21:13:17",
+      "extracted_text": ".agent_state/extracted/발표자료_경진대회_사업설명회V0.1_최창석부회장_20260929_a76e187c/text.txt",
+      "chars": 2325,
+      "status": "analyzed",
+      "categories": [
+        "대회필수요건",
+        "평가기준",
+        "제출요구사항",
+        "발표시연요구사항",
+        "주제제약",
+        "데이터"
+      ],
+      "summary": "공식 사업설명회(우선순위 2, 이미지 슬라이드): Agent 공식 정의·6요소 중 4개, MVP 8요건(Test Case 5건), 제출물 5종, 100점 세부 배점, 본선 9분 구성, 주의사항(조작 금지·마감 후 변경 금지), 가점 +1, 데이터 제공처",
+      "analyzed_at": "2026-10-02T21:18:04",
+      "used_in": [
+        "docs/agent/COMPETITION_REQUIREMENTS.md",
+        "docs/agent/EVAL_MATRIX.md"
+      ]
+    }
+  }
+}

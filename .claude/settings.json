@@ -1,5 +1,17 @@
 {
   "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python \"$CLAUDE_PROJECT_DIR/.claude/hooks/session_status.py\"",
+            "timeout": 30,
+            "statusMessage": "프로젝트 상태·참고자료 변화 확인 중..."
+          }
+        ]
+      }
+    ],
     "Stop": [
       {
         "hooks": [
@@ -42,7 +54,13 @@
       "PowerShell(git rev-list*)",
       "PowerShell(git fetch*)",
       "PowerShell(ollama list*)",
-      "PowerShell(claude --version)"
+      "PowerShell(claude --version)",
+      "Bash(python .claude/scripts/ref_scan.py status*)",
+      "Bash(python .claude/scripts/ref_scan.py extract*)",
+      "Bash(python .claude/scripts/ref_scan.py render*)",
+      "PowerShell(python .claude/scripts/ref_scan.py status*)",
+      "PowerShell(python .claude/scripts/ref_scan.py extract*)",
+      "PowerShell(python .claude/scripts/ref_scan.py render*)"
     ],
     "ask": [
       "Bash(git reset --hard*)",
@@ -85,7 +103,9 @@
       "Edit(./.env)",
       "Edit(./data/raw/**)",
       "Edit(./data/regions.csv)",
-      "Edit(./data/convenience/**)"
+      "Edit(./data/convenience/**)",
+      "Edit(./references/**)",
+      "Write(./references/**)"
     ]
   }
 }

@@ -72,6 +72,7 @@
 ## 6. 작업 방식
 
 `/dev <요청>`(`.claude/skills/dev/SKILL.md`)으로 부르면 아래 절차를 그대로 수행한다.
+무엇을 할지 스스로 찾아 진행하는 자율 루프는 `/steward`다(10절).
 
 요청 유형에 따라 다르게 행동한다.
 - "어떻게 만드는 게 좋을까?" 같은 질문 → 설계안만 제안하고 코드는 수정하지 않는다.
@@ -111,3 +112,26 @@ python -m unittest tests.test_location_agent -v
 - 공공데이터 키는 `.env`(`.env.example` 참고): `HIRA_SERVICE_KEY`, `SBIZ_SERVICE_KEY` — 수집 스크립트에만 필요.
 - Ollama: `ollama pull qwen3.5:4b` 후 서버 실행.
 - 위치 Agent 기본 모드는 실행 PC에 Claude Code CLI(`claude`) 설치·로그인이 필요하다. 없으면 자동으로 Ollama로 폴백한다.
+
+## 10. 프로젝트 기억과 자율 개발 루프 (`/steward`)
+
+주제·대회 기준을 잃지 않도록 Agent가 스스로 읽고 갱신하는 기억 저장소를 둔다. 사람이 손으로 관리하지 않아도 된다.
+
+| 파일 | 역할 |
+|---|---|
+| `docs/agent/PROJECT_CHARTER.md` | 프로젝트 헌법 — 문제·사용자·MVP·핵심 Workflow·하지 않을 것·새 작업 채택 6문항 (사용자 승인 시에만 변경) |
+| `docs/agent/COMPETITION_REQUIREMENTS.md` | 공식 대회 요구사항(R-*), 항목마다 원본 파일·쪽 |
+| `docs/agent/EVAL_MATRIX.md` | 평가항목별 증거와 공백 순위 |
+| `docs/agent/CURRENT_STATE.md` | 실제 코드·데이터·테스트 상태 |
+| `docs/agent/DECISIONS.md` | 확정 결정(DEC-*)·열린 결정(OPEN-*) — 확정된 것은 다시 논의하지 않는다 |
+| `docs/agent/REFERENCE_INDEX.md` | 참고자료 색인(자동 생성) |
+| `.agent_state/state.json`, `.agent_state/reference_index.json` | 기계용 상태·자료 해시 |
+| `references/` | 공식 대회자료·팀 자료 원본(읽기 전용) |
+
+- 새 기능을 만들기 전에 `PROJECT_CHARTER.md` §7의 6문항으로 주제 안에 있는지 판단한다. 대부분 "아니오"면 구현하지 말고 보고한다.
+- 서비스가 부동산 추천·단순 지도 검색·단순 챗봇·지역 순위·관광 추천·범용 비서로 변질되는 변경은 하지 않는다.
+- 자료 충돌 시 우선순위: 공식 공고·운영규정 > 사업설명회 > 교육자료 > 사용자 확정 방향 > 코드·데이터 > 기존 기획 문서. 단 구현 상태는 코드·데이터가 우선.
+- 발표·제출 문서에 구현하지 않은 기능을 구현된 것처럼 쓰지 않는다. 사실(FACT)·구현(IMPLEMENTED)·계획(PLANNED)·추론(INFERENCE)·미확인(UNKNOWN)을 구분한다.
+- 세션 시작 hook(`.claude/hooks/session_status.py`)이 브랜치·새 참고자료·상태 문서 이후 커밋·마감 D-day를 알려준다.
+- 자료 추출: `python .claude/scripts/ref_scan.py status | extract | mark | render` (PDF·HWP 추출에는 `pip install -r requirements-dev.txt`).
+- `/steward`는 `jhy-next`에서만 코드를 수정한다. 다른 브랜치에서는 점검·보고만 한다.
