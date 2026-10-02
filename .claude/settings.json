@@ -64,7 +64,6 @@
       "Bash(git push*-f)",
       "Bash(git push*+*)",
       "Bash(git push*--delete*)",
-      "Bash(git push*hwang*)",
       "Bash(git push*main*)",
       "Bash(git add -f*)",
       "Bash(git add --force*)",
@@ -76,7 +75,6 @@
       "PowerShell(git push*-f)",
       "PowerShell(git push*+*)",
       "PowerShell(git push*--delete*)",
-      "PowerShell(git push*hwang*)",
       "PowerShell(git push*main*)",
       "PowerShell(git add -f*)",
       "PowerShell(git add --force*)",
@@ -86,7 +84,6 @@
       "Read(./.env)",
       "Edit(./.env)",
       "Edit(./data/raw/**)",
-      "Edit(./data/region_indicators.csv)",
       "Edit(./data/regions.csv)",
       "Edit(./data/convenience/**)"
     ]
