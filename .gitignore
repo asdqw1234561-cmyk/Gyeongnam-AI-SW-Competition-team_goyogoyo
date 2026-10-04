@@ -13,6 +13,9 @@ database/app.db
 # SGIS 전국 단위 원본 경계 데이터(수백 MB) - 커밋 금지, 창원시 5개 구만 추출한
 # 소형 GeoJSON만 data/raw/changwon_district_boundaries.geojson 로 별도 커밋
 data/raw/sgis_boundarie/
+# 국토교통부 전국 버스정류장 위치정보 원본(20MB) - 경남 판정 결과만 data/gyeongnam/ 에 커밋
+# 내려받기: https://www.data.go.kr/data/15067528/fileData.do
+data/raw/전국_버스정류장_위치정보_*.csv
 
 # 개발 Agent: references/ 추출 결과(텍스트·페이지 이미지)는 ref_scan.py extract --all 로 재생성 가능
 .agent_state/extracted/
