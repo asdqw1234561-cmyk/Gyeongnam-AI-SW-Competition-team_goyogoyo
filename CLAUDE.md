@@ -19,7 +19,7 @@
 | 영역 | 파일 | 내용 |
 |---|---|---|
 | 이주자용 지역 비교 | `app.py` | 비교 범위 선택(창원시 5개 구 / 경남 시 7곳 / 경남 군 10곳) → AI 추가질문/가중치 확인(승인) → Agent Planner → 인구 1만 명당 min-max 상대 비교 → 자연어·슬라이더 피드백 |
-| 위치 기반 탐색 | `pages/user.py` | 확정 좌표 주변 300m/500m/1km 버스정류장·편의점, Folium 지도, 위치 AI Agent |
+| 위치 기반 탐색 | `pages/user.py` | 확정 좌표(경남) 주변 300m/500m/1km 버스정류장·편의점, Folium 지도, 위치 AI Agent |
 | 정부용 분석 | `pages/government.py` | 비교 범위별 시설 수 비교, 차이, 가상 시설 증감 시뮬레이션 |
 | 점수 계산 | `analysis/scoring.py` | 인구 1만 명당 변환 → min-max 정규화 + 가중합 (유일한 점수 계산 경로) |
 | 정착 후보군·Critic | `analysis/candidates.py` | 점수 결과로 최적·균형·대안 후보와 Critic 점검을 결정적으로 계산(새 점수식 없음, 가성비는 주거비 미확보로 산출 불가) |
@@ -39,7 +39,7 @@
 - `agent/agent_loop.py`: 위치 Agent 계획형 경로의 결과 검토 루프(관찰 → 판단 → 행동, 최대 3회). AI 답변 숫자를 검증해 실패하면 Python 요약으로 대체한다. MCP 반복형 답변도 같은 `verify_answer` 기준을 쓰며, 두 경로 모두 결과의 `final_answer`(source: ai_verified / python_summary)로 화면·대화 기억에 전달된다. `agent/agent_state.py`의 `ConversationMemory`가 같은 위치의 최근 대화를 후속 질문 맥락으로 넘긴다.
 - 모든 Ollama 호출은 `think=False`를 유지한다(qwen3.5의 thinking이 토큰을 소모해 응답이 비는 문제).
 
-`app.py`의 지역별 점수와 `pages/user.py`의 위치 주변 시설 수는 **서로 다른 분석**이다. 둘을 섞어 새 점수를 만들지 않는다. 위치 기반 탐색은 아직 **창원시만** 지원한다(정류장·편의점 좌표 원본이 창원 기준).
+`app.py`의 지역별 점수와 `pages/user.py`의 위치 주변 시설 수는 **서로 다른 분석**이다. 둘을 섞어 새 점수를 만들지 않는다. 위치 기반 탐색은 경남 22개 지역을 지원한다 - 창원시는 창원시 정류소 원본(공식 2,926건), 그 외 17개 시·군은 `data/gyeongnam/` 정류장·편의점 목록을 쓰며 두 출처는 지역이 겹치지 않는다.
 
 ## 3. 데이터 (기준값은 CSV가 원본, 아래는 검증용 참고치)
 

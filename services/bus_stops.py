@@ -57,7 +57,7 @@ from typing import Optional
 
 import pandas as pd
 
-from services.geo import CHANGWON_BBOX as _CHANGWON_BBOX
+from services.geo import GYEONGNAM_BBOX as _GYEONGNAM_BBOX
 from services.geo import DISTRICTS, EARTH_RADIUS_M  # noqa: F401  (기존 공개 이름 유지)
 from services.geo import haversine_m as _haversine_m
 from services.geo import to_float as _to_float
@@ -79,6 +79,13 @@ BOUNDARY_GEOJSON = _m.BOUNDARY_GEOJSON
 
 BUS_STOP_SOURCE_LABEL = _ingest.BUS_SOURCE_LABEL
 BUS_STOP_REFERENCE_DATE = _ingest.BUS_REFERENCE_DATE
+
+# 창원시 외 경남 17개 시·군: scripts/ingest_gyeongnam_bus_stops.py가 국토교통부 전국 버스정류장 위치정보에서
+# 자기 시·군 등록분 중 SGIS 경계 안으로 판정해 둔 목록. 창원시 5개 구는 위의 창원시 정류소 원본(공식 2,926건)을
+# 그대로 쓰므로 두 출처는 지역이 겹치지 않는다(경계 근처 이중 집계 없음).
+GYEONGNAM_STOPS_CSV = os.path.join(_PROJECT_ROOT, "data", "gyeongnam", "gyeongnam_bus_stops.csv")
+GYEONGNAM_STOP_SOURCE_LABEL = "국토교통부 전국 버스정류장 위치정보 (data.go.kr 15067528) 및 통계청 SGIS 시군구 경계"
+GYEONGNAM_STOP_REFERENCE_DATE = "2025-10-31 (버스정류장), 2025-06-30 (SGIS 행정경계)"
 
 _QUALITY_EXCEPTION_IDS = {ex["정류소아이디"] for ex in _ingest.KNOWN_DATA_QUALITY_EXCEPTIONS}
 _BOUNDARY_CORRECTION_IDS = set(_ingest.SPATIAL_OVERRIDES)
@@ -164,6 +171,30 @@ def _build_valid_stops() -> pd.DataFrame:
     if not df.empty and df["stop_id"].duplicated().any():
         # 원본이 전부 고유 정류소아이디라는 전제가 깨졌다는 뜻 - 조용히 넘어가지 않는다.
         raise RuntimeError("정류소아이디가 중복된 레코드가 있습니다 - 원본 CSV를 확인하세요.")
+    return df
+
+
+_search_stops_cache: dict = {"key": None, "df": None}
+
+
+def _load_search_stops() -> pd.DataFrame:
+    """반경 검색 대상: 창원시 공식 정류장(_load_valid_stops) + 창원시 외 경남 17개 시·군 정류장.
+    공식 집계 검증(verify_official_counts)은 창원시 원본만 쓰며 이 함수와 무관하다."""
+    changwon = _load_valid_stops()
+    if not os.path.exists(GYEONGNAM_STOPS_CSV):
+        return changwon
+    key = (os.path.getmtime(GYEONGNAM_STOPS_CSV), id(changwon))
+    if _search_stops_cache["key"] == key:
+        return _search_stops_cache["df"]
+    gn = pd.read_csv(GYEONGNAM_STOPS_CSV, dtype=str, encoding="utf-8-sig").fillna("")
+    gn = gn[~gn["region_id"].str.startswith("CW-")]
+    others = pd.DataFrame({
+        "stop_id": gn["정류장번호"], "stop_name": gn["정류장명"], "region_id": gn["region_id"],
+        "district": gn["region_name"], "lat": gn["위도"].astype(float), "lon": gn["경도"].astype(float),
+        "quality_flag": None,
+    })
+    df = pd.concat([changwon, others], ignore_index=True) if not changwon.empty else others
+    _search_stops_cache.update(key=key, df=df)
     return df
 
 
@@ -278,15 +309,15 @@ def find_nearby_bus_stops(lat, lon, radius_m=500, max_results=10) -> dict:
     query = {"lat": lat_f, "lon": lon_f, "radius_m": radius, "max_results": limit}
     warnings: list[str] = []
     if not (
-        _CHANGWON_BBOX["lat"][0] <= lat_f <= _CHANGWON_BBOX["lat"][1]
-        and _CHANGWON_BBOX["lon"][0] <= lon_f <= _CHANGWON_BBOX["lon"][1]
+        _GYEONGNAM_BBOX["lat"][0] <= lat_f <= _GYEONGNAM_BBOX["lat"][1]
+        and _GYEONGNAM_BBOX["lon"][0] <= lon_f <= _GYEONGNAM_BBOX["lon"][1]
     ):
         warnings.append(
-            "입력 위치가 창원시 범위를 벗어난 것으로 보입니다. "
-            "이 조회는 창원시 5개 구 경계 내부로 판정된 정류장만 포함합니다."
+            "입력 위치가 경상남도 범위를 벗어난 것으로 보입니다. "
+            "이 조회는 경남 22개 지역 경계 내부로 판정된 정류장만 포함합니다."
         )
 
-    stops_df = _load_valid_stops()
+    stops_df = _load_search_stops()
     if stops_df.empty:
         return _nearby_result(
             "no_data",
@@ -327,6 +358,15 @@ def find_nearby_bus_stops(lat, lon, radius_m=500, max_results=10) -> dict:
     if total > len(shown):
         message += f" 가까운 {len(shown)}개만 표시합니다."
 
+    outside_changwon = bool(len(inside)) and not inside["region_id"].str.startswith("CW-").all()
+    within_changwon = bool(len(inside)) and inside["region_id"].str.startswith("CW-").any()
+    if outside_changwon and within_changwon:
+        source = f"창원시: {BUS_STOP_SOURCE_LABEL} / 그 외 경남: {GYEONGNAM_STOP_SOURCE_LABEL}"
+        reference_date = f"창원시: {BUS_STOP_REFERENCE_DATE} / 그 외 경남: {GYEONGNAM_STOP_REFERENCE_DATE}"
+    elif outside_changwon:
+        source, reference_date = GYEONGNAM_STOP_SOURCE_LABEL, GYEONGNAM_STOP_REFERENCE_DATE
+    else:
+        source, reference_date = BUS_STOP_SOURCE_LABEL, BUS_STOP_REFERENCE_DATE
     return _nearby_result(
         "ok",
         message,
@@ -334,8 +374,8 @@ def find_nearby_bus_stops(lat, lon, radius_m=500, max_results=10) -> dict:
         total_count=total,
         displayed_count=len(shown),
         stops=shown,
-        source=BUS_STOP_SOURCE_LABEL,
-        reference_date=BUS_STOP_REFERENCE_DATE,
+        source=source,
+        reference_date=reference_date,
         warnings=warnings,
     )
 

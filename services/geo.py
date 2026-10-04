@@ -57,6 +57,17 @@ def haversine_m(lat: float, lon: float, lats: np.ndarray, lons: np.ndarray) -> n
     return 2 * EARTH_RADIUS_M * np.arcsin(np.sqrt(np.clip(a, 0, 1)))
 
 
+# 경상남도 대략 범위(검색 위치가 크게 벗어났는지 안내용, 계산을 막지는 않음)
+GYEONGNAM_BBOX = {"lat": (34.4, 35.95), "lon": (127.55, 129.35)}
+
+
+def is_within_gyeongnam_bbox(lat: float, lon: float) -> bool:
+    return (
+        GYEONGNAM_BBOX["lat"][0] <= lat <= GYEONGNAM_BBOX["lat"][1]
+        and GYEONGNAM_BBOX["lon"][0] <= lon <= GYEONGNAM_BBOX["lon"][1]
+    )
+
+
 def is_within_changwon_bbox(lat: float, lon: float) -> bool:
     return (
         CHANGWON_BBOX["lat"][0] <= lat <= CHANGWON_BBOX["lat"][1]

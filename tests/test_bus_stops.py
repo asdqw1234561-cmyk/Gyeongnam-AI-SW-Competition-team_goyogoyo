@@ -130,7 +130,7 @@ class ActualZeroVsLookupFailureTest(unittest.TestCase):
 
     def test_remote_location_warns_outside_changwon(self):
         result = bus_stops.find_nearby_bus_stops(37.5665, 126.9780, radius_m=100, max_results=5)
-        self.assertTrue(any("창원시 범위" in w for w in result["warnings"]))
+        self.assertTrue(any("경상남도 범위" in w for w in result["warnings"]))
 
 
 class InvalidInputTest(unittest.TestCase):

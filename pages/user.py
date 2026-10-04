@@ -44,7 +44,7 @@ from agent import llm
 from agent.agent_state import ConversationMemory
 from agent.location_agent import run_location_agent
 from services import bus_stops, convenience
-from services.geo import is_within_changwon_bbox
+from services.geo import is_within_gyeongnam_bbox
 from services.map_markers import (
     SEARCH_CENTER_MARKER_COLOR,
     SEARCH_CENTER_MARKER_ICON,
@@ -62,10 +62,12 @@ except ImportError:
 
 CHART_ACCENT_COLOR = "#2a78d6"
 
-# docs/convenience_data.md에 기록된 창원시청 부근 근사 좌표. 정확한 건물 출입구나
+# 시청 부근 근사 좌표(창원시청은 docs/convenience_data.md 기록값). 정확한 건물 출입구나
 # 특정 주거지 좌표가 아니다 - 예시 위치로만 쓴다.
 EXAMPLE_LOCATIONS = {
     "창원시청 부근 예시 위치(근사 좌표)": (35.2280, 128.6811),
+    "김해시청 부근 예시 위치(근사 좌표)": (35.2285, 128.8894),
+    "진주시청 부근 예시 위치(근사 좌표)": (35.1800, 128.1076),
 }
 _DEFAULT_LOCATION_LABEL = next(iter(EXAMPLE_LOCATIONS))
 
@@ -82,15 +84,17 @@ DISTANCE_CAVEATS = [
     "영업 매장 수와 다를 수 있습니다.",
     "현재는 버스정류장과 편의점만 위치 기반 조회가 가능합니다. 의료기관은 구별 집계만 "
     "연결되어 있어 이 화면의 위치 기반 검색에는 포함되지 않습니다.",
-    "이 화면은 창원시 5개 구 비교 추천(상대 점수)과는 별개의 참고 분석입니다 - "
-    "구별 추천 점수를 다시 계산하지 않습니다.",
+    "이 화면은 경남 지역 비교 추천(상대 점수)과는 별개의 참고 분석입니다 - "
+    "지역별 추천 점수를 다시 계산하지 않습니다.",
+    "버스정류장은 창원시는 창원시 정류소 원본, 그 외 경남 17개 시·군은 국토교통부 전국 버스정류장 "
+    "위치정보(각 시·군 자기 등록분)로 조회합니다. 출처·기준일은 조회 결과마다 표시합니다.",
     "지도 타일은 외부 지도 서비스에서 불러옵니다. 타일이 느리게 뜨거나 표시되지 않아도 "
     "아래 반경별 비교표·시설 목록 수치에는 영향이 없습니다(둘 다 서버에서 별도로 계산).",
 ]
 
 
-def _is_outside_changwon(lat: float, lon: float) -> bool:
-    return not is_within_changwon_bbox(lat, lon)
+def _is_outside_gyeongnam(lat: float, lon: float) -> bool:
+    return not is_within_gyeongnam_bbox(lat, lon)
 
 
 def _is_valid_coord(lat, lon) -> bool:
@@ -202,7 +206,7 @@ def _render_nearby_list(bus_result: dict, store_result: dict) -> None:
                     {
                         "순위": s["rank"],
                         "정류소명": s["stop_name"],
-                        "소속 구": s["district"],
+                        "소속 지역": s["district"],
                         "직선거리(m)": s["straight_distance_m"],
                         "품질 주의": bus_stops.QUALITY_FLAG_LABELS.get(s["quality_flag"], "-")
                         if s["quality_flag"]
@@ -227,7 +231,7 @@ def _render_nearby_list(bus_result: dict, store_result: dict) -> None:
                     {
                         "순위": s["rank"],
                         "상호명": s["facility_name"],
-                        "소속 구": s["district"],
+                        "소속 지역": s["district"],
                         "직선거리(m)": s["straight_distance_m"],
                         "도로명주소": s["road_address"],
                     }
@@ -252,7 +256,7 @@ def _render_agent_bus_result(radius_m: int, result: dict) -> None:
                 {
                     "순위": s["rank"],
                     "정류소명": s["stop_name"],
-                    "소속 구": s["district"],
+                    "소속 지역": s["district"],
                     "직선거리(m)": s["straight_distance_m"],
                     "품질 주의": bus_stops.QUALITY_FLAG_LABELS.get(s["quality_flag"], "-")
                     if s["quality_flag"]
@@ -278,7 +282,7 @@ def _render_agent_convenience_result(radius_m: int, result: dict) -> None:
                 {
                     "순위": s["rank"],
                     "상호명": s["facility_name"],
-                    "소속 구": s["district"],
+                    "소속 지역": s["district"],
                     "직선거리(m)": s["straight_distance_m"],
                     "도로명주소": s["road_address"],
                 }
@@ -522,7 +526,7 @@ st.set_page_config(page_title="관심 위치 주변 생활시설 탐색", page_i
 st.title("📍 관심 위치 주변 생활시설 탐색")
 st.caption(
     "관심 있는 위치를 지정하면 그 주변의 실제 버스정류장·편의점을 지도와 직선거리 기준 "
-    "수치로 확인할 수 있습니다. 창원시 5개 구 비교 추천과는 별개의 참고 분석입니다."
+    "수치로 확인할 수 있습니다(경상남도 22개 지역). 지역 비교 추천과는 별개의 참고 분석입니다."
 )
 
 if "search_center" not in st.session_state:
@@ -564,10 +568,10 @@ elif location_mode == "위도·경도 직접 입력":
     st.caption("주소를 입력해 좌표를 자동으로 찾는 기능(지오코딩)은 아직 구현되지 않았습니다.")
     if _is_valid_coord(lat_input, lon_input):
         st.session_state.search_center = (lat_input, lon_input)
-        if _is_outside_changwon(lat_input, lon_input):
+        if _is_outside_gyeongnam(lat_input, lon_input):
             st.warning(
-                "⚠️ 입력하신 좌표가 창원시 범위를 크게 벗어난 것으로 보입니다. 조회 자체는 "
-                "진행되지만, 버스정류장·편의점 데이터는 창원시 5개 구만 포함합니다(다른 "
+                "⚠️ 입력하신 좌표가 경상남도 범위를 크게 벗어난 것으로 보입니다. 조회 자체는 "
+                "진행되지만, 버스정류장·편의점 데이터는 경남 22개 지역만 포함합니다(다른 "
                 "지역은 0건으로 나올 수 있습니다)."
             )
 
@@ -660,10 +664,10 @@ else:
             if candidate is not None:
                 c_lat, c_lon = candidate
                 st.info(f"🖱️ 새로 클릭한 위치(아직 미확정): 위도 {c_lat:.6f}, 경도 {c_lon:.6f}")
-                if _is_outside_changwon(c_lat, c_lon):
+                if _is_outside_gyeongnam(c_lat, c_lon):
                     st.warning(
-                        "⚠️ 클릭한 위치가 창원시 범위를 벗어난 것으로 보입니다. 확정해도 "
-                        "조회는 진행되지만 창원시 5개 구 데이터만 포함되어 0건으로 나올 수 "
+                        "⚠️ 클릭한 위치가 경상남도 범위를 벗어난 것으로 보입니다. 확정해도 "
+                        "조회는 진행되지만 경남 22개 지역 데이터만 포함되어 0건으로 나올 수 "
                         "있습니다."
                     )
                 col_confirm, col_cancel = st.columns(2)
@@ -751,8 +755,8 @@ else:
     with st.expander("데이터 품질 참고 (버스정류장)"):
         check = bus_stops.verify_official_counts()
         st.write(
-            f"창원시 5개 구 경계 내부로 판정된 버스정류장은 총 {check['actual_total']}건입니다 "
-            f"(경계 밖 제외 기준은 data/region_indicators.csv의 구별 집계와 동일)."
+            f"창원시 정류소 원본에서 창원시 5개 구 경계 내부로 판정된 버스정류장은 총 {check['actual_total']}건입니다 "
+            f"(창원시 위치 검색용 공식 집계. 지역 비교 점수의 버스정류장 수는 국토교통부 전국 데이터 기준이라 조금 다릅니다)."
         )
         st.caption(
             f"· 단순화된 행정경계의 2m 오차를 원본 SHP 기준으로 보정한 정류장 "

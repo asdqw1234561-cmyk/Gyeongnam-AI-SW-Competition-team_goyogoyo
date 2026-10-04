@@ -46,7 +46,7 @@ class SharedDefinitionsTest(unittest.TestCase):
             self.assertIs(mod._to_float, geo.to_float)
             self.assertIs(mod._to_int, geo.to_int)
             self.assertIs(mod.DISTRICTS, geo.DISTRICTS)
-            self.assertIs(mod._CHANGWON_BBOX, geo.CHANGWON_BBOX)
+            self.assertIs(mod._GYEONGNAM_BBOX, geo.GYEONGNAM_BBOX)
             self.assertEqual(mod.EARTH_RADIUS_M, 6_371_008.8)
 
 

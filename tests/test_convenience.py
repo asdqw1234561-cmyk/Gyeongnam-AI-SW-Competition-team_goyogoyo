@@ -233,6 +233,10 @@ class NearbyTest(unittest.TestCase):
         _write_store_csv(self.csv, rows)
         self.patch = mock.patch.object(svc, "STORES_CSV", self.csv)
         self.patch.start()
+        # 이 테스트는 임시 CSV 파싱만 본다 - 창원시 외 경남 업소 목록은 합치지 않는다
+        self.gn_patch = mock.patch.object(svc, "GYEONGNAM_STORES_CSV", os.path.join(self.tmp.name, "none.csv"))
+        self.gn_patch.start()
+        self.addCleanup(self.gn_patch.stop)
         svc._coords_cache["key"] = None
 
     def tearDown(self):
@@ -311,7 +315,7 @@ class NearbyTest(unittest.TestCase):
         r = svc.find_nearby_stores(37.5665, 126.9780, 1000, 5)  # 서울시청
         self.assertEqual(r["status"], "ok")
         self.assertEqual(r["total_count"], 0)
-        self.assertTrue(any("창원시 범위" in w for w in r["warnings"]))
+        self.assertTrue(any("경상남도 범위" in w for w in r["warnings"]))
 
     def test_no_data_file(self):
         with mock.patch.object(svc, "STORES_CSV", "/nonexistent/x.csv"):

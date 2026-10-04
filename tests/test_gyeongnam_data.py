@@ -77,5 +77,29 @@ class BusOwnRegistryRuleTest(unittest.TestCase):
         self.assertEqual(sum(report["other_registry"].values()), 2)
 
 
+
+class LocationSearchGyeongnamTest(unittest.TestCase):
+    """GN-C: 위치 기반 탐색이 창원시 외 경남에서도 동작하고, 창원시 결과·공식 집계는 그대로다."""
+
+    def test_gimhae_and_jinju_return_their_own_stops_and_stores(self):
+        from services import bus_stops, convenience
+        for (lat, lon), name in (((35.2285, 128.8894), "김해시"), ((35.1800, 128.1076), "진주시")):
+            bus = bus_stops.find_nearby_bus_stops(lat, lon, radius_m=500, max_results=5)
+            self.assertEqual(bus["status"], "ok")
+            self.assertGreater(bus["total_count"], 0)
+            self.assertEqual({s["district"] for s in bus["stops"]}, {name})
+            self.assertIn("국토교통부 전국 버스정류장", bus["source"])
+            self.assertEqual(bus["warnings"], [])
+            stores = convenience.find_nearby_stores(lat, lon, radius_m=500, max_results=5)
+            self.assertGreater(stores["total_count"], 0)
+
+    def test_changwon_search_and_official_counts_unchanged(self):
+        from services import bus_stops
+        self.assertTrue(bus_stops.verify_official_counts()["ok"])
+        result = bus_stops.find_nearby_bus_stops(35.2280, 128.6811, radius_m=500, max_results=50)
+        self.assertTrue(all(s["region_id"].startswith("CW-") for s in result["stops"]))
+        self.assertNotIn("국토교통부", result["source"])
+
+
 if __name__ == "__main__":
     unittest.main()

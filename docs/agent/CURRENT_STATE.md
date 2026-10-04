@@ -24,7 +24,7 @@
 | F11 | 설명 경로 통일: explanation_facts → Python 기본 설명(항상 사실) → AI 다듬기 1회 → 검증 → 실패 시 기본 설명. 최초 추천(AI 계획 실패 포함)·피드백 재평가 공용 | `agent/planner_loop.py` `explain_from_facts`, `analysis/explanation_facts.py` `render_explanation` | 동작(단위 468개·AppTest·실제 Ollama 4/4) |
 | F12 | 교육시설 수 참고 정보: 결과 화면에 구별 초·중·고·총 학교 수·분교 수, 출처·기준일, 한계 표시. 추천 점수·후보·Critic·피드백에 쓰지 않음(DEC-19), 파일 없으면 "미확보" 안내 후 추천은 그대로 | `services/schools.py`, `app.py` `_render_school_reference` | 동작(단위·AppTest), 브라우저 미확인 |
 | F13 | 추천 결과 화면 재구성(U2): 결론(후보 요약) → Critic 확인할 점 → AI 설명 → 5개 구 비교표 → 조건 바꾸기 → 접힌 상세(Agent가 한 일·계산 근거·데이터 출처/한계·교육시설). 피드백 승인 시 맨 위 결과 교체 | `app.py` `render_result_view`·`render_feedback_section`·`render_detail_sections` | 동작(AppTest·서버 기동), 브라우저 미확인 |
-| F14 | 경남 22개 지역 확장: 비교 범위(창원시 5개 구 / 시 7곳 / 군 10곳) 선택, 같은 유형끼리 인구 1만 명당 비교(DEC-20·21). 위치 탐색은 창원만 | `services/region_data.py`, `analysis/scoring.py`, `app.py`, `pages/government.py`, `data/gyeongnam/` | 동작(단위·AppTest), 실제 AI·브라우저 미확인 |
+| F14 | 경남 22개 지역 확장: 비교 범위(창원시 5개 구 / 시 7곳 / 군 10곳) 선택, 같은 유형끼리 인구 1만 명당 비교(DEC-20·21). 위치 탐색은 창원만 | `services/region_data.py`, `analysis/scoring.py`, `app.py`, `pages/government.py`, `data/gyeongnam/` | 동작(단위·AppTest), 실제 Ollama 시 범위·Test Case 5건 확인, 브라우저 미확인. 위치 탐색도 경남 22개 지역(GN-C) |
 | F6 | 정부용 구별 시설 현황·가상 증감 시뮬레이션 | `pages/government.py`, `analysis/simulation.py` | 동작 (주제 연결은 OPEN-3) |
 
 공통: `agent/llm.py`(백엔드 선택·호출 수·입력 길이 제한), `agent/llm_json.py`(JSON 추출).

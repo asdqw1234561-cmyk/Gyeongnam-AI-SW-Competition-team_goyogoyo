@@ -24,7 +24,7 @@ from typing import Optional
 
 import pandas as pd
 
-from services.geo import CHANGWON_BBOX as _CHANGWON_BBOX
+from services.geo import GYEONGNAM_BBOX as _GYEONGNAM_BBOX
 from services.geo import DISTRICTS, EARTH_RADIUS_M  # noqa: F401  (기존 공개 이름 유지)
 from services.geo import haversine_m as _haversine_m
 from services.geo import to_float as _to_float
@@ -35,6 +35,9 @@ _DATA_DIR = os.path.join(os.path.dirname(_THIS_DIR), "data", "convenience")
 
 STORES_CSV = os.path.join(_DATA_DIR, "changwon_convenience_stores.csv")
 COUNTS_CSV = os.path.join(_DATA_DIR, "changwon_convenience_counts.csv")
+# 창원시 외 경남 17개 시·군 편의점(scripts/ingest_gyeongnam_convenience.py, 같은 상가정보 출처·기준년월).
+# 반경 검색에서만 창원시 목록에 더한다(창원시 행은 위 원본을 그대로 쓰고 여기서는 제외 - 중복 없음).
+GYEONGNAM_STORES_CSV = os.path.join(os.path.dirname(_DATA_DIR), "gyeongnam", "convenience_stores.csv")
 
 NOT_SECURED = "미확보"
 
@@ -162,11 +165,15 @@ def _load_store_coords() -> tuple[pd.DataFrame, int]:
     """좌표가 유효한 업소만 (lat/lon float) 반환. 파일이 바뀌면 다시 읽는다."""
     if not os.path.exists(STORES_CSV):
         return pd.DataFrame(), 0
-    key = (STORES_CSV, os.path.getmtime(STORES_CSV))
+    has_gn = os.path.exists(GYEONGNAM_STORES_CSV)
+    key = (STORES_CSV, os.path.getmtime(STORES_CSV), has_gn and os.path.getmtime(GYEONGNAM_STORES_CSV))
     if _coords_cache["key"] == key:
         return _coords_cache["df"], _coords_cache["skipped"]
 
     df = _read_csv(STORES_CSV)
+    if has_gn:
+        gn = _read_csv(GYEONGNAM_STORES_CSV)
+        df = pd.concat([df, gn[~gn["region_id"].str.startswith("CW-")]], ignore_index=True)
     if df.empty or "lat" not in df.columns or "lon" not in df.columns:
         return pd.DataFrame(), len(df)
     lat = pd.to_numeric(df["lat"], errors="coerce")
@@ -246,10 +253,10 @@ def find_nearby_stores(lat, lon, radius_m=500, max_results=10) -> dict:
 
     query = {"lat": lat_f, "lon": lon_f, "radius_m": radius, "max_results": limit}
     warnings = []
-    if not (_CHANGWON_BBOX["lat"][0] <= lat_f <= _CHANGWON_BBOX["lat"][1]
-            and _CHANGWON_BBOX["lon"][0] <= lon_f <= _CHANGWON_BBOX["lon"][1]):
-        warnings.append("입력 위치가 창원시 범위를 벗어난 것으로 보입니다. "
-                        "수집 데이터는 창원시 5개 구만 포함합니다.")
+    if not (_GYEONGNAM_BBOX["lat"][0] <= lat_f <= _GYEONGNAM_BBOX["lat"][1]
+            and _GYEONGNAM_BBOX["lon"][0] <= lon_f <= _GYEONGNAM_BBOX["lon"][1]):
+        warnings.append("입력 위치가 경상남도 범위를 벗어난 것으로 보입니다. "
+                        "수집 데이터는 경남 22개 지역만 포함합니다.")
 
     stores_df, skipped = _load_store_coords()
     if skipped:

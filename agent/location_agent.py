@@ -5,7 +5,7 @@ pages/user.py에서 사용자가 지도로 "확정한" 검색 중심 좌표 주�
 LOCATION_AGENT_BACKEND=ollama 또는 CLI 실패 시)가 어떤 조회 도구를 쓸지 계획하고
 Python이 그 계획을 검증한 뒤 허용된 도구만 실제로 실행하는 작은 Agent다.
 
-agent/planner.py(창원시 5개 구 상대 비교 추천용 Agent)와는 별개의 독립된 모듈
+agent/planner.py(경남 지역 상대 비교 추천용 Agent)와는 별개의 독립된 모듈
 이다. 두 Agent 모두 "LLM의 계획을 그대로 신뢰하지 않고 Python이 검증한다"는
 같은 철학을 공유하지만, 이 모듈은 planner.py를 억지로 확장하거나 하나로
 합치지 않는다 - 다루는 도구·입력·검증 규칙이 서로 다르기 때문이다
