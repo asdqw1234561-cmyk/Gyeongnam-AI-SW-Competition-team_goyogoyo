@@ -190,6 +190,7 @@
 - 승인: 완료 (2026-10-02 사용자 지시 - 아파트·오피스텔·연립다세대·단독/다가구 독립 수집)
 - 범위·완료 조건: `CURRENT_STATE.md` G4 feasibility 표 A행 + "G4-A 진행".
 - 결과: 2026-10-02 · 막힘 - 수집·분석 도구는 완성(scripts/collect_rent_transactions.py, scripts/analyze_rent_transactions.py, tests/test_rent_transactions.py 18개, 전체 418개 통과), 4개 API 공식 기술문서로 필드 확정 · 실제 호출은 4개 모두 resultCode 30(키 유효, 활용승인 미반영) → 실데이터 분석 미산출, G4-B 진행 불가 · 해제 조건: 승인된 키로 `python scripts/collect_rent_transactions.py inspect` 성공.
+- 재확인: 2026-10-04 · 사용자가 공공데이터포털 일반 인증키를 재발급해 `.env`의 `MOLIT_SERVICE_KEY`를 교체(로딩 확인, 값 미출력) → `inspect` 1회: 아파트·오피스텔·연립다세대·단독/다가구 **4종 모두 resultCode 30(등록되지 않은 서비스키)** → BLOCKED 유지, 코드 변경 없음
 
 ## G4-B. 주거비 평가축 (낮을수록 좋음 방향 플래그)
 - [ ] 상태

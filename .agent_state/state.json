@@ -1,13 +1,13 @@
 {
   "steward_branch": "jhy-next",
   "submission_deadline": "2026-10-06T12:00",
-  "last_synced_commit": "9885a4b",
+  "last_synced_commit": "0c45494",
   "last_synced_at": "2026-10-04",
   "last_test_result": "489 passed, 1 skipped (2026-10-04, G5-B 보정)",
   "last_loop": {
     "date": "2026-10-04",
-    "task": "T1 제출용 대표 Test Case 5건 기록",
-    "result": "docs/test_cases.md - 실제 Ollama 실행 + 대응 테스트. 코드 변경 없음. 사용자 지시로 정지"
+    "task": "G4-A 재개 시도 (재발급 키로 전월세 API inspect)",
+    "result": "MOLIT_SERVICE_KEY 로딩 확인, inspect 4종 모두 resultCode 30 → BLOCKED 유지, 코드 변경 없음. 사용자 지시로 정지"
   },
   "next_candidates": [
     "OPEN-7 AI 다듬기 on/off 결정 (오탈자·검증 거부 관찰)",
