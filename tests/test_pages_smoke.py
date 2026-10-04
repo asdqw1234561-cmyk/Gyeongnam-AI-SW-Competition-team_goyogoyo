@@ -181,5 +181,90 @@ class PagesFirstRenderTest(unittest.TestCase):
                                              "location_agent_result": self._location_result(mode, final)})
             self.assertTrue(any("AI 답변" in s.value for s in at.success), mode)
 
+    # ---- G3: 방향성 피드백 → Python 규칙 제안 → 승인 → 재계산 + 이력 -------------
+    @staticmethod
+    def _fake_direction_ollama(**kwargs):
+        system = kwargs["messages"][0]["content"]
+        if "가중치 조정" in system:
+            content = ('{"type": "adjust_direction", "weights": null, '
+                       '"directions": {"hospital_count": "increase"}, "strength": "normal", "message": null}')
+        else:
+            content = '{"questions": [], "tool_calls": []}'
+        return {"message": {"content": content}}
+
+    def test_feedback_direction_request_is_resolved_approved_and_logged(self):
+        at = AppTest.from_file(os.path.join(PROJECT_ROOT, "app.py"), default_timeout=TIMEOUT_S).run()
+        with mock.patch("ollama.chat", side_effect=self._fake_direction_ollama):
+            at.button[0].click().run()
+        self.assertEqual(at.session_state["stage"], "done")
+        before = dict(at.session_state["feedback_initial_weights"])
+
+        at.text_input(key="nl_feedback_input").input("병원을 더 중요하게 봐줘")
+        with mock.patch("ollama.chat", side_effect=self._fake_direction_ollama):
+            next(b for b in at.button if b.label == "AI로 해석하기").click().run()
+        self.assertEqual([e.value for e in at.exception], [])
+        proposal = at.session_state["nl_feedback_proposal"]
+        self.assertEqual(proposal["type"], "set_weights")
+        self.assertIn("direction", proposal)
+        self.assertAlmostEqual(
+            proposal["weights"]["hospital_count"], min(100.0, before["hospital_count"] + 20.0), places=0
+        )
+        self.assertAlmostEqual(sum(proposal["weights"].values()), 100.0, places=6)
+        # 승인 전에는 결과가 바뀌지 않는다
+        self.assertIsNone(at.session_state["feedback_recommendation"])
+        self.assertTrue(any("Python 규칙으로 계산" in c.value for c in at.caption))
+
+        with mock.patch("ollama.chat", side_effect=AssertionError("승인 단계에서 AI 호출")):
+            next(b for b in at.button if b.label == "✅ 이 가중치로 적용하기").click().run()
+        self.assertEqual([e.value for e in at.exception], [])
+        applied = at.session_state["feedback_recommendation"]
+        self.assertEqual(applied["status"], "ok")
+        applied_hosp = next(uc["weight"] for uc in applied["used_conditions"] if uc["indicator_code"] == "hospital_count")
+        self.assertAlmostEqual(applied_hosp * 100, proposal["weights"]["hospital_count"], places=1)
+
+        history = at.session_state["feedback_history"]
+        self.assertEqual(len(history), 1)
+        self.assertEqual(history[0]["source"], "자연어(방향)")
+        self.assertEqual(history[0]["request"], "병원을 더 중요하게 봐줘")
+        self.assertTrue(any("피드백 이력" in m.value for m in at.markdown))
+
+        # 두 번째 방향 요청은 '최초'가 아니라 '현재 적용 중인' 가중치 기준이다
+        with mock.patch("ollama.chat", side_effect=self._fake_direction_ollama):
+            next(b for b in at.button if b.label == "AI로 해석하기").click().run()
+        second = at.session_state["nl_feedback_proposal"]
+        self.assertIsNotNone(second)
+        if second["type"] == "set_weights":
+            self.assertAlmostEqual(
+                second["base_weights"]["hospital_count"], proposal["weights"]["hospital_count"], places=1
+            )
+
+        # 초기화도 이력에 남는다
+        next(b for b in at.button if b.label == "초기 조건으로 되돌리기").click().run()
+        self.assertEqual([h["source"] for h in at.session_state["feedback_history"]], ["자연어(방향)", "초기화"])
+        # 기준 가중치가 바뀌었으므로 낡은 방향성 제안은 승인할 수 없게 지워진다
+        self.assertIsNone(at.session_state["nl_feedback_proposal"])
+
+    def test_weight_confirm_direction_answer_becomes_concrete_proposal(self):
+        """가중치 확인 질문에 '의료가 더 중요해'라고만 답해도 동일 가중치 기준 제안으로 승인할 수 있다."""
+        at = AppTest.from_file(os.path.join(PROJECT_ROOT, "app.py"), default_timeout=TIMEOUT_S).run()
+        at.multiselect[0].set_value(["교통", "의료"])
+        with mock.patch("ollama.chat", side_effect=self._fake_direction_ollama):
+            at.button[0].click().run()
+        self.assertEqual(at.session_state["stage"], "followup")
+        at.text_input[0].input("의료가 더 중요해")
+        with mock.patch("ollama.chat", side_effect=self._fake_direction_ollama):
+            next(b for b in at.button if b.label == "답변 제출").click().run()
+        self.assertEqual(at.session_state["stage"], "weight_confirm")
+        self.assertEqual([e.value for e in at.exception], [])
+        self.assertTrue(any("요청 방향대로 조정한 제안" in c.value for c in at.caption))
+        with mock.patch("ollama.chat", side_effect=self._fake_direction_ollama):
+            next(b for b in at.button if b.label == "✅ 이 가중치로 최초 추천 계산").click().run()
+        self.assertEqual([e.value for e in at.exception], [])
+        self.assertEqual(at.session_state["stage"], "done")
+        weights = {uc["indicator_code"]: uc["weight"] for uc in at.session_state["initial_recommendation"]["used_conditions"]}
+        self.assertAlmostEqual(weights["hospital_count"], 0.7, places=3)
+        self.assertAlmostEqual(weights["bus_stop_count"], 0.3, places=3)
+
+
 if __name__ == "__main__":
     unittest.main()

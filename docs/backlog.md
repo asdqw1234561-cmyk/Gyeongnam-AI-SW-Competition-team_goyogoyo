@@ -156,6 +156,13 @@
 - 완료 조건: 실제 CSV 동일 가중치에서 최적≠균형 후보가 나오고 Critic이 근거 숫자와 함께 표시, 기존 테스트 전부 통과.
 - 결과: 2026-10-02 · 새 analysis/candidates.py(build_candidate_set: 6개 평가축 상태, 최적·균형·대안·가성비(산출 불가) 역할, Pareto, Critic 7규칙 close_gap/single_axis/dominated/concentration/granularity/coverage/ties + 지배된 1차 대안을 바꾸는 revised) · agent/planner.py run_agent_plan에 unscored_inputs 인자·candidate_review 결과 추가 · app.py 최초·피드백 결과 화면에 후보군·Critic 표시(_render_candidate_set) · scoring.py 변경 0줄 · tests/test_candidates.py 15개 + planner 1개 + AppTest 1개 추가, 전체 377개 통과(skip 1) · 실데이터 동일 가중치: 최적 성산구 / 균형 의창구 / 대안 1차 마산합포구→Critic이 의창구로 수정 / 가성비 산출 불가 · AppTest로 "다시 비교하기"(교통 80%) 후 최적 의창구·대안 성산구 재평가 확인 · 실제 Ollama·브라우저 확인 미실행.
 
+## R2. 방향성 피드백 결정적 조정 + 피드백 이력 Memory (추천 품질 G3)
+- [x] 상태
+- 승인: 완료 (2026-10-04 사용자 지시 - "1번부터 해보자")
+- 근거: `docs/agent/CURRENT_STATE.md` 추천 품질 분석 G3, 요구 4·7, R-EV-2(Memory·Feedback)
+- 범위: 새 `analysis/weight_feedback.py` - AI는 `adjust_direction`({지표: increase|decrease}, strength)으로 방향만 고르고, 새 가중치는 Python이 **현재 적용 중인 가중치** 기준 규칙(보통 20%p·강조 30%p, 올리기는 나머지에서 비례 차감, 내리기는 나머지에 비례 배분, 혼합은 내린 만큼 올릴 지표에 균등, 세 지표 모두 같은 방향·이미 한계면 되묻기)으로 계산. 승인 후에만 적용. 피드백 이력(승인·슬라이더·초기화)을 세션에 누적해 표로 표시. 가중치 확인 단계의 방향성 답변도 동일 가중치 기준 제안으로 승인 가능. `scoring.py` 변경 없음.
+- 결과: 2026-10-04 · analysis/weight_feedback.py(apply_direction, resolve_direction_proposal, append_history, history_rows) · agent/ollama_agent.py 프롬프트에 adjust_direction 추가 + _parse_direction_feedback 검증(지원 외 지표 섞이면 전체 unsupported, 방향 값 검증) · app.py 피드백 화면에 "현재 → 제안" 미리보기·규칙 설명, 승인/슬라이더/초기화 이력 기록, 기준 가중치가 바뀌면 낡은 제안 폐기, weight_confirm 단계 방향성 답변 처리 · scoring.py 변경 0줄 · 테스트 28개 추가(tests/test_weight_feedback.py 20, test_ollama_agent 6, AppTest 2), 전체 405개 통과(skip 1) · 실제 Ollama(qwen3.5:4b)가 adjust_direction을 안정적으로 고르는지는 미확인 · 브라우저 수동 확인 필요.
+
 ---
 
 ## 발견된 작업

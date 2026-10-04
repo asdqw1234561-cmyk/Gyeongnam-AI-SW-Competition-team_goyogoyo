@@ -422,5 +422,57 @@ class PlanFollowupQuestionsTest(unittest.TestCase):
         self.assertEqual(plan["initial_weight_interpretation"]["type"], "unsupported")
 
 
+class DirectionFeedbackParseTest(unittest.TestCase):
+    """G3: 숫자 없는 방향성 요청은 방향만 담긴 adjust_direction으로 검증된다(숫자 없음)."""
+
+    def _interpret(self, content: str) -> dict:
+        with mock.patch("agent.ollama_agent.ollama.chat", return_value=_fake_response(content)):
+            return ollama_agent.interpret_weight_feedback("병원을 더 중요하게 봐줘")
+
+    def test_valid_direction(self):
+        result = self._interpret(
+            '{"type": "adjust_direction", "weights": null, '
+            '"directions": {"hospital_count": "increase"}, "strength": "strong", "message": null}'
+        )
+        self.assertEqual(result["status"], "ok")
+        self.assertEqual(result["type"], "adjust_direction")
+        self.assertIsNone(result["weights"])
+        self.assertEqual(result["directions"], {"hospital_count": "increase"})
+        self.assertEqual(result["strength"], "strong")
+
+    def test_direction_value_is_normalized_and_strength_defaults(self):
+        result = self._interpret(
+            '{"type": "adjust_direction", "directions": {"bus_stop_count": " Decrease "}}'
+        )
+        self.assertEqual(result["directions"], {"bus_stop_count": "decrease"})
+        self.assertEqual(result["strength"], "normal")
+
+    def test_unsupported_indicator_rejects_whole_request(self):
+        result = self._interpret(
+            '{"type": "adjust_direction", '
+            '"directions": {"hospital_count": "increase", "rent": "decrease"}}'
+        )
+        self.assertEqual(result["type"], "unsupported")
+        self.assertIsNone(result["weights"])
+        self.assertNotIn("directions", result)
+
+    def test_bad_direction_value_is_invalid(self):
+        for value in ('"up"', "30", "null", "true"):
+            result = self._interpret(
+                '{"type": "adjust_direction", "directions": {"hospital_count": %s}}' % value
+            )
+            self.assertEqual(result["status"], "invalid_response", value)
+
+    def test_missing_directions_is_invalid(self):
+        for body in ('{"type": "adjust_direction"}', '{"type": "adjust_direction", "directions": {}}',
+                     '{"type": "adjust_direction", "directions": ["hospital_count"]}'):
+            self.assertEqual(self._interpret(body)["status"], "invalid_response", body)
+
+    def test_prompt_tells_ai_not_to_make_numbers_for_directions(self):
+        prompt = ollama_agent.WEIGHT_FEEDBACK_SYSTEM_PROMPT
+        self.assertIn('"adjust_direction"', prompt)
+        self.assertIn("숫자는\n   절대 만들지 마세요", prompt)
+
+
 if __name__ == "__main__":
     unittest.main()

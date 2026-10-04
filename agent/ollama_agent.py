@@ -241,16 +241,22 @@ WEIGHT_FEEDBACK_SYSTEM_PROMPT = """당신은 창원시 생활권 비교 앱에�
 - hospital_count: 의료(의료기관 수)
 - convenience_store_count: 생활편의(편의점 수)
 
-[판단 기준 - 아래 3가지 type 중 정확히 하나를 고르세요]
+[판단 기준 - 아래 4가지 type 중 정확히 하나를 고르세요]
 1. "set_weights": 위 3개 지표 중 하나 이상에 구체적인 숫자(비율·퍼센트)가 명시된 경우.
    weights에 사용자가 말한 숫자를 그대로 넣으세요(%) - 더하거나 빼거나 비율을
    바꾸지 마세요. 합계가 100이 아니어도 계산하지 말고 사용자가 말한 숫자만 그대로
    전달하세요(합계 확인과 재질문은 이후 단계에서 처리합니다). 언급되지 않은 지표는
    weights에 넣지 마세요.
-2. "ask_clarification": "의료가 더 중요해", "교통 위주로 봐줘"처럼 방향성만 있고
-   구체적인 숫자가 없는 경우. 절대 숫자를 임의로 만들어내지 말고, message에 몇
-   %로 할지 되묻는 한국어 질문을 작성하세요.
-3. "unsupported": 사용자가 요청한 것이 위 3개 지표에 전혀 해당하지 않는 경우
+2. "adjust_direction": "병원을 더 중요하게", "교통 위주로 봐줘", "편의점은 덜 봐도 돼"
+   처럼 위 3개 지표 중 어느 것을 더(또는 덜) 중요하게 볼지 방향만 있고 숫자가 없는
+   경우. directions에 {지표코드: "increase" 또는 "decrease"}만 넣으세요. 숫자는
+   절대 만들지 마세요 - 실제 비율은 Python이 현재 가중치를 기준으로 계산합니다.
+   "훨씬", "가장", "제일", "무엇보다"처럼 강조가 있으면 strength를 "strong",
+   아니면 "normal"로 넣으세요.
+3. "ask_clarification": "좀 바꿔줘", "다르게 봐줘"처럼 어떤 지표를 어느 방향으로
+   바꿀지조차 알 수 없는 경우. message에 어떤 조건을 더 중요하게 볼지 되묻는
+   한국어 질문을 작성하세요.
+4. "unsupported": 사용자가 요청한 것이 위 3개 지표에 전혀 해당하지 않는 경우
    (예: 주거비/월세/전세, 통근시간/대중교통 소요시간, 교육, 안전, 자연환경,
    문화시설, 대형마트, 응급실 등). message에 "현재 해당 데이터를 확보하지
    못했다"는 한국어 안내를 작성하세요. 시설 수·이동시간·주거비·추천 점수 등을
@@ -260,7 +266,9 @@ WEIGHT_FEEDBACK_SYSTEM_PROMPT = """당신은 창원시 생활권 비교 앱에�
 
 {"type": "set_weights", "weights": {"hospital_count": 80, "bus_stop_count": 20}, "message": null}
 또는
-{"type": "ask_clarification", "weights": null, "message": "의료를 몇 %로 둘까요? 예: 의료 70%, 교통 30%"}
+{"type": "adjust_direction", "weights": null, "directions": {"hospital_count": "increase"}, "strength": "normal", "message": null}
+또는
+{"type": "ask_clarification", "weights": null, "message": "어떤 조건을 더 중요하게 볼까요? 예: 의료를 더 중요하게, 또는 의료 70%, 교통 30%"}
 또는
 {"type": "unsupported", "weights": null, "message": "주거비(월세·전세) 데이터는 아직 확보되지 않아 가중치에 반영할 수 없습니다."}
 """
@@ -295,6 +303,70 @@ def _validate_weight_value(value) -> float | None:
     if numeric < 0 or numeric > 100:
         return None
     return numeric
+
+
+_VALID_DIRECTIONS = ("increase", "decrease")
+_VALID_STRENGTHS = ("normal", "strong")
+
+
+def _parse_direction_feedback(data: dict, message: str | None) -> dict:
+    """
+    "adjust_direction" 응답을 검증한다(G3). AI는 방향만 고르고 숫자는 만들지 않는다 -
+    실제 새 가중치는 analysis.weight_feedback.apply_direction()이 현재 가중치를
+    기준으로 결정적으로 계산하고, 사용자가 승인해야 적용된다.
+
+    - directions가 비었거나 dict가 아니면 -> invalid_response
+    - 지원하지 않는 지표가 하나라도 섞이면 -> 전체를 unsupported(일부만 적용하지 않음)
+    - 방향 값이 increase/decrease가 아니면 -> invalid_response
+    - strength가 normal/strong이 아니면 normal로 본다(조정 폭만 달라지는 부가 정보).
+    """
+    raw_directions = data.get("directions")
+    if not isinstance(raw_directions, dict) or not raw_directions:
+        return {
+            "status": "invalid_response",
+            "type": None,
+            "weights": None,
+            "message": "AI가 어떤 조건을 더(덜) 중요하게 볼지 지정하지 않았습니다.",
+        }
+
+    unsupported_codes = [c for c in raw_directions if c not in WEIGHT_FEEDBACK_SUPPORTED_INDICATORS]
+    if unsupported_codes:
+        return {
+            "status": "ok",
+            "type": "unsupported",
+            "weights": None,
+            "message": (
+                f"요청하신 조건 중 '{', '.join(map(str, unsupported_codes))}'에 해당하는 데이터는 "
+                "아직 확보되지 않아 가중치에 반영할 수 없습니다. 교통·의료·생활편의 중에서 "
+                "더(덜) 중요하게 볼 조건을 다시 말씀해 주세요."
+            ),
+        }
+
+    directions: dict[str, str] = {}
+    for code, value in raw_directions.items():
+        direction = str(value).strip().lower() if isinstance(value, str) else None
+        if direction not in _VALID_DIRECTIONS:
+            return {
+                "status": "invalid_response",
+                "type": None,
+                "weights": None,
+                "message": (
+                    f"'{WEIGHT_FEEDBACK_SUPPORTED_INDICATORS[code]}'의 조정 방향이 "
+                    "'더 중요하게/덜 중요하게' 중 하나가 아닙니다."
+                ),
+            }
+        directions[code] = direction
+
+    raw_strength = data.get("strength")
+    strength = raw_strength if raw_strength in _VALID_STRENGTHS else "normal"
+    return {
+        "status": "ok",
+        "type": "adjust_direction",
+        "weights": None,
+        "directions": directions,
+        "strength": strength,
+        "message": message,
+    }
 
 
 def _parse_weight_feedback(raw_text: str) -> dict:
@@ -333,7 +405,7 @@ def _parse_weight_feedback(raw_text: str) -> dict:
         }
 
     resp_type = data.get("type")
-    if resp_type not in ("set_weights", "ask_clarification", "unsupported"):
+    if resp_type not in ("set_weights", "adjust_direction", "ask_clarification", "unsupported"):
         return {
             "status": "invalid_response",
             "type": None,
@@ -343,6 +415,9 @@ def _parse_weight_feedback(raw_text: str) -> dict:
 
     raw_message = data.get("message")
     message = str(raw_message).strip() if raw_message else None
+
+    if resp_type == "adjust_direction":
+        return _parse_direction_feedback(data, message)
 
     if resp_type != "set_weights":
         return {"status": "ok", "type": resp_type, "weights": None, "message": message}
@@ -435,10 +510,16 @@ def interpret_weight_feedback(user_text: str) -> dict:
     Returns:
         {
             "status": "ok" | "ollama_error" | "invalid_response",
-            "type": "set_weights" | "ask_clarification" | "unsupported" | None,
+            "type": "set_weights" | "adjust_direction" | "ask_clarification" | "unsupported" | None,
             "weights": {indicator_code: 0 이상 숫자, ...} | None,  # type=="set_weights"일 때만
             "message": str | None,
+            # type=="adjust_direction"일 때만 추가로:
+            "directions": {indicator_code: "increase" | "decrease"},
+            "strength": "normal" | "strong",
         }
+        adjust_direction은 숫자를 담지 않는다. 화면은 analysis.weight_feedback.
+        resolve_direction_proposal()로 현재 가중치 기준의 구체적인 제안을 만든 뒤
+        승인을 받는다.
         status != "ok"면 type/weights는 항상 None이고, message에 사용자에게 보여줄
         문구(Ollama 연결 실패, JSON 파싱 실패, 허용되지 않은 지표/값 등)가 들어있다.
     """

@@ -8,6 +8,14 @@ from agent.planner import TOOL_LABELS, run_agent_plan
 from agent.planner_loop import REVIEW_TOOL_LABELS
 from analysis import scoring
 from analysis.candidates import build_candidate_set
+from analysis.weight_feedback import (
+    append_history,
+    describe_directions,
+    format_weights,
+    history_rows,
+    resolve_direction_proposal,
+    weights_from_result,
+)
 from services.region_data import get_all_changwon_regions, is_supported_region
 
 CHART_ACCENT_COLOR = "#2a78d6"
@@ -585,10 +593,40 @@ def _reset_feedback_weights() -> None:
     initial_weights = st.session_state.feedback_initial_weights
     for code, key in FEEDBACK_SLIDER_KEYS.items():
         st.session_state[key] = initial_weights.get(code, 0.0)
+    if st.session_state.feedback_recommendation is not None:
+        _record_feedback_history("초기화", None, st.session_state.initial_recommendation)
     st.session_state.feedback_recommendation = None
 
 
-def _approve_nl_feedback_weights(weights: dict[str, float]) -> None:
+def _current_applied_result() -> dict | None:
+    """지금 실제로 점수 계산에 쓰이고 있는 결과(승인된 피드백 결과가 있으면 그것,
+    없으면 최초 추천). 승인 대기 중인 AI 제안은 포함하지 않는다."""
+    return st.session_state.feedback_recommendation or st.session_state.initial_recommendation
+
+
+def _record_feedback_history(
+    source: str, request_text: str | None, after_result: dict | None, rule: str | None = None
+) -> None:
+    """피드백 한 번을 이력(Memory)에 남긴다. 반드시 feedback_recommendation을 바꾸기
+    '직전'에 호출해 변경 전 결과를 기준으로 기록한다."""
+    if not after_result or after_result.get("status") != "ok":
+        return
+    st.session_state.feedback_history = append_history(
+        st.session_state.get("feedback_history"),
+        source,
+        request_text,
+        _current_applied_result(),
+        after_result,
+        rule,
+    )
+
+
+def _approve_nl_feedback_weights(
+    weights: dict[str, float],
+    source: str = "자연어(비율)",
+    request_text: str | None = None,
+    rule: str | None = None,
+) -> None:
     """
     AI가 해석한 가중치를 사용자가 승인했을 때의 on_click 콜백. 슬라이더 값도 맞춰
     바꾸고, 실제 재계산은 기존 compute_region_scores_from_weights()로 수행한다
@@ -598,9 +636,9 @@ def _approve_nl_feedback_weights(weights: dict[str, float]) -> None:
     for code, key in FEEDBACK_SLIDER_KEYS.items():
         st.session_state[key] = min(100.0, max(0.0, weights.get(code, 0.0)))
     candidate_count = st.session_state.initial_input.get("원하는 후보 개수") or 3
-    st.session_state.feedback_recommendation = scoring.compute_region_scores_from_weights(
-        weights, candidate_count
-    )
+    new_result = scoring.compute_region_scores_from_weights(weights, candidate_count)
+    _record_feedback_history(source, request_text, new_result, rule)
+    st.session_state.feedback_recommendation = new_result
     st.session_state.nl_feedback_proposal = None
     st.session_state.nl_feedback_proposal_text = None
 
@@ -634,10 +672,32 @@ def _render_nl_feedback_proposal(proposal: dict) -> None:
         st.info(f"🤔 {proposal['message']}")
         return
 
-    # type == "set_weights"
+    # type == "set_weights" (방향성 요청은 resolve_direction_proposal()이 이미 set_weights로 바꿔 둠)
     weights = proposal["weights"]
     weight_sum = sum(weights.values())
     st.warning("⏳ **승인 대기 중인 제안** — 아직 적용되지 않았습니다. 아래에서 승인해야 반영됩니다.")
+    direction = proposal.get("direction")
+    if direction:
+        _render_direction_preview(direction)
+        approve_args = (
+            weights,
+            "자연어(방향)",
+            st.session_state.get("nl_feedback_proposal_text"),
+            direction["rule"],
+        )
+        col_approve, col_reject = st.columns(2)
+        with col_approve:
+            st.button(
+                "✅ 이 가중치로 적용하기",
+                type="primary",
+                width="stretch",
+                on_click=_approve_nl_feedback_weights,
+                args=approve_args,
+            )
+        with col_reject:
+            st.button("❌ 무시하기", width="stretch", on_click=_reject_nl_feedback_proposal)
+        return
+
     preview_df = pd.DataFrame(
         [
             {
@@ -661,10 +721,35 @@ def _render_nl_feedback_proposal(proposal: dict) -> None:
             type="primary",
             width="stretch",
             on_click=_approve_nl_feedback_weights,
-            args=(weights,),
+            args=(weights, "자연어(비율)", st.session_state.get("nl_feedback_proposal_text")),
         )
     with col_reject:
         st.button("❌ 무시하기", width="stretch", on_click=_reject_nl_feedback_proposal)
+
+
+def _render_direction_preview(direction: dict) -> None:
+    """방향성 요청(G3)의 '현재 → 제안' 가중치를 보여준다. AI는 방향만 골랐고 숫자는
+    analysis.weight_feedback.apply_direction()이 정해진 규칙으로 계산했음을 밝힌다."""
+    st.markdown(f"**AI가 읽은 요청:** {describe_directions(direction['directions'])}"
+                + (" (강하게)" if direction.get("strength") == "strong" else ""))
+    before, after = direction["before"], direction["after"]
+    preview_df = pd.DataFrame(
+        [
+            {
+                "지표": FEEDBACK_INDICATOR_LABELS.get(code, code),
+                "현재 가중치": f"{before.get(code, 0.0):.1f}%",
+                "제안 가중치": f"{after.get(code, 0.0):.1f}%",
+                "변화": f"{after.get(code, 0.0) - before.get(code, 0.0):+.1f}%p",
+            }
+            for code in REFERENCE_INDICATOR_ORDER
+            if before.get(code, 0.0) > 0 or after.get(code, 0.0) > 0
+        ]
+    )
+    st.dataframe(preview_df, hide_index=True, width="stretch")
+    st.caption(
+        f"숫자는 AI가 아니라 Python 규칙으로 계산했습니다: {direction['rule']} "
+        "(보통 20%p, '훨씬·가장'처럼 강조하면 30%p)"
+    )
 
 
 def _current_applied_weights_label() -> str:
@@ -731,13 +816,13 @@ def render_feedback_section() -> None:
 
     if recompute_clicked:
         candidate_count = st.session_state.initial_input.get("원하는 후보 개수") or 3
-        st.session_state.feedback_recommendation = scoring.compute_region_scores_from_weights(
-            current_weights, candidate_count
-        )
+        new_result = scoring.compute_region_scores_from_weights(current_weights, candidate_count)
+        _record_feedback_history("슬라이더", None, new_result)
+        st.session_state.feedback_recommendation = new_result
 
     st.markdown("**② 자연어로 요청 (AI 해석)**")
     st.caption(
-        f"예: '의료 80%, 교통 20%로 비교해줘'. 버튼을 누를 때만 AI({llm.backend_label()})를 "
+        f"예: '의료 80%, 교통 20%로 비교해줘' 또는 '병원을 더 중요하게 봐줘'. 버튼을 누를 때만 AI({llm.backend_label()})를 "
         "호출하며, AI는 요청을 가중치 '제안'으로 해석만 할 뿐 점수는 계산하지 않습니다 - "
         "실제 재계산은 아래에서 승인해야 적용됩니다."
     )
@@ -749,7 +834,13 @@ def render_feedback_section() -> None:
             st.warning("문장을 입력해 주세요.")
         else:
             with st.spinner("AI가 요청을 해석하고 있습니다..."):
-                st.session_state.nl_feedback_proposal = interpret_weight_feedback(nl_text)
+                # 방향성 요청("더 중요하게")은 지금 적용 중인 가중치를 기준으로 Python이
+                # 구체적인 제안을 계산한다(AI는 방향만 고른다).
+                base_weights = weights_from_result(_current_applied_result())
+                proposal = resolve_direction_proposal(interpret_weight_feedback(nl_text), base_weights)
+                if proposal.get("direction"):
+                    proposal["base_weights"] = base_weights
+                st.session_state.nl_feedback_proposal = proposal
             st.session_state.nl_feedback_proposal_text = nl_text
 
     # 제안을 받은 뒤 사용자가 입력창의 문장을 고쳤다면, 그 고친 문장을 다시 해석하지
@@ -762,8 +853,22 @@ def render_feedback_section() -> None:
         st.session_state.nl_feedback_proposal = None
         st.info("ℹ️ 입력하신 문장이 바뀌었습니다. 'AI로 해석하기'를 다시 눌러 주세요.")
 
+    # 방향성 제안은 "제안을 만든 시점의 가중치" 기준이다. 그 사이 슬라이더 재계산 등으로
+    # 적용 중인 가중치가 바뀌었으면 낡은 기준의 제안을 승인하지 않도록 지운다.
+    pending = st.session_state.nl_feedback_proposal
+    if pending is not None and pending.get("base_weights"):
+        current = weights_from_result(_current_applied_result())
+        if any(abs(current.get(c, 0.0) - v) > 0.05 for c, v in pending["base_weights"].items()):
+            st.session_state.nl_feedback_proposal = None
+            st.info("ℹ️ 적용 중인 가중치가 바뀌었습니다. 'AI로 해석하기'를 다시 눌러 주세요.")
+
     if st.session_state.nl_feedback_proposal is not None:
         _render_nl_feedback_proposal(st.session_state.nl_feedback_proposal)
+
+    history = st.session_state.get("feedback_history") or []
+    if history:
+        st.markdown("**🗂️ 피드백 이력** — 이번 세션에서 승인·적용한 조정 순서")
+        st.dataframe(pd.DataFrame(history_rows(history)), hide_index=True, width="stretch")
 
     feedback_result = st.session_state.feedback_recommendation
     if feedback_result is None:
@@ -888,6 +993,10 @@ if "nl_feedback_proposal_text" not in st.session_state:
     st.session_state.nl_feedback_proposal_text = None
 if "weight_question_plan" not in st.session_state:
     st.session_state.weight_question_plan = None
+if "feedback_history" not in st.session_state:
+    # 피드백 이력(G3 Memory). 승인/재계산/초기화 때마다 analysis.weight_feedback.
+    # append_history()로 한 줄씩 쌓는다. 최초 추천이 새로 계산되면 비운다.
+    st.session_state.feedback_history = []
 if "weight_interpretation" not in st.session_state:
     st.session_state.weight_interpretation = None
 if "weight_interpretation_source" not in st.session_state:
@@ -923,6 +1032,7 @@ def reset_all():
     st.session_state.nl_feedback_proposal = None
     st.session_state.nl_feedback_proposal_text = None
     st.session_state.weight_question_plan = None
+    st.session_state.feedback_history = []
     st.session_state.weight_interpretation = None
     st.session_state.weight_interpretation_source = None
     st.session_state.weight_confirmation = None
@@ -962,6 +1072,7 @@ def _finalize_initial_recommendation(confirmed_weights: dict[str, float] | None 
         st.session_state.initial_recommendation
     )
     st.session_state.feedback_recommendation = None
+    st.session_state.feedback_history = []
     st.session_state.nl_feedback_proposal = None
     st.session_state.nl_feedback_proposal_text = None
     for code, key in FEEDBACK_SLIDER_KEYS.items():
@@ -1184,6 +1295,16 @@ elif st.session_state.stage == "weight_confirm":
     weight_question = st.session_state.weight_question_plan
     interpretation = st.session_state.weight_interpretation
     source = st.session_state.weight_interpretation_source
+    # "의료가 더 중요해"처럼 방향만 있는 답변(G3)은 '질문한 조건 동일 가중치'를 기준으로
+    # Python 규칙이 구체적인 비율을 제안한다. 승인해야만 적용된다.
+    if interpretation and interpretation.get("type") == "adjust_direction":
+        base_codes = (weight_question or {}).get("indicator_codes") or [
+            scoring.CONDITION_TO_INDICATOR_CODE[c]
+            for c in (st.session_state.initial_input.get("중요 생활조건") or [])
+            if c in scoring.CONDITION_TO_INDICATOR_CODE
+        ]
+        base_weights = {code: 1.0 for code in base_codes}
+        interpretation = resolve_direction_proposal(interpretation, base_weights)
 
     if source == "initial_extra_request":
         answer_text = st.session_state.initial_input.get("추가 요청사항", "")
@@ -1251,9 +1372,14 @@ elif st.session_state.stage == "weight_confirm":
                 _apply_weight_confirmation(None, "equal_fallback", interpretation["message"])
                 st.rerun()
 
-    else:  # interpretation["type"] == "set_weights"
+    else:  # interpretation["type"] == "set_weights" (방향성 답변도 위에서 set_weights로 바뀜)
         weights = interpretation["weights"]
         weight_sum = sum(weights.values())
+        if interpretation.get("direction"):
+            st.caption(
+                f"동일 가중치({format_weights(interpretation['direction']['before'])})에서 "
+                "요청 방향대로 조정한 제안입니다."
+            )
         preview_df = pd.DataFrame(
             [
                 {
