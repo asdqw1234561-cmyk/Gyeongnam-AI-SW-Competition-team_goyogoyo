@@ -22,6 +22,7 @@
 | F9 | 후보군·Critic을 AI 설명에 연결: 관찰 내용에 확정된 후보 역할·Critic 교체·한 축 의존·평가축 수·미확보 축·반영 못 한 조건·판단 한계 추가, 판단 범위 표시·과장·미확보 축 단정·역할 불일치를 결정적으로 거부, 피드백 재평가 뒤에도 같은 검증으로 설명(`explain_candidates`) | `agent/planner_loop.py`, `agent/planner.py`, `app.py` `_render_final_answer`, `analysis/candidates.py`(Critic `facts` 추가만) | 동작(단위·AppTest·실제 Ollama 최초·피드백 각 1회 ai_verified) |
 | F10 | AI 설명은 Python이 확정한 explanation_facts(구별 축 점수·순위·강점/약점/중립, 역할 구 비교 순서, 지배 관계, 6개 중 확보 3개)만 옮기고, 같은 사실로 결정적 검증(강약 뒤집기·최상/최하 표현·두 구 비교·지배 방향·숫자 귀속·역할 구문·미확보 축 강약 표현·N개 중 M개·계산 안 한 가정) | `analysis/explanation_facts.py`, `agent/planner_loop.py` | 동작(단위 456개·실제 Ollama) |
 | F11 | 설명 경로 통일: explanation_facts → Python 기본 설명(항상 사실) → AI 다듬기 1회 → 검증 → 실패 시 기본 설명. 최초 추천(AI 계획 실패 포함)·피드백 재평가 공용 | `agent/planner_loop.py` `explain_from_facts`, `analysis/explanation_facts.py` `render_explanation` | 동작(단위 468개·AppTest·실제 Ollama 4/4) |
+| F12 | 교육시설 수 참고 정보: 결과 화면에 구별 초·중·고·총 학교 수·분교 수, 출처·기준일, 한계 표시. 추천 점수·후보·Critic·피드백에 쓰지 않음(DEC-19), 파일 없으면 "미확보" 안내 후 추천은 그대로 | `services/schools.py`, `app.py` `_render_school_reference` | 동작(단위·AppTest), 브라우저 미확인 |
 | F6 | 정부용 구별 시설 현황·가상 증감 시뮬레이션 | `pages/government.py`, `analysis/simulation.py` | 동작 (주제 연결은 OPEN-3) |
 
 공통: `agent/llm.py`(백엔드 선택·호출 수·입력 길이 제한), `agent/llm_json.py`(JSON 추출).
@@ -32,7 +33,7 @@
 |---|---|
 | 확보(구별) | 버스정류장 수 2,926 / 의료기관 수 1,358 / 편의점 등록 업소 수 950 — `data/region_indicators.csv` |
 | 확보(위치) | 버스정류장(`data/raw/changwon_bus_stops.csv`), 편의점(`data/convenience/changwon_convenience_stores.csv`) |
-| 수집·미연결 | 구별 초·중·고 학교 수 226교(`data/schools/changwon_school_counts.csv`, 학교 목록 `changwon_schools.csv`) — 점수·화면 미연결(G5-B) |
+| 참고 정보(점수 미사용) | 구별 초·중·고 학교 수 226교(`data/schools/changwon_school_counts.csv`, 학교 목록 `changwon_schools.csv`) — 결과 화면 참고 표시만(F12, DEC-19) |
 | 미확보 | 통근·이동시간, 배차간격, 실시간 도착, 도보경로, 위치 기반 의료기관, 월세·전세, 범죄율·안전, 교육·자연·문화, 대형마트, 응급실, 종합 거주 적합도 |
 
 ## 테스트
@@ -192,7 +193,7 @@ R3 조사 단계에서 바뀐 코드: 없음(G4-A 도구는 위 참고, 앱 미�
 2. **추천 쏠림을 강화한다.** 합계 1위 성산은 의료·편의점 1위와 같다. 동일 가중치 4축이면 성산 우위가 커지고 새로운 장단점(트레이드오프)은 거의 생기지 않는다. 진해는 4축 중 3축에서 최하위가 된다.
 3. **읍·면 학교가 수를 부풀린다.** 지번주소 기준 읍·면 소재 학교가 의창 21/50(동읍·북면·대산면), 마산회원 14/40(내서읍), 마산합포 12/44(진동·진전·구산면 등)이다. 시내에 사는 이주자에게 가까운 학교 수가 아니다.
 4. **학교 수 ≠ 교육 여건.** 학급·학생 수, 통학구역(초등 배정), 학업 성취·학군과 무관하고 인구·면적·학령인구 미보정이다.
-→ 판단: 지금 `school_count`를 기존 3축과 같은 방식(min-max 가중합)으로 넣으면 "교육 여건 비교"로 오해될 위험이 크고, 작은 차이가 순위를 흔든다. 연결 방식은 사용자 결정(OPEN-9).
+→ 판단: 지금 `school_count`를 기존 3축과 같은 방식(min-max 가중합)으로 넣으면 "교육 여건 비교"로 오해될 위험이 크고, 작은 차이가 순위를 흔든다. 연결 방식은 사용자 결정(OPEN-9) → 2026-10-04 (b) 참고 정보만으로 결정(DEC-19), G5-B로 구현.
 
 ## 알려진 문제 / 공백
 

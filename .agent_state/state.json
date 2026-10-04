@@ -3,16 +3,15 @@
   "submission_deadline": "2026-10-06T12:00",
   "last_synced_commit": "f2bf6c8",
   "last_synced_at": "2026-10-04",
-  "last_test_result": "473 passed, 1 skipped (2026-10-04, G5-A)",
+  "last_test_result": "479 passed, 1 skipped (2026-10-04, G5-B)",
   "last_loop": {
     "date": "2026-10-04",
-    "task": "G5-A 창원 5개 구 학교 수 수집·집계",
-    "result": "226교 교차검증 일치(의창50/성산55/합포44/회원40/진해37). 왜곡 위험(작은 차이·성산 쏠림·읍면 학교) 검토 → 연결 방식 OPEN-9로 정지"
+    "task": "G5-B 교육시설 수 참고 정보 표시 (점수 미연결)",
+    "result": "services/schools.py + app.py 결과 화면 접힌 영역. 점수·후보·Critic 불변 AppTest 확인. 브라우저 미확인. 사용자 지시로 정지"
   },
   "next_candidates": [
-    "G5-B 교육 축 연결 (OPEN-9 결정 후)",
-    "G4-A 재개 (OPEN-5 해제 시)",
-    "제출용 대표 Test Case 5건 기록 (R-MVP-2⑦, 마감 D-2)"
+    "제출용 대표 Test Case 5건 기록 (R-MVP-2⑦, 마감 D-2)",
+    "G4-A 재개 (OPEN-5 해제 시)"
   ],
   "open_decisions": [
     "OPEN-1",
@@ -20,8 +19,7 @@
     "OPEN-4",
     "OPEN-5",
     "OPEN-6",
-    "OPEN-7",
-    "OPEN-9"
+    "OPEN-7"
   ],
   "current_priority": "현실적인 정착 데이터 보강 (DEC-17)"
 }

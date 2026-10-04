@@ -216,11 +216,11 @@
 - 완료 조건: 5개 구 값·제외 건수·기준일 확인, 원본 수집 파일 보존, 전체 테스트 통과
 - 결과: 2026-10-04 · `scripts/ingest_school_counts.py`(원본 읽기 전용, 도로명주소 접두로 창원 추출, 지번주소·SGIS 좌표판정·교육지원청 교차검증, 기대값 상수 검증) → `data/schools/changwon_school_counts.csv`·`changwon_schools.csv` · 원본 12,011 → 창원 226(제외 0, 교차검증 226/226 일치) · 의창 50/성산 55/마산합포 44/마산회원 40/진해 37 · `tests/test_school_counts.py` 5개, 전체 473개 통과(skip 1) · 왜곡 검토 결과 연결 방식은 OPEN-9.
 
-## G5-B. 교육 평가축 연결
-- [ ] 상태
-- 승인: 필요 (OPEN-9 연결 방식 결정 + `scoring.py` 매핑 1줄 - 계산식 불변, CLAUDE.md §4 보고 대상)
-- 범위: `CONDITION_TO_INDICATOR_CODE`·`EVALUATION_AXES`·`explanation_facts`·`feedback`·`app.py` 라벨, 기존 3축 결과 불변 회귀 테스트
-- 결과:
+## G5-B. 교육시설 수 참고 정보 표시 (점수 미연결, DEC-19)
+- [x] 상태
+- 승인: 완료 (2026-10-04 사용자 OPEN-9 (b) 결정)
+- 범위: `services/schools.py`(G5-A 결과 읽기 전용, 실패 시 "미확보") → `app.py` 결과 화면 정규화 계산식 아래 접힌 영역 "📚 교육시설 수 참고 정보 (추천 점수에 사용하지 않음)". scoring·candidates·feedback 변경 없음
+- 결과: 2026-10-04 · 구별 초·중·고·총 학교 수·분교 수 + 출처·기준일(2026-03-20) + 한계 6줄 표시 · `tests/test_school_reference.py` 6개(G5-A 값 일치, 파일 없음/깨짐 → 미확보, 교육이 점수·가중치·후보 축에 없음, 데이터 유무와 무관하게 점수·순위·후보 역할·Critic 동일, 과장 표현 없음) · 전체 479개 통과(skip 1) · 브라우저 수동 확인 필요
 
 ---
 

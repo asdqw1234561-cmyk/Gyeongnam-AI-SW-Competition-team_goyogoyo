@@ -10,6 +10,7 @@ from agent.planner_loop import REVIEW_TOOL_LABELS, explain_candidates
 from analysis import feedback, scoring
 from analysis.candidates import build_candidate_set
 from services.region_data import get_all_changwon_regions, is_supported_region
+from services.schools import SCHOOL_REFERENCE_LIMITATIONS, SCHOOL_REFERENCE_TITLE, load_school_reference
 
 CHART_ACCENT_COLOR = "#2a78d6"
 MAX_CANDIDATE_COUNT = 5  # 현재 지원 지역(창원시 5개 구) 수와 동일하게 맞춤
@@ -175,7 +176,8 @@ REFERENCE_INDICATOR_ORDER = ["hospital_count", "bus_stop_count", "convenience_st
 
 UNAVAILABLE_DATA_NOTICE = (
     "실제 대중교통 소요시간, 월세·전세 가격, 응급실 운영 병원 수, 대형마트 수, "
-    "교육·안전·자연환경·문화시설 지표는 아직 확보되지 않아 추천 계산에 사용되지 않습니다."
+    "교육·안전·자연환경·문화시설 지표는 아직 확보되지 않아 추천 계산에 사용되지 않습니다. "
+    "(구별 초·중·고 학교 수는 결과 아래 '교육시설 수 참고 정보'로만 보여 주며 점수에는 쓰지 않습니다.)"
 )
 
 RELATIVE_SCORE_CAVEAT = (
@@ -183,6 +185,35 @@ RELATIVE_SCORE_CAVEAT = (
     "점수입니다(100점 = 해당 지표에서 5개 구 중 수치가 가장 높다는 뜻일 뿐, "
     "완벽한 정주환경을 의미하지 않습니다)."
 )
+
+
+def _render_school_reference() -> None:
+    """구별 초·중·고 학교 수 참고 정보. 추천 점수·후보·Critic과 무관하게 읽기만 한다(DEC-19)."""
+    reference = load_school_reference()
+    with st.expander(f"📚 {SCHOOL_REFERENCE_TITLE}"):
+        if reference["status"] != "확보":
+            st.info(f"교육시설 수: 미확보 - {reference['reason']} 추천 결과에는 영향이 없습니다.")
+            return
+        st.dataframe(
+            pd.DataFrame(
+                [
+                    {
+                        "구": row["region_name"],
+                        "초등학교": row["elementary_school_count"],
+                        "중학교": row["middle_school_count"],
+                        "고등학교": row["high_school_count"],
+                        "총 학교 수": row["school_count"],
+                        "분교(총 학교 수에 포함)": row["branch_school_count"],
+                    }
+                    for row in reference["rows"]
+                ]
+            ),
+            hide_index=True,
+            width="stretch",
+        )
+        st.caption(f"출처: {reference['source']} · 기준일 {reference['reference_date']} · 운영 중인 학교만 집계")
+        for limitation in SCHOOL_REFERENCE_LIMITATIONS:
+            st.caption(f"· {limitation}")
 
 
 def _render_top_candidates(result: dict, heading: str = "추천 후보지역") -> None:
@@ -541,6 +572,8 @@ def render_recommendation_section() -> None:
                 uc["indicator_name"] for uc in result["used_conditions"] if uc["indicator_code"] == code
             )
             st.markdown(f"- **{indicator_name}**: {info['formula']}")
+
+    _render_school_reference()
 
     st.markdown("**아직 점수에 반영되지 않은 입력정보**")
     not_used_inputs = []

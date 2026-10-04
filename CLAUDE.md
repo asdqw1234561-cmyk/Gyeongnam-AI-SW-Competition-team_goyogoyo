@@ -26,7 +26,7 @@
 | 설명용 확정 사실 | `analysis/explanation_facts.py` | AI 설명에 넘길 사실(구별 축 점수·순위·강점/약점/중립, 역할 구 비교 순서, 지배 관계, 확보/전체 평가축 수)을 결정적으로 생성. LLM은 판정·대소관계를 추론하지 않고 이것만 옮기며 검증도 이 기준 |
 | 피드백 재평가 | `analysis/feedback.py` | 방향성 피드백 배율 규칙(×1.5/×1.25/×2.0 후 재정규화), 모든 피드백이 쓰는 단일 재평가 경로(점수 → 후보·Critic), `feedback_history` 기록 |
 | 시뮬레이션 | `analysis/simulation.py` | deepcopy 사본에 가상값 → `compute_region_scores_from_weights()` 재사용 |
-| 데이터 조회 | `services/region_data.py`, `services/bus_stops.py`, `services/convenience.py`, `services/map_markers.py` | CSV 읽기 전용 |
+| 데이터 조회 | `services/region_data.py`, `services/bus_stops.py`, `services/convenience.py`, `services/map_markers.py`, `services/schools.py`(구별 학교 수 참고 정보 - 점수 미사용) | CSV 읽기 전용 |
 | 수집·집계 | `scripts/` | 공공데이터 수집, 버스정류장 공간판정·집계 |
 
 **AI Agent**
@@ -56,7 +56,7 @@
 - 원본 CSV·GeoJSON은 수정하지 않는다. 데이터 수치를 코드에 하드코딩하지 않는다(기존 `EXPECTED_COUNTS` 같은 검증용 상수는 예외).
 
 **현재 지원하지 않는 데이터** — 질문받으면 이유를 설명하고, 다른 데이터로 억지로 대신 답하지 않는다:
-실제 버스 이동시간·통근시간, 배차간격, 실시간 도착정보, 도보경로, 위치 기반 의료기관 검색, 월세·전세(실거래·매물), 범죄율·안전, 교육·자연환경·문화시설, 대형마트 수, 응급실 운영 병원 수, 종합적인 거주 적합도 확정.
+실제 버스 이동시간·통근시간, 배차간격, 실시간 도착정보, 도보경로, 위치 기반 의료기관 검색, 월세·전세(실거래·매물), 범죄율·안전, 교육 평가(구별 초·중·고 학교 수는 참고 정보로만 표시, 점수·후보에 쓰지 않음), 자연환경·문화시설, 대형마트 수, 응급실 운영 병원 수, 종합적인 거주 적합도 확정.
 
 ## 4. 점수와 거리 해석
 
