@@ -192,6 +192,7 @@
 - 결과: 2026-10-02 · 막힘 - 수집·분석 도구는 완성(scripts/collect_rent_transactions.py, scripts/analyze_rent_transactions.py, tests/test_rent_transactions.py 18개, 전체 418개 통과), 4개 API 공식 기술문서로 필드 확정 · 실제 호출은 4개 모두 resultCode 30(키 유효, 활용승인 미반영) → 실데이터 분석 미산출, G4-B 진행 불가 · 해제 조건: 승인된 키로 `python scripts/collect_rent_transactions.py inspect` 성공.
 - 재확인: 2026-10-04 · 사용자가 공공데이터포털 일반 인증키를 재발급해 `.env`의 `MOLIT_SERVICE_KEY`를 교체(로딩 확인, 값 미출력) → `inspect` 1회: 아파트·오피스텔·연립다세대·단독/다가구 **4종 모두 resultCode 30(등록되지 않은 서비스키)** → BLOCKED 유지, 코드 변경 없음
 - 재확인 2: 2026-10-04 · 사용자가 4개 API 활용신청 승인 완료라고 알림 → `inspect` 4종 모두 resultCode 30 (MOLIT 키·HIRA 키 각각). 같은 두 키로 이미 승인된 병원정보서비스 API는 `00` 정상 → **키는 유효, 전월세 4개 API만 이 계정 키에 아직 등록되지 않음**. 스크립트 엔드포인트(`apis.data.go.kr/1613000/RTMSDataSvc{Apt,Offi,RH,SH}Rent/...`)는 신규 데이터셋(15126472~15126475)과 일치 → 승인 반영 지연 또는 다른(구형) 데이터셋으로 신청했을 가능성 · BLOCKED 유지, 코드 변경 없음
+- 재확인 3: 2026-10-04 · 사용자가 4개 API(15126472~15126475) 승인 상태를 포털에서 직접 확인(승인일 2026-10-04) → `inspect` 1회: 4종 모두 resultCode 30 → 승인 후 게이트웨이 반영 대기로 판단, BLOCKED 유지, 코드 변경 없음
 
 ## G4-B. 주거비 평가축 (낮을수록 좋음 방향 플래그)
 - [ ] 상태
