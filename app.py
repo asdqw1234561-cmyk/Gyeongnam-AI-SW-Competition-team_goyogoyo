@@ -12,7 +12,6 @@ from analysis.candidates import build_candidate_set
 from services.region_data import get_all_changwon_regions, is_supported_region
 from services.schools import SCHOOL_REFERENCE_LIMITATIONS, SCHOOL_REFERENCE_TITLE, load_school_reference
 
-CHART_ACCENT_COLOR = "#2a78d6"
 MAX_CANDIDATE_COUNT = 5  # 현재 지원 지역(창원시 5개 구) 수와 동일하게 맞춤
 
 # 피드백(가중치 직접 조정) 슬라이더의 session_state 키와 표시 라벨.
@@ -58,12 +57,6 @@ def _option_index(options: list[str], previous: str | None, empty_value: str | N
     value = previous or empty_value
     return options.index(value) if value in options else 0
 
-# compute_region_scores_from_weights()로 계산된 결과(AI 가중치 확인 승인 포함)는
-# used_conditions 항목에 "condition"(원래 선택한 생활조건 이름)이 없다 - 그 경로는
-# 지표 가중치만 받으므로 구조적으로 알 수 없다(analysis/scoring.py 설계). 화면
-# 표시용으로만 indicator_code에서 역으로 조건 이름을 찾는다.
-INDICATOR_CODE_TO_CONDITION = {code: cond for cond, code in scoring.CONDITION_TO_INDICATOR_CODE.items()}
-
 # 화면에 표시할 간결한 주의사항. CSV의 note 컬럼(검증 정보 전체, 예외 ID 목록 등)은
 # data/region_indicators.csv에 그대로 보존되며, 여기서는 화면용 짧은 문구로만 대체한다.
 SHORT_NOTES = {
@@ -73,111 +66,12 @@ SHORT_NOTES = {
 }
 
 
-def render_indicator_category(category: str, section_title: str) -> None:
-    """
-    창원시 5개 구 전체(get_all_changwon_regions)를 category 기준으로 조회해
-    지표별 표 + 막대그래프를 렌더링한다. CSV에 새 category/지표가 추가되면
-    (교통/생활편의/주거비 등) 이 함수를 그대로 재사용해 같은 화면을 확장할 수 있다.
-
-    - 5개 구 전부 미확보인 지표는 긴 표 대신 "지표명 — 미확보" 한 줄 + 접기 영역으로
-      간결하게 표시한다(수치를 0으로 바꾸거나 숨기지 않는다 - 접으면 볼 수 있다).
-    - 일부만 확보된 지표(향후 생길 수 있음)는 기존처럼 표 전체를 보여주되, 확보 행만
-      그래프에 반영한다.
-    - 출처·기준일은 표를 좁게 유지하기 위해 별도 접기 영역으로 뺐다(원본 CSV 값은
-      그대로 보존, 표시 위치만 바뀜).
-    """
-    st.subheader(section_title)
-    regions = get_all_changwon_regions(categories=[category])
-
-    indicator_codes: list[str] = []
-    for region in regions:
-        for indicator in region["categories"].get(category, []):
-            if indicator["indicator_code"] not in indicator_codes:
-                indicator_codes.append(indicator["indicator_code"])
-
-    if not indicator_codes:
-        st.info("아직 등록된 지표가 없습니다.")
-        return
-
-    for code in indicator_codes:
-        rows = []
-        for region in regions:
-            indicator = next(
-                (i for i in region["categories"].get(category, []) if i["indicator_code"] == code),
-                None,
-            )
-            if indicator is None:
-                continue
-            rows.append(
-                {
-                    "구": region["region_name"],
-                    "값": indicator["value"] if indicator["value"] is not None else "미확보",
-                    "단위": indicator["unit"] or "-",
-                    "상태": indicator["data_status"],
-                    "출처": indicator["source"] or "-",
-                    "기준일": indicator["reference_date"] or "-",
-                }
-            )
-
-        indicator_name = next(
-            (
-                i["indicator_name"]
-                for region in regions
-                for i in region["categories"].get(category, [])
-                if i["indicator_code"] == code
-            ),
-            code,
-        )
-        note_text = SHORT_NOTES.get(code) or next(
-            (
-                i["note"]
-                for region in regions
-                for i in region["categories"].get(category, [])
-                if i["indicator_code"] == code and i["note"]
-            ),
-            None,
-        )
-
-        rows_df = pd.DataFrame(rows)
-        confirmed_rows = [row for row in rows if row["상태"] == "확보"]
-
-        if not confirmed_rows:
-            # 5개 구 전체 미확보 - 긴 표 대신 한 줄 + 접기 영역
-            st.markdown(f"**{indicator_name}** — 미확보")
-            with st.expander("구별 상태 보기"):
-                st.dataframe(rows_df[["구", "상태"]], hide_index=True, width="stretch")
-            if note_text:
-                st.caption(f"ℹ️ {note_text}")
-            continue
-
-        st.markdown(f"**{indicator_name}**")
-        st.dataframe(rows_df[["구", "값", "단위", "상태"]], hide_index=True, width="stretch")
-
-        if note_text:
-            st.caption(f"ℹ️ {note_text}")
-
-        with st.expander("출처 및 기준일 보기"):
-            st.dataframe(rows_df[["구", "출처", "기준일"]], hide_index=True, width="stretch")
-
-        chart_df = pd.DataFrame(
-            [{"구": row["구"], "값": float(row["값"])} for row in confirmed_rows]
-        ).set_index("구")
-        st.bar_chart(chart_df, color=CHART_ACCENT_COLOR)
-
-        missing_regions = [row["구"] for row in rows if row["상태"] != "확보"]
-        if missing_regions:
-            st.caption(
-                f"미확보 구: {', '.join(missing_regions)} "
-                "(0이 아니라 '미확보'로 표시되며 그래프에서는 제외됩니다)"
-            )
-
-
 REFERENCE_INDICATOR_ORDER = ["hospital_count", "bus_stop_count", "convenience_store_count"]
 
 UNAVAILABLE_DATA_NOTICE = (
     "실제 대중교통 소요시간, 월세·전세 가격, 응급실 운영 병원 수, 대형마트 수, "
     "교육·안전·자연환경·문화시설 지표는 아직 확보되지 않아 추천 계산에 사용되지 않습니다. "
-    "(구별 초·중·고 학교 수는 결과 아래 '교육시설 수 참고정보'로만 보여 주며 점수에는 쓰지 않습니다.)"
+    "(구별 초·중·고 학교 수는 바로 아래 '교육시설 수 참고정보'로만 보여 주며 점수에는 쓰지 않습니다.)"
 )
 
 RELATIVE_SCORE_CAVEAT = (
@@ -216,86 +110,14 @@ def _render_school_reference() -> None:
             st.caption(f"· {limitation}")
 
 
-def _render_top_candidates(result: dict, heading: str = "추천 후보지역") -> None:
-    """
-    result["top_candidates"]를 "N위 - 구 이름 - 종합점수 - 실제 수치 - 계산 근거"
-    형태로 렌더링한다. 최초 추천과 피드백(가중치 조정) 추천 둘 다 이 함수를 쓴다.
-    """
-    st.markdown(f"**{heading} (요청하신 {len(result['top_candidates'])}개)**")
-    for row in result["top_candidates"]:
-        tie_label = " (동점)" if row["tied"] else ""
-        st.markdown(f"#### {row['rank']}위 — {row['region_name']} · 종합점수 {row['total_score']:.1f}점{tie_label}")
-
-        ref_rows = [
-            {"지표": info["indicator_name"], "실제 수치": f"{info['raw_value']:.0f}개"}
-            for code, info in (
-                (c, row["reference_indicators"].get(c)) for c in REFERENCE_INDICATOR_ORDER
-            )
-            if info is not None
-        ]
-        if ref_rows:
-            st.dataframe(pd.DataFrame(ref_rows), hide_index=True, width="stretch")
-
-        explanation_parts = [
-            f"{uc['indicator_name']} {row['component_scores'][uc['indicator_code']]['raw_value']:.0f}개"
-            f"(정규화 {row['component_scores'][uc['indicator_code']]['normalized_score']:.1f}점 "
-            f"× 가중치 {uc['weight'] * 100:.0f}%)"
-            for uc in result["used_conditions"]
-        ]
-        st.caption("계산 근거: " + " + ".join(explanation_parts) + f" = {row['total_score']:.1f}점")
-
-
 def _unscored_inputs(initial_input: dict) -> list[str]:
     """입력은 받았지만 대응 데이터가 없어 점수에 반영하지 못한 항목 이름(Critic 커버리지 점검용)."""
     return [name for name in ("직장/학교 위치", "주거비 예산") if (initial_input or {}).get(name)]
 
 
-def _render_candidate_set(candidate_set: dict, heading: str = "🧭 정착 후보군 — 성격이 다른 후보") -> None:
-    """
-    analysis.candidates.build_candidate_set() 결과(후보 역할 + Critic 점검)를 보여준다.
-    후보와 점검 결과는 Python이 점수 결과에서 결정적으로 계산한 것이며 AI가 만들지 않는다.
-    """
-    if candidate_set.get("status") != "ok":
-        return
-    st.markdown(f"### {heading}")
-    st.caption(
-        "종합점수 1위 하나만 보지 않도록, 같은 점수 결과에서 성격이 다른 후보를 함께 보여줍니다. "
-        "후보 선정과 아래 점검은 Python이 계산 결과로만 수행했습니다."
-    )
-    for role in candidate_set["roles"]:
-        if role["status"] != "ok":
-            st.caption(f"**{role['role_label']}** — 산출 불가: {role['reason']}")
-            continue
-        st.markdown(
-            f"**{role['role_label']} · {role['region_name']}** "
-            f"(종합 {role['total_score']:.1f}점, {role['rank']}위) — {role['reason']}"
-        )
-        st.caption(
-            f"강점: {', '.join(role['strengths']) or '없음'} · 약점: {', '.join(role['weaknesses']) or '없음'} · "
-            + " / ".join(
-                f"{p['axis']} {p['raw_value']:.0f}개({p['normalized_score']:.1f}점, {p['axis_rank']}위)"
-                for p in role["axis_profile"]
-            )
-        )
-    if candidate_set["pareto"]:
-        st.caption(f"어느 축에서도 다른 구에 완전히 뒤지지 않는 구: {', '.join(candidate_set['pareto'])}")
-
-    critic = candidate_set["critic"]
-    with st.expander(f"🔎 Critic 점검 (경고 {critic['warning_count']}건)", expanded=critic["warning_count"] > 0):
-        for check in critic["checks"]:
-            if check["level"] == "warning":
-                st.warning(f"⚠️ {check['message']}")
-            else:
-                st.caption(f"ℹ️ {check['message']}")
-        st.dataframe(
-            pd.DataFrame([{"평가축": a["axis"], "상태": a["status"]} for a in candidate_set["axes"]]),
-            hide_index=True, width="stretch",
-        )
-
-
 def render_agent_execution_log() -> None:
     """
-    'AI 분석 실행 과정 보기' 접기 영역의 내용을 렌더링한다.
+    '🤖 Agent가 실제로 한 일' 접기 영역의 계획·도구 실행 기록을 렌더링한다.
     agent.planner.run_agent_plan()의 반환값(st.session_state.agent_execution_log)을
     그대로 보여줄 뿐, 여기서 새로 판단하거나 숫자를 만들지 않는다.
 
@@ -391,7 +213,8 @@ def render_agent_execution_log() -> None:
     _render_review_steps(log)
 
 
-_REVIEW_ACTION_LABELS = {"answer": "설명 작성", "call_tools": "추가 도구 요청", "error": "판단 실패"}
+_REVIEW_ACTION_LABELS = {"answer": "설명 작성", "call_tools": "추가 도구 요청", "error": "판단 실패",
+                         "deterministic": "계산 결과로 기본 설명 작성", "paraphrase": "AI가 문장 다듬기 → 검증"}
 
 
 def _render_review_steps(log: dict) -> None:
@@ -403,7 +226,8 @@ def _render_review_steps(log: dict) -> None:
                    if log["mode"] != "ai_planned" else "없음")
         return
     for step in steps:
-        line = f"· {step['round']}회차: {_REVIEW_ACTION_LABELS.get(step['action'], step['action'])}"
+        round_label = f"{step['round']}회차" if isinstance(step["round"], int) else f"{step['round']} 단계"
+        line = f"· {round_label}: {_REVIEW_ACTION_LABELS.get(step['action'], step['action'])}"
         if step.get("reason"):
             line += f" — {step['reason']}"
         st.caption(line)
@@ -417,16 +241,16 @@ def _render_final_answer(final: dict, heading: str) -> None:
     """검증을 통과한 AI 설명 또는 Python 요약. 최초 추천과 피드백 재평가가 같은 표시 방식을 쓴다."""
     st.markdown(heading)
     if final["source"] == "ai_paraphrase":
-        st.success("Python이 확정 사실로 만든 설명을 AI가 자연스럽게 다듬은 문장입니다 · "
-                   "새로운 사실·숫자·후보 역할이 추가되지 않았는지 검증했습니다")
-        st.write(final["text"])
-        with st.expander("Python 기본 설명(검증 기준) 보기"):
+        st.markdown(final["text"])
+        st.caption("✅ 계산으로 확정된 사실을 AI가 읽기 쉽게 다듬은 문장입니다. "
+                   "없는 사실·숫자·후보가 끼어들지 않았는지 검증을 통과했습니다.")
+        with st.expander("검증 기준이 된 기본 설명 보기"):
             st.markdown(final["deterministic_text"])
         return
     if final["source"] == "deterministic":
-        reason = f" (AI 다듬기를 쓰지 않은 이유: {final['rejected_reason']})" if final.get("rejected_reason") else ""
-        st.info(f"📋 Python이 확정 사실(후보 역할·강점·약점·평가축·한계)로 작성한 설명입니다{reason}")
         st.markdown(final["text"])
+        reason = f" AI가 다듬은 문장은 검증을 통과하지 못해 쓰지 않았습니다({final['rejected_reason']})."             if final.get("rejected_reason") else ""
+        st.caption(f"📋 계산으로 확정된 사실(후보 역할·강점·약점·평가 항목·한계)만으로 작성한 설명입니다.{reason}")
         return
     if final["source"] == "ai_verified":
         st.success("AI가 계산 결과와 Agent가 확정한 후보·Critic 결과를 보고 작성한 설명입니다 · "
@@ -438,196 +262,369 @@ def _render_final_answer(final: dict, heading: str) -> None:
         st.text(final["text"])
 
 
-def render_ai_recommendation_explanation() -> None:
-    """AI가 점수 계산 결과를 보고 작성한 설명(숫자 검증 통과분)과 가중치 가정 시뮬레이션 결과.
-    실제 추천 순위는 위의 결과(승인된 가중치) 그대로이며, 여기 내용은 참고 정보다."""
-    log = st.session_state.get("agent_execution_log")
-    if not log or not log.get("final_answer"):
+AXIS_SHORT_LABELS = {"bus_stop_count": "교통", "hospital_count": "의료", "convenience_store_count": "생활편의"}
+ROLE_ICONS = {"best": "👉", "balanced": "⚖️", "alternative": "🔀", "value": "💰"}
+ROLE_GUIDE = (
+    "최적 = 지금 비율로 종합점수 1위 · 균형 = 가장 약한 항목도 비교적 괜찮은 곳 · "
+    "대안 = 최적 후보가 약한 항목에서 앞서는 곳"
+)
+
+
+def _weights_text(result: dict | None) -> str:
+    return " · ".join(
+        f"{AXIS_SHORT_LABELS.get(uc['indicator_code'], uc['indicator_name'])} {uc['weight'] * 100:.0f}%"
+        for uc in (result or {}).get("used_conditions", [])
+    ) or "없음"
+
+
+def _current_view_result() -> dict | None:
+    """화면 맨 위에 보여줄 '지금 적용 중인 결과' - 승인된 피드백 결과가 있으면 그것, 없으면 최초 추천."""
+    applied = st.session_state.feedback_recommendation
+    if applied is not None and applied.get("status") == "ok":
+        return applied
+    return st.session_state.initial_recommendation
+
+
+def _axis_value_ranks(result: dict) -> dict[str, dict[str, int]]:
+    """표시용: 지표별 실제 값의 5개 구 내 순위(값이 같으면 같은 순위). 점수 계산과 무관하다."""
+    ranks: dict[str, dict[str, int]] = {}
+    for uc in result["used_conditions"]:
+        code = uc["indicator_code"]
+        values = {r["region_id"]: r["component_scores"][code]["raw_value"] for r in result["region_scores"]}
+        ranks[code] = {rid: 1 + sum(1 for v in values.values() if v > value) for rid, value in values.items()}
+    return ranks
+
+
+def _render_candidate_summary(candidate_set: dict) -> None:
+    """
+    analysis.candidates.build_candidate_set()이 확정한 후보 역할을 결론부터 보여준다.
+    같은 구가 여러 역할을 맡으면 한 줄로 합친다. 후보·순위는 Python이 계산한 그대로이며 AI가 만들지 않는다.
+    """
+    if candidate_set.get("status") != "ok":
         return
-    _render_final_answer(log["final_answer"], "### 🤖 AI의 추천 결과 설명")
-
-    for sim in log.get("what_if_results") or []:
-        weights = ", ".join(f"{FEEDBACK_INDICATOR_LABELS.get(c, c)} {v}%" for c, v in sim["weights_percent"].items())
-        with st.expander(f"🔍 AI가 확인한 가정: 가중치를 {weights}로 바꾼다면 (실제 추천에는 미적용)"):
-            st.dataframe(
-                pd.DataFrame([{"순위": r["rank"], "구": r["region_name"], "종합점수(가정)": r["total_score"]}
-                              for r in sim["ranking"]]),
-                hide_index=True, width="stretch",
+    groups: dict[str, list[dict]] = {}
+    for role in candidate_set["roles"]:
+        if role["status"] == "ok":
+            groups.setdefault(role["region_id"], []).append(role)
+    with st.container(border=True):
+        for roles in groups.values():
+            head = roles[0]
+            st.markdown(
+                f"**{ROLE_ICONS.get(head['role'], '•')} {', '.join(r['role_label'] for r in roles)} · "
+                f"{head['region_name']}** — 종합 {head['total_score']:.1f}점 (5개 구 중 {head['rank']}위)"
             )
-            st.caption("이 가정을 실제로 적용하려면 아래 '🔄 조건 조정 후 다시 비교하기'에서 가중치를 바꿔 승인하세요.")
+            profile = " · ".join(f"{p['axis']} {p['raw_value']:.0f}개({p['axis_rank']}위)" for p in head["axis_profile"])
+            st.caption(
+                f"강점: {', '.join(head['strengths']) or '없음'} · 약점: {', '.join(head['weaknesses']) or '없음'}"
+                f" | {profile}"
+            )
+        for role in candidate_set["roles"]:
+            if role["status"] != "ok":
+                st.caption(f"{ROLE_ICONS.get(role['role'], '•')} **{role['role_label']}** — 제공 안 함: {role['reason']}")
+        st.caption(ROLE_GUIDE)
 
 
-def render_recommendation_section() -> None:
-    """
-    사용자가 선택한 '중요 생활조건' 중 실제 데이터가 확보된 것만으로 창원시 5개 구를
-    상대 비교하고 후보 개수만큼 추천한다. 점수 계산은 analysis/scoring.py가 전부
-    담당하며, Ollama는 이 단계에 전혀 관여하지 않는다(추천 설명은 계산 결과를
-    그대로 문장으로 바꾼 규칙 기반 텍스트일 뿐 AI가 새로 생성하지 않는다).
+def _render_critic_highlights(candidate_set: dict) -> None:
+    """Agent 자체 점검(Critic) 중 사용자가 꼭 알아야 할 것(후보 교체, 경고)만 위에 보여준다. 전체는 아래 접힌 영역."""
+    checks = (candidate_set.get("critic") or {}).get("checks", [])
+    revised = [c for c in checks if c["code"] == "revised"]
+    warnings = [c for c in checks if c["level"] == "warning"]
+    if not (revised or warnings):
+        return
+    st.markdown("**⚠️ 확인할 점 — Agent 자체 점검(Critic)**")
+    for check in revised:
+        st.caption(f"🔎 {check['message']}")
+    for check in warnings:
+        st.warning(check["message"])
 
-    표시 순서(사용자가 가장 먼저 보고 싶어할 내용부터):
-    조건·가중치 -> 추천 후보지역 -> 5개 구 전체 순위 -> 계산식 -> 미반영 정보.
-    """
-    st.subheader("🏆 최초 추천 결과")
+
+def _render_comparison_table(result: dict) -> None:
+    """5개 구 종합점수와 항목별 실제 개수·순위를 표 하나로 보여준다."""
+    ranks = _axis_value_ranks(result)
+    rows = []
+    for r in result["region_scores"]:
+        row = {"순위": r["rank"], "구": r["region_name"] + (" (동점)" if r["tied"] else ""),
+               "종합점수": round(r["total_score"], 1)}
+        for uc in result["used_conditions"]:
+            code = uc["indicator_code"]
+            row[f"{AXIS_SHORT_LABELS.get(code, code)} ({uc['indicator_name']})"] = (
+                f"{r['component_scores'][code]['raw_value']:.0f}개 · {ranks[code][r['region_id']]}위"
+            )
+        rows.append(row)
+    st.markdown("### 📊 5개 구 한눈에 비교")
+    st.dataframe(pd.DataFrame(rows), hide_index=True, width="stretch")
+    requested = [r["region_name"] for r in result.get("top_candidates", [])]
     st.caption(
-        "창원시 5개 구를 시설 수 기준으로 상대 비교한 결과입니다. 아래 "
-        "'🔄 조건 조정 후 다시 비교하기'에서 가중치를 바꾸기 전까지는 이 결과가 "
-        "**현재 적용 중인 결과**입니다."
+        f"요청하신 후보 {len(requested)}곳(종합점수 순): {', '.join(requested)} · "
+        "시설 수를 5개 구끼리 비교한 상대 점수이며, 인구·면적·실제 이동시간은 반영하지 않았습니다."
     )
 
+
+def _render_change_summary(initial_result: dict, current_result: dict, current_review: dict) -> None:
+    """피드백 적용 결과를 최초 추천과 비교한다(후보 역할 변화는 analysis.feedback.candidate_changes 그대로)."""
+    changes = [c for c in feedback.candidate_changes(_review_of(initial_result), current_review) if c["changed"]]
+    change_text = ", ".join(f"{c['role_label']} {c['before'] or '-'} → {c['after'] or '-'}" for c in changes)
+    st.info(f"🔁 처음 결과와 비교: {change_text or '후보 역할은 그대로입니다'}")
+
+    initial_weight_by_code = {uc["indicator_code"]: uc["weight"] for uc in initial_result.get("used_conditions", [])}
+    current_weight_by_code = {uc["indicator_code"]: uc["weight"] for uc in current_result["used_conditions"]}
+    initial_rank_by_region = {
+        r["region_id"]: (r["rank"], r["total_score"]) for r in initial_result.get("region_scores", [])
+    }
+    with st.expander("처음 결과와 자세히 비교"):
+        st.markdown("**비율 변화**")
+        st.dataframe(pd.DataFrame([
+            {"항목": FEEDBACK_INDICATOR_LABELS[code],
+             "처음": f"{initial_weight_by_code.get(code, 0) * 100:.1f}%",
+             "지금": f"{current_weight_by_code.get(code, 0) * 100:.1f}%"}
+            for code in REFERENCE_INDICATOR_ORDER
+            if code in initial_weight_by_code or code in current_weight_by_code
+        ]), hide_index=True, width="stretch")
+        rows = []
+        for row in current_result["region_scores"]:
+            prev_rank, prev_score = initial_rank_by_region.get(row["region_id"], (None, None))
+            if prev_rank is None:
+                rank_change = "-"
+            elif prev_rank == row["rank"]:
+                rank_change = "변동없음"
+            elif prev_rank > row["rank"]:
+                rank_change = f"▲{prev_rank - row['rank']}"
+            else:
+                rank_change = f"▼{row['rank'] - prev_rank}"
+            rows.append({
+                "구": row["region_name"],
+                "처음 순위": prev_rank if prev_rank is not None else "-",
+                "지금 순위": row["rank"],
+                "순위 변화": rank_change,
+                "처음 점수": round(prev_score, 1) if prev_score is not None else "-",
+                "지금 점수": round(row["total_score"], 1),
+                "점수 변화": round(row["total_score"] - prev_score, 1) if prev_score is not None else "-",
+            })
+        st.markdown("**5개 구 점수·순위 변화**")
+        st.dataframe(pd.DataFrame(rows), hide_index=True, width="stretch")
+
+
+def render_result_view() -> None:
+    """
+    완료 화면 맨 위: 지금 적용 중인 결과 하나를 결론 → 확인할 점 → AI 설명 → 비교표 순으로 보여준다.
+    피드백이 승인되면 그 결과로 바뀌고(처음 결과와의 차이를 함께 표시), 아니면 최초 추천을 보여준다.
+    점수·후보·Critic·설명은 이미 계산된 값을 표시만 한다.
+    """
     initial_input = st.session_state.initial_input
+    initial_result = st.session_state.initial_recommendation
+    result = _current_view_result()
+    is_feedback = result is not initial_result
+    log = st.session_state.get("agent_execution_log") or {}
+
+    if is_feedback:
+        st.subheader("🏆 추천 결과 — 조건을 바꾼 뒤")
+        st.caption(f"적용 중인 비율: {_weights_text(result)} (처음: {_weights_text(initial_result)})")
+        candidate_set = build_candidate_set(result, _unscored_inputs(initial_input))
+        final = (st.session_state.get("feedback_explanation") or {}).get("final_answer")
+        explanation_heading = "### 🤖 AI의 재평가 결과 설명"
+    else:
+        st.subheader("🏆 추천 결과")
+        st.caption(f"적용 중인 비율: {_weights_text(result)} · {_weight_source_text()}")
+        candidate_set = log.get("candidate_review") or build_candidate_set(result, _unscored_inputs(initial_input))
+        final = log.get("final_answer")
+        explanation_heading = "### 🤖 AI의 추천 결과 설명"
+
     region_text = initial_input.get("희망지역", "")
     mentioned_districts = [d for d in SPECIFIC_DISTRICT_NAMES if d in region_text]
     if mentioned_districts:
-        st.info(
-            f"ℹ️ 입력하신 '{region_text}'에 특정 구({', '.join(mentioned_districts)})가 "
-            "포함되어 있지만, 현재 이 기능은 입력한 구로 범위를 좁히지 않고 **창원시 5개 구 "
-            "전체**를 항상 비교합니다."
+        st.caption(
+            f"ℹ️ 희망 지역으로 {', '.join(mentioned_districts)}를 고르셨지만, 비교는 항상 창원시 5개 구 전체로 합니다."
         )
-
-    # 희망지역 지원 여부는 1단계 제출 시점에 이미 검증을 마쳤으므로(미지원/빈 값이면
-    # 애초에 이 화면에 도달하지 않는다), 여기서는 최초 추천 결과를 다시 계산하지 않고
-    # _finalize_initial_recommendation()이 stage='done' 전환 시 저장해 둔 값을 그대로 쓴다.
-    result = st.session_state.initial_recommendation
-
-    st.markdown("**이번 비교에 사용된 조건과 가중치**")
-    if result["used_conditions"]:
-        used_df = pd.DataFrame(
-            [
-                {
-                    "조건": uc.get("condition")
-                    or INDICATOR_CODE_TO_CONDITION.get(uc["indicator_code"], uc["indicator_name"]),
-                    "사용 지표": uc["indicator_name"],
-                    "가중치": f"{uc['weight'] * 100:.1f}%",
-                }
-                for uc in result["used_conditions"]
-            ]
-        )
-        st.dataframe(used_df, hide_index=True, width="stretch")
-    else:
-        st.write("없음")
-
-    if result["excluded_conditions"]:
-        excluded_text = ", ".join(f"{e['condition']}({e['reason']})" for e in result["excluded_conditions"])
-        st.caption(f"⚠️ 선택했지만 점수 계산에서 제외된 조건: {excluded_text}")
-
-    wc = st.session_state.weight_confirmation
-    if wc and wc["asked"]:
-        origin_label = (
-            "최초 입력의 '추가 요청사항'" if wc.get("answer_source") == "initial_extra_request" else "AI 추가질문 답변"
-        )
-        if wc["source"] == "ai_approved":
-            st.success(
-                f"✅ {origin_label}(\"{wc['answer_text']}\")을 승인해 이 가중치를 "
-                "최초 추천 계산에 사용했습니다."
-            )
-        elif wc["source"] == "ai_rejected_by_user":
-            ai_weights_text = ", ".join(
-                f"{FEEDBACK_INDICATOR_LABELS.get(c, c)} {v:.0f}%"
-                for c, v in (wc["ai_confirmed_weights"] or {}).items()
-            )
-            st.info(
-                f"ℹ️ AI는 {origin_label}(\"{wc['answer_text']}\")에서 {ai_weights_text}을(를) 읽었지만, "
-                "적용하지 않기로 선택해 선택하신 조건에 동일 가중치를 사용했습니다."
-            )
-        else:  # equal_fallback, skipped_blank 등
-            st.info(f"ℹ️ {wc['reason']} 선택하신 조건에 동일 가중치를 적용했습니다.")
-
-    with st.expander("아직 확보하지 못한 데이터"):
-        st.write(UNAVAILABLE_DATA_NOTICE)
 
     if result["status"] == "no_usable_conditions":
-        st.info(f"ℹ️ {result['message']} 선택하신 조건에 대응하는 실제 데이터가 아직 없습니다.")
-        for c in result["caveats"]:
-            st.caption(f"· {c}")
+        st.info(f"ℹ️ {result['message']} 선택하신 조건에 대응하는 실제 데이터가 아직 없습니다. "
+                "교통·의료·생활편의 중 하나 이상을 골라 다시 시작해 주세요.")
         return
 
-    # 성격이 다른 정착 후보와 Critic 점검을 먼저, 이어서 종합점수 순 후보를 보여준다.
-    candidate_review = (st.session_state.get("agent_execution_log") or {}).get("candidate_review")
-    _render_candidate_set(candidate_review or build_candidate_set(result, _unscored_inputs(initial_input)))
-    _render_top_candidates(result)
+    _render_candidate_summary(candidate_set)
+    _render_critic_highlights(candidate_set)
+    if is_feedback:
+        _render_change_summary(initial_result, result, candidate_set)
+    if final:
+        _render_final_answer(final, explanation_heading)
+    if not is_feedback:
+        for sim in log.get("what_if_results") or []:
+            weights = ", ".join(f"{FEEDBACK_INDICATOR_LABELS.get(c, c)} {v}%" for c, v in sim["weights_percent"].items())
+            with st.expander(f"🔍 AI가 확인한 가정: 비율을 {weights}로 바꾼다면 (실제 추천에는 미적용)"):
+                st.dataframe(
+                    pd.DataFrame([{"순위": r["rank"], "구": r["region_name"], "종합점수(가정)": r["total_score"]}
+                                  for r in sim["ranking"]]),
+                    hide_index=True, width="stretch",
+                )
+                st.caption("이 가정을 실제로 적용하려면 아래 '🔄 조건 바꿔서 다시 보기'에서 요청하고 승인하세요.")
+    _render_comparison_table(result)
 
-    st.markdown("---")
-    st.markdown("**창원시 5개 구 전체 순위**")
-    overview_df = pd.DataFrame(
-        [
-            {
-                "순위": row["rank"],
-                "구": row["region_name"],
-                "종합점수": round(row["total_score"], 1),
-                "동점": "예" if row["tied"] else "-",
-            }
-            for row in result["region_scores"]
-        ]
-    )
-    st.dataframe(overview_df, hide_index=True, width="stretch")
-    chart_df = pd.DataFrame(
-        [{"구": r["region_name"], "종합점수": r["total_score"]} for r in result["region_scores"]]
-    ).set_index("구")
-    st.bar_chart(chart_df, color=CHART_ACCENT_COLOR)
-    st.caption(RELATIVE_SCORE_CAVEAT)
 
-    with st.expander("정규화 계산식 보기 (min-max, 0~100점)"):
-        for code, info in result["normalization"].items():
-            indicator_name = next(
-                uc["indicator_name"] for uc in result["used_conditions"] if uc["indicator_code"] == code
-            )
-            st.markdown(f"- **{indicator_name}**: {info['formula']}")
+def _weight_source_text() -> str:
+    """최초 추천 비율이 어디서 왔는지 한 줄로."""
+    wc = st.session_state.weight_confirmation
+    if not wc or not wc["asked"]:
+        return "선택하신 조건을 같은 비율로 비교"
+    origin_label = "처음 입력한 '추가 요청사항'" if wc.get("answer_source") == "initial_extra_request" else "AI 추가질문 답변"
+    if wc["source"] == "ai_approved":
+        return f"✅ {origin_label}(\"{wc['answer_text']}\")에서 읽은 비율을 승인해 사용"
+    if wc["source"] == "ai_rejected_by_user":
+        return f"{origin_label}의 비율을 적용하지 않기로 해 같은 비율로 비교"
+    return f"{wc['reason']} 같은 비율로 비교"
 
-    _render_school_reference()
 
-    st.markdown("**아직 점수에 반영되지 않은 입력정보**")
-    not_used_inputs = []
+def _not_used_inputs(result: dict) -> list[str]:
+    """입력했지만 대응 데이터가 없어 점수에 반영하지 못한 정보(화면 하단 '데이터 출처와 한계'에 표시)."""
+    initial_input = st.session_state.initial_input
+    wc = st.session_state.weight_confirmation
+    items = []
     if initial_input.get("직장/학교 위치"):
-        not_used_inputs.append(
-            f"직장/학교 위치('{initial_input['직장/학교 위치']}') - 실제 이동시간 지표가 없어 반영하지 않음"
-        )
+        items.append(f"직장/학교 위치('{initial_input['직장/학교 위치']}') - 실제 이동시간 지표가 없어 반영하지 않음")
     if initial_input.get("주거비 예산"):
-        not_used_inputs.append(
-            f"주거비 예산('{initial_input['주거비 예산']}') - 실제 주거비(월세·전세) 지표가 없어 반영하지 않음"
-        )
+        items.append(f"주거비 예산('{initial_input['주거비 예산']}') - 실제 주거비(월세·전세) 지표가 없어 반영하지 않음")
     if initial_input.get("자가용 보유 여부"):
-        not_used_inputs.append(
-            f"자가용 보유 여부('{initial_input['자가용 보유 여부']}') - 대응하는 지표가 없어 반영하지 않음"
-        )
+        items.append(f"자가용 보유 여부('{initial_input['자가용 보유 여부']}') - 대응하는 지표가 없어 반영하지 않음")
     extra_request_text = initial_input.get("추가 요청사항")
     extra_request_was_approved = (
         wc and wc.get("answer_source") == "initial_extra_request" and wc["source"] == "ai_approved"
     )
     if extra_request_text and not extra_request_was_approved:
         if wc and wc.get("answer_source") == "initial_extra_request":
-            not_used_inputs.append(
+            items.append(
                 f"추가 요청사항('{extra_request_text}') - 비율 해석 결과는 위에 안내된 대로 "
                 "처리되었고, 그 외 서술 내용은 대응하는 지표가 없어 반영하지 않음"
             )
         else:
-            not_used_inputs.append(
-                f"추가 요청사항('{extra_request_text}') - 대응하는 지표가 없어 반영하지 않음"
-            )
+            items.append(f"추가 요청사항('{extra_request_text}') - 대응하는 지표가 없어 반영하지 않음")
     weight_question = st.session_state.weight_question_plan
     weight_question_text = weight_question["text"] if weight_question else None
-    non_weight_answers = {
-        q: a for q, a in st.session_state.followup_answers.items() if q != weight_question_text
-    }
-    if non_weight_answers:
-        not_used_inputs.append(
+    if any(q != weight_question_text for q in st.session_state.followup_answers):
+        items.append(
             "AI 추가질문(가중치 확인 질문 제외) 답변 - 실제 지표와 연결할 수 없어 점수 계산에 "
-            "반영하지 않음(입력정보로는 위에 보존됨)"
+            "반영하지 않음(입력 내용으로는 보존됨)"
         )
     # 비율의 출처가 최초 입력의 '추가 요청사항'이면 바로 위 추가 요청사항 항목에서 이미
     # 안내했으므로, 이 줄은 AI 추가질문(가중치 확인)에 답한 경우에만 보여준다.
     if wc and wc["asked"] and wc["source"] != "ai_approved" and wc.get("answer_source") != "initial_extra_request":
-        not_used_inputs.append(f"AI 추가질문(가중치 확인) 답변 - {wc['reason']}")
-    for e in result["excluded_conditions"]:
-        not_used_inputs.append(f"중요 생활조건 '{e['condition']}' - {e['reason']}")
+        items.append(f"AI 추가질문(가중치 확인) 답변 - {wc['reason']}")
+    for e in result.get("excluded_conditions", []):
+        items.append(f"중요 생활조건 '{e['condition']}' - {e['reason']}")
+    return items
 
-    if not_used_inputs:
-        for item in not_used_inputs:
-            st.caption(f"· {item}")
-    else:
-        st.caption("입력하신 조건이 전부 점수 계산에 반영되었습니다.")
 
-    for c in result["caveats"]:
-        st.caption(f"· {c}")
+def _indicator_sources(codes: list[str]) -> list[dict]:
+    """점수에 쓴 지표의 출처·기준일(data/region_indicators.csv 그대로)."""
+    found: dict[str, dict] = {}
+    for region in get_all_changwon_regions():
+        for indicators in region["categories"].values():
+            for i in indicators:
+                if i["indicator_code"] in codes and i["indicator_code"] not in found:
+                    found[i["indicator_code"]] = {
+                        "항목": f"{AXIS_SHORT_LABELS.get(i['indicator_code'], '')} ({i['indicator_name']})",
+                        "출처": i["source"] or "-",
+                        "기준일": i["reference_date"] or "-",
+                        "주의": SHORT_NOTES.get(i["indicator_code"], ""),
+                    }
+    return [found[c] for c in codes if c in found]
+
+
+def render_detail_sections(result: dict) -> None:
+    """완료 화면 하단의 접힌 영역들: Agent 실행 과정, 계산 근거, 데이터 출처·한계, 교육시설 참고정보."""
+    st.divider()
+    st.markdown("#### 더 자세히 보기")
+    initial_input = st.session_state.initial_input
+
+    with st.expander("🤖 Agent가 실제로 한 일 — 계획 → 도구 실행 → 자체 점검 → 설명 검증"):
+        if result is not st.session_state.initial_recommendation:
+            st.caption("아래 계획·도구 실행 기록은 최초 추천 때의 기록이고, 자체 점검은 지금 적용 중인 결과 기준입니다.")
+        render_agent_execution_log()
+        if result.get("status") == "ok":
+            review = (
+                (st.session_state.get("agent_execution_log") or {}).get("candidate_review")
+                if result is st.session_state.initial_recommendation else None
+            ) or build_candidate_set(result, _unscored_inputs(initial_input))
+            st.markdown("**자체 점검(Critic) 전체 결과**")
+            for check in review.get("critic", {}).get("checks", []):
+                prefix = "⚠️" if check["level"] == "warning" else "ℹ️"
+                st.caption(f"{prefix} {check['message']}")
+            if review.get("pareto"):
+                st.caption(f"어느 항목에서도 다른 구에 완전히 뒤지지 않는 구: {', '.join(review['pareto'])}")
+            st.dataframe(
+                pd.DataFrame([{"평가축": a["axis"], "상태": a["status"]} for a in review.get("axes", [])]),
+                hide_index=True, width="stretch",
+            )
+
+    if result.get("status") == "ok":
+        with st.expander("🧮 점수 계산 방법과 근거"):
+            st.markdown(f"**적용 비율:** {_weights_text(result)}")
+            st.caption(
+                "각 항목의 실제 개수를 5개 구 안에서 0~100점으로 바꾼 뒤(가장 많은 구 100점, 가장 적은 구 0점, "
+                "min-max 정규화) 비율대로 더했습니다."
+            )
+            for code, info in result["normalization"].items():
+                name = next(uc["indicator_name"] for uc in result["used_conditions"] if uc["indicator_code"] == code)
+                st.caption(f"· {name}: {info['formula']}")
+            st.markdown("**구별 계산 근거**")
+            for row in result["region_scores"]:
+                parts = [
+                    f"{uc['indicator_name']} {row['component_scores'][uc['indicator_code']]['raw_value']:.0f}개"
+                    f"({row['component_scores'][uc['indicator_code']]['normalized_score']:.1f}점 × {uc['weight'] * 100:.0f}%)"
+                    for uc in result["used_conditions"]
+                ]
+                st.caption(f"{row['region_name']}: " + " + ".join(parts) + f" = {row['total_score']:.1f}점")
+            st.caption(RELATIVE_SCORE_CAVEAT)
+
+    with st.expander("📋 데이터 출처와 한계"):
+        codes = [uc["indicator_code"] for uc in result.get("used_conditions", [])]
+        if codes:
+            st.markdown("**점수에 사용한 공공데이터**")
+            st.dataframe(pd.DataFrame(_indicator_sources(codes)), hide_index=True, width="stretch")
+        st.markdown("**아직 없는 데이터**")
+        st.caption(UNAVAILABLE_DATA_NOTICE)
+        st.markdown("**입력했지만 점수에 반영하지 못한 정보**")
+        not_used = _not_used_inputs(result)
+        if not_used:
+            for item in not_used:
+                st.caption(f"· {item}")
+        else:
+            st.caption("입력하신 조건이 전부 점수 계산에 반영되었습니다.")
+        if result.get("caveats"):
+            st.markdown("**점수를 볼 때 주의할 점**")
+            for c in result["caveats"]:
+                st.caption(f"· {c}")
+
+    _render_school_reference()
+
+
+def _render_input_summary() -> None:
+    """완료 화면 맨 위의 입력 요약 한 줄 + 전체 입력 내용(접힌 영역)."""
+    inp = st.session_state.initial_input
+    parts = [inp.get("희망지역") or "창원시 전체",
+             "중요 조건: " + (", ".join(inp.get("중요 생활조건") or []) or "선택 안 함(확보된 항목 전체)"),
+             f"후보 {inp.get('원하는 후보 개수') or 3}곳"]
+    st.caption("📝 입력: " + " · ".join(parts))
+
+    with st.expander("입력 내용 전체 보기"):
+        st.dataframe(
+            pd.DataFrame([
+                {"항목": key, "입력": ", ".join(value) if isinstance(value, list) else (str(value) if value else "선택 안 함")}
+                for key, value in inp.items()
+            ]),
+            hide_index=True, width="stretch",
+        )
+        wc = st.session_state.weight_confirmation
+        if st.session_state.followup_answers:
+            st.markdown("**AI 추가질문에 대한 답변**")
+            st.dataframe(
+                pd.DataFrame([{"질문": q, "답변": a or "-"} for q, a in st.session_state.followup_answers.items()]),
+                hide_index=True, width="stretch",
+            )
+            if wc and wc["asked"] and wc["source"] == "ai_approved" and wc.get("answer_source") == "followup_answer":
+                st.caption("ℹ️ ⚖️ 가중치 확인 질문의 답변은 승인되어 점수 계산 비율에 반영되었습니다. 나머지는 참고용입니다.")
+            else:
+                st.caption("ℹ️ 위 답변은 참고용으로 저장만 되며 점수 계산에는 반영되지 않습니다.")
+        elif st.session_state.followup_questions == []:
+            st.caption("AI가 판단했을 때 추가로 필요한 정보가 없었습니다.")
 
 
 def _current_applied_result() -> dict | None:
@@ -678,7 +675,7 @@ def _apply_feedback(weights: dict[str, float], *, source: str, text: str | None 
 
 
 def _reset_feedback_weights(text: str | None = None) -> None:
-    """'초기 조건으로 되돌리기' 버튼 / 자연어 '원래대로' 승인의 on_click 콜백. 슬라이더를 최초 추천
+    """'처음 조건으로 되돌리기' 버튼 / 자연어 '원래대로' 승인의 on_click 콜백. 슬라이더를 최초 추천
     가중치로 되돌리고 피드백 결과를 지운다(다음 rerun에서 '변경 전후 비교'가 사라진다).
     되돌린 사실과 후보 변화는 feedback_history에 남긴다."""
     before_result = _current_applied_result()
@@ -859,80 +856,30 @@ def _render_nl_feedback_proposal(proposal: dict) -> None:
         st.button("❌ 무시하기", width="stretch", on_click=_reject_nl_feedback_proposal, args=(weights,))
 
 
-def _current_applied_weights_label() -> str:
-    """지금 이 순간 '실제로 점수 계산에 쓰이고 있는' 가중치를 문자열로 요약한다
-    (승인된 피드백이 있으면 그것, 없으면 최초 추천 가중치). 승인 대기 중인 AI 제안은
-    여기 포함하지 않는다 - 아직 적용된 게 아니기 때문이다."""
-    source = st.session_state.feedback_recommendation or st.session_state.initial_recommendation
-    if not source or source.get("status") != "ok":
-        return "없음"
-    parts = [
-        f"{FEEDBACK_INDICATOR_LABELS.get(uc['indicator_code'], uc['indicator_code'])} {uc['weight'] * 100:.0f}%"
-        for uc in source["used_conditions"]
-    ]
-    return ", ".join(parts) if parts else "없음"
+def _apply_slider_weights() -> None:
+    """슬라이더 '다시 비교하기'의 on_click 콜백 - 다른 피드백과 같은 _apply_feedback() 한 경로로 재평가한다.
+    콜백으로 처리해야 화면 위쪽의 결과가 같은 실행에서 바로 갱신된다."""
+    weights = {code: float(st.session_state[key]) for code, key in FEEDBACK_SLIDER_KEYS.items()}
+    _apply_feedback(weights, source="slider")
 
 
 def render_feedback_section() -> None:
     """
-    '조건 조정 후 다시 비교하기' - 교통/의료/생활편의 가중치를 수동 슬라이더 또는
-    자연어(AI 해석 + 승인)로 조정해 창원시 5개 구를 재평가한다. 가중치 정규화와
-    5개 구 재계산은 analysis.scoring.compute_region_scores_from_weights()가 전부
-    결정적으로 수행하며, AI는 자연어를 가중치 "제안"으로 해석만 할 뿐 점수를
-    계산하지 않는다.
+    '조건 바꿔서 다시 보기' - 문장(AI 해석 + 승인) 또는 슬라이더로 교통/의료/생활편의 비율을 바꿔
+    창원시 5개 구를 재평가한다. 재평가 결과는 화면 맨 위 결과 영역에 바로 반영된다.
+    비율 정규화와 재계산은 analysis.feedback.reevaluate()가 결정적으로 수행하며, AI는 문장을
+    비율 '제안'으로 해석만 할 뿐 점수를 계산하지 않는다.
     """
     st.divider()
-    st.subheader("🔄 조건 조정 후 다시 비교하기")
+    st.subheader("🔄 조건 바꿔서 다시 보기")
     st.caption(
-        "교통·의료·생활편의 가중치를 직접 조정하거나 문장으로 요청해서 창원시 5개 구를 "
-        "다시 비교할 수 있습니다. min-max 정규화 방식과 지표값 자체는 최초 추천과 동일합니다."
-    )
-    st.info(f"📌 현재 적용 중인 결과: {_current_applied_weights_label()}")
-
-    for code, key in FEEDBACK_SLIDER_KEYS.items():
-        if key not in st.session_state:
-            st.session_state[key] = st.session_state.feedback_initial_weights.get(code, 0.0)
-
-    st.markdown("**① 슬라이더로 직접 조정**")
-    cols = st.columns(3)
-    current_weights: dict[str, float] = {}
-    for col, code in zip(cols, FEEDBACK_SLIDER_KEYS):
-        with col:
-            current_weights[code] = st.slider(
-                FEEDBACK_INDICATOR_LABELS[code], 0, 100, key=FEEDBACK_SLIDER_KEYS[code]
-            )
-
-    weight_sum = sum(current_weights.values())
-    if weight_sum > 0:
-        normalized_preview = ", ".join(
-            f"{FEEDBACK_INDICATOR_LABELS[c]} {v / weight_sum * 100:.1f}%"
-            for c, v in current_weights.items()
-            if v > 0
-        )
-        st.caption(f"정규화 후 적용될 가중치: {normalized_preview}")
-    else:
-        st.caption("⚠️ 가중치가 전부 0입니다. 하나 이상 0보다 크게 설정해야 다시 비교할 수 있습니다.")
-
-    col_recompute, col_reset = st.columns(2)
-    with col_recompute:
-        recompute_clicked = st.button("다시 비교하기", type="primary", width="stretch")
-    with col_reset:
-        st.button(
-            "초기 조건으로 되돌리기", on_click=_reset_feedback_weights, args=(None,), width="stretch"
-        )
-
-    if recompute_clicked:
-        _apply_feedback(current_weights, source="slider")
-
-    st.markdown("**② 자연어로 요청 (AI 해석)**")
-    st.caption(
-        f"예: '의료 80%, 교통 20%로 비교해줘', '병원을 더 중요하게', '교통은 조금 덜 중요하게'. "
-        f"버튼을 누를 때만 AI({llm.backend_label()})를 "
-        "호출하며, AI는 요청을 가중치 '제안'으로 해석만 할 뿐 점수는 계산하지 않습니다 - "
-        "실제 재계산은 아래에서 승인해야 적용됩니다."
+        "원하는 방향을 문장으로 적어 보세요. 예: '병원을 더 중요하게', '교통은 조금 덜 중요하게', "
+        f"'의료 80%, 교통 20%'. AI({llm.backend_label()})는 요청을 읽기만 하고, 바뀔 비율은 정해진 "
+        "규칙으로 계산해 보여드립니다. 승인해야 적용됩니다."
     )
     nl_text = st.text_input(
-        "자연어 요청", key="nl_feedback_input", label_visibility="collapsed", max_chars=300
+        "어떻게 바꿔 볼까요?", key="nl_feedback_input", label_visibility="collapsed", max_chars=300,
+        placeholder="예: 병원을 더 중요하게 봐줘",
     )
     if st.button("AI로 해석하기"):
         if not nl_text.strip():
@@ -955,113 +902,45 @@ def render_feedback_section() -> None:
     if st.session_state.nl_feedback_proposal is not None:
         _render_nl_feedback_proposal(st.session_state.nl_feedback_proposal)
 
+    for code, key in FEEDBACK_SLIDER_KEYS.items():
+        if key not in st.session_state:
+            st.session_state[key] = st.session_state.feedback_initial_weights.get(code, 0.0)
+
+    with st.expander("비율 직접 조정 (슬라이더)"):
+        cols = st.columns(3)
+        current_weights: dict[str, float] = {}
+        for col, code in zip(cols, FEEDBACK_SLIDER_KEYS):
+            with col:
+                current_weights[code] = st.slider(
+                    FEEDBACK_INDICATOR_LABELS[code], 0, 100, key=FEEDBACK_SLIDER_KEYS[code]
+                )
+        weight_sum = sum(current_weights.values())
+        if weight_sum > 0:
+            st.caption("적용될 비율: " + ", ".join(
+                f"{AXIS_SHORT_LABELS[c]} {v / weight_sum * 100:.1f}%" for c, v in current_weights.items() if v > 0
+            ))
+        else:
+            st.caption("⚠️ 비율이 전부 0입니다. 하나 이상 0보다 크게 설정해야 다시 비교할 수 있습니다.")
+        col_recompute, col_reset = st.columns(2)
+        with col_recompute:
+            st.button("다시 비교하기", type="primary", width="stretch", on_click=_apply_slider_weights)
+        with col_reset:
+            st.button("처음 조건으로 되돌리기", on_click=_reset_feedback_weights, args=(None,), width="stretch")
+
     _render_feedback_history()
 
     feedback_result = st.session_state.feedback_recommendation
-    if feedback_result is None:
-        return
-
-    if feedback_result["status"] == "no_usable_conditions":
-        st.warning(f"⚠️ {feedback_result['message']}")
-        return
-
-    st.markdown("---")
-    st.markdown("### 📊 현재 적용 중인 피드백 결과 — 변경 전후 비교")
-    st.caption("아래는 최초 추천과, 지금까지 승인(또는 '다시 비교하기')으로 **실제 적용된** 가중치를 비교한 내용입니다.")
-    initial_result = st.session_state.initial_recommendation
-
-    initial_weight_by_code = {
-        uc["indicator_code"]: uc["weight"] for uc in initial_result.get("used_conditions", [])
-    }
-    feedback_weight_by_code = {
-        uc["indicator_code"]: uc["weight"] for uc in feedback_result["used_conditions"]
-    }
-    weight_compare_df = pd.DataFrame(
-        [
-            {
-                "지표": FEEDBACK_INDICATOR_LABELS[code],
-                "변경 전 가중치": f"{initial_weight_by_code.get(code, 0) * 100:.1f}%",
-                "변경 후 가중치": f"{feedback_weight_by_code.get(code, 0) * 100:.1f}%",
-            }
-            for code in REFERENCE_INDICATOR_ORDER
-            if code in initial_weight_by_code or code in feedback_weight_by_code
-        ]
-    )
-    st.markdown("**조건·가중치 변경**")
-    st.dataframe(weight_compare_df, hide_index=True, width="stretch")
-
-    initial_rank_by_region = {
-        r["region_id"]: (r["rank"], r["total_score"]) for r in initial_result.get("region_scores", [])
-    }
-    score_compare_rows = []
-    for row in feedback_result["region_scores"]:
-        rid = row["region_id"]
-        prev_rank, prev_score = initial_rank_by_region.get(rid, (None, None))
-        score_delta = None if prev_score is None else round(row["total_score"] - prev_score, 1)
-        if prev_rank is None:
-            rank_change = "-"
-        elif prev_rank == row["rank"]:
-            rank_change = "변동없음"
-        elif prev_rank > row["rank"]:
-            rank_change = f"▲{prev_rank - row['rank']}"
-        else:
-            rank_change = f"▼{row['rank'] - prev_rank}"
-        score_compare_rows.append(
-            {
-                "구": row["region_name"],
-                "변경 전 순위": prev_rank if prev_rank is not None else "-",
-                "변경 후 순위": row["rank"],
-                "순위 변화": rank_change,
-                "변경 전 점수": round(prev_score, 1) if prev_score is not None else "-",
-                "변경 후 점수": round(row["total_score"], 1),
-                "점수 변화": score_delta if score_delta is not None else "-",
-            }
-        )
-    st.markdown("**5개 구 점수·순위 변화**")
-    st.dataframe(pd.DataFrame(score_compare_rows), hide_index=True, width="stretch")
-
-    weight_deltas = [
-        (code, initial_weight_by_code.get(code, 0) * 100, feedback_weight_by_code.get(code, 0) * 100)
-        for code in REFERENCE_INDICATOR_ORDER
-        if abs(feedback_weight_by_code.get(code, 0) - initial_weight_by_code.get(code, 0)) > 0.0005
-    ]
-    if not weight_deltas:
-        st.caption("가중치 구성 자체는 최초 추천과 동일합니다.")
-    else:
-        change_text = ", ".join(
-            f"{FEEDBACK_INDICATOR_LABELS[c]} {before:.0f}%→{after:.0f}%" for c, before, after in weight_deltas
-        )
-        st.caption(f"가중치 변경: {change_text}")
-
-    numeric_deltas = [r for r in score_compare_rows if isinstance(r["점수 변화"], (int, float))]
-    if not numeric_deltas or all(abs(r["점수 변화"]) < 0.05 for r in numeric_deltas):
-        st.caption(
-            "가중치를 조정했지만 5개 구의 종합점수·순위에 의미 있는 변화는 없습니다"
-            "(가중치가 바뀐 지표에서 구별 순위 구조가 비슷하기 때문일 수 있습니다)."
-        )
-    else:
-        biggest = max(numeric_deltas, key=lambda r: abs(r["점수 변화"]))
-        direction = "올라갔습니다" if biggest["점수 변화"] > 0 else "내려갔습니다"
-        st.caption(
-            f"예: {biggest['구']}는 가중치가 커진 지표에서의 정규화 점수가 상대적으로 "
-            f"{'높아' if biggest['점수 변화'] > 0 else '낮아'} 종합점수가 "
-            f"{biggest['점수 변화']:+.1f}점 {direction}."
-        )
-
-    _render_candidate_set(
-        build_candidate_set(feedback_result, _unscored_inputs(st.session_state.initial_input)),
-        heading="🧭 피드백 기준 정착 후보군 — 다시 평가한 결과",
-    )
-    explanation = st.session_state.get("feedback_explanation")
-    if explanation and explanation.get("final_answer"):
-        _render_final_answer(explanation["final_answer"], "### 🤖 AI의 재평가 결과 설명")
-    _render_top_candidates(feedback_result, heading="현재 적용 중인 피드백 기준 추천 후보지역")
+    if feedback_result is not None and feedback_result.get("status") == "no_usable_conditions":
+        st.warning(f"⚠️ {feedback_result['message']} 위 결과는 이전에 적용한 결과 그대로입니다.")
 
 
 st.set_page_config(page_title="경남 이주자 생활권 탐색 AI", page_icon="🏡")
 
 st.title("🏡 경남 이주자 맞춤형 생활권 탐색 AI")
-st.caption("이주 희망 조건을 입력하면 AI가 추천에 필요한 추가 질문을 제안합니다.")
+st.caption(
+    "창원시 5개 구를 내 생활 조건(교통·의료·생활편의)으로 비교하고, AI Agent가 성격이 다른 정착 후보를 "
+    "골라 근거와 함께 설명합니다. 공공데이터로 계산한 결과만 보여주며, 없는 데이터는 '미확보'로 표시합니다."
+)
 
 if "stage" not in st.session_state:
     st.session_state.stage = "input"
@@ -1147,7 +1026,7 @@ def _finalize_initial_recommendation(confirmed_weights: dict[str, float] | None 
     scores()와 동일한 조건별 동일 가중치를 유도해서 쓴다 - 최종 계산 결과는 이전과
     같다. run_agent_plan()은 AI가 세운 분석 계획을 검증된 도구로 실행하거나(Ollama
     실패/검증 실패 시) 기존과 동일한 기본 절차로 폴백하며, 실행 기록은
-    agent_execution_log에 저장해 완료 화면의 'AI 분석 실행 과정 보기'에서 보여준다.
+    agent_execution_log에 저장해 완료 화면의 '🤖 Agent가 실제로 한 일'에서 보여준다.
     """
     with st.spinner("Agent가 분석 계획을 세우고 실제 데이터로 점수를 계산하는 중입니다..."):
         run_result = run_agent_plan(
@@ -1245,6 +1124,8 @@ if st.session_state.stage == "input":
         important_conditions = st.multiselect(
             "중요하게 생각하는 생활 조건",
             prev_conditions_options,
+            help="지금 점수에 반영되는 항목은 교통·의료·생활편의입니다. 나머지는 데이터를 확보하지 못해 "
+                 "선택해도 점수에 들어가지 않습니다. 아무것도 고르지 않으면 세 항목을 같은 비율로 비교합니다.",
             default=[c for c in (prev.get("중요 생활조건") or []) if c in prev_conditions_options],
         )
         candidate_count = st.number_input(
@@ -1489,64 +1370,17 @@ elif st.session_state.stage == "weight_confirm":
         reset_all()
         st.rerun()
 
-# 3단계: 완료 - 추천 결과 중심 화면 ----------------------------------------
+# 3단계: 완료 - 결론부터 보여주는 추천 결과 화면 -------------------------------
 elif st.session_state.stage == "done":
-    st.subheader("✅ 입력이 완료되었습니다")
-    st.caption("아래에서 창원시 5개 구 비교 및 추천 결과를 확인하세요.")
-
     if st.session_state.followup_ai_error:
-        st.info(
-            f"ℹ️ AI 추가질문 생성 중 문제가 발생해 일부 질문은 만들지 못했습니다"
-            f"({st.session_state.followup_ai_error}). 기존에 확보된 데이터로 추천은 "
-            "정상적으로 진행되었습니다."
+        st.caption(
+            f"ℹ️ AI 추가질문 생성 중 문제가 있어 일부 질문은 만들지 못했습니다"
+            f"({st.session_state.followup_ai_error}). 추천은 확보된 데이터로 정상 진행했습니다."
         )
-
-    with st.expander("📝 내가 입력한 정보 보기 (최초 입력 + AI 추가질문 답변)"):
-        st.markdown("**최초 입력 정보**")
-        st.json(st.session_state.initial_input)
-
-        wc = st.session_state.weight_confirmation
-        if wc and wc.get("answer_source") == "initial_extra_request" and wc["source"] == "ai_approved":
-            st.caption(
-                "ℹ️ 위 '추가 요청사항'에 적으신 비율이 승인되어 실제 시설 수 기반 비교 "
-                "점수 계산(가중치)에 반영되었습니다."
-            )
-
-        if st.session_state.followup_answers:
-            st.markdown("**AI 추가질문에 대한 답변**")
-            st.json(st.session_state.followup_answers)
-            if wc and wc["asked"] and wc["source"] == "ai_approved" and wc.get("answer_source") == "followup_answer":
-                st.caption(
-                    "ℹ️ 이 중 ⚖️ 가중치 확인 질문의 답변은 승인되어 실제 시설 수 기반 비교 "
-                    "점수 계산(가중치)에 반영되었습니다. 나머지 답변은 참고용으로 저장만 됩니다."
-                )
-            else:
-                st.caption(
-                    "ℹ️ 위 답변은 참고용으로 저장만 되며, 현재 시설 수 기반 비교 점수 계산에는 "
-                    "반영되지 않습니다."
-                )
-        elif st.session_state.followup_questions == []:
-            st.info("AI가 판단했을 때 추가로 필요한 정보가 없었습니다.")
-
-    st.divider()
-    render_recommendation_section()
-    render_ai_recommendation_explanation()
-
-    with st.expander("🤖 AI 분석 실행 과정 보기"):
-        render_agent_execution_log()
-
+    _render_input_summary()
+    render_result_view()
     render_feedback_section()
-
-    st.divider()
-    st.subheader("📋 창원시 5개 구 상세 공공데이터")
-    render_indicator_category("의료", "🏥 창원시 의료기관 현황")
-    st.divider()
-    render_indicator_category("교통", "🚌 창원시 버스정류장 현황")
-    st.divider()
-    render_indicator_category("생활편의", "🏪 창원시 편의점 현황")
-    st.caption(
-        "주거비 등 나머지 데이터가 확보되면 이 화면에 같은 방식으로 추가될 예정입니다."
-    )
+    render_detail_sections(_current_view_result())
 
     if st.button("처음부터 다시 입력하기"):
         reset_all()

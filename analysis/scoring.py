@@ -321,7 +321,7 @@ def compute_region_scores_from_weights(
     regions: list[dict] | None = None,
 ) -> dict:
     """
-    사용자가 "조건 조정 후 다시 비교하기"에서 직접 지정한 가중치로 5개 구를
+    사용자가 "조건 바꿔서 다시 보기"에서 직접 지정한 가중치로 5개 구를
     재평가한다(피드백 전용 경로). min-max 정규화와 지표값 자체는
     compute_region_scores()와 완전히 동일한 내부 함수(_normalize_min_max,
     _collect_confirmed_indicator)를 그대로 쓴다 - 바뀌는 건 가중치뿐이다.

@@ -91,11 +91,11 @@ class PagesFirstRenderTest(unittest.TestCase):
         review = at.session_state["agent_execution_log"]["candidate_review"]
         self.assertEqual(review["status"], "ok")
         markdown = " ".join(m.value for m in at.markdown)
-        self.assertIn("정착 후보군", markdown)
+        self.assertIn("추천 결과", " ".join(h.value for h in at.subheader))
         self.assertIn("최적 · 성산구", markdown)
-        self.assertIn("균형 · 의창구", markdown)
+        self.assertIn("균형, 대안 · 의창구", markdown)  # 같은 구가 맡은 역할은 한 줄로 합쳐 보여준다
         captions = " ".join(c.value for c in at.caption)
-        self.assertIn("가성비** — 산출 불가", captions)
+        self.assertIn("가성비** — 제공 안 함", captions)
         warnings = " ".join(w.value for w in at.warning)
         self.assertIn("직장/학교 위치", warnings)  # coverage 점검이 반영 못 한 입력을 밝힘
 
@@ -141,6 +141,7 @@ class PagesFirstRenderTest(unittest.TestCase):
             next(b for b in at.button if b.label == "다시 비교하기").click().run()
         history = at.session_state["feedback_history"]
         self.assertEqual(history[-1]["source"], "slider")
+        self.assertEqual(at.session_state["feedback_recommendation"]["status"], "ok")  # 콜백으로 바로 적용
         self.assertEqual([e.value for e in at.exception], [])
 
     def test_initial_screen_shows_deterministic_explanation_when_llm_is_wrong(self):
@@ -168,7 +169,7 @@ class PagesFirstRenderTest(unittest.TestCase):
         self.assertEqual([e.value for e in at.exception], [])
         final = at.session_state["agent_execution_log"]["final_answer"]
         self.assertEqual(final["source"], "deterministic")
-        self.assertTrue(any("Python이 확정 사실" in i.value for i in at.info))
+        self.assertTrue(any("계산으로 확정된 사실" in c.value for c in at.caption))
         shown = " ".join(m.value for m in at.markdown)
         self.assertIn("최적 후보는 성산구입니다", shown)
         self.assertNotIn("진해구가 최적 후보", shown)
@@ -205,6 +206,10 @@ class PagesFirstRenderTest(unittest.TestCase):
         self.assertIn("최적 후보는 의창구입니다", final["text"])
         self.assertIn("최적 후보는 의창구입니다", final["deterministic_text"])
         self.assertTrue(any("AI의 재평가 결과 설명" in m.value for m in at.markdown))
+        # 맨 위 결과 영역이 승인된 피드백 결과로 바뀌고, 처음 결과와의 후보 변화가 보인다
+        self.assertTrue(any("조건을 바꾼 뒤" in h.value for h in at.subheader))
+        self.assertTrue(any("최적 성산구 → 의창구" in i.value for i in at.info))
+        self.assertIn("최적, 균형 · 의창구", " ".join(m.value for m in at.markdown))
 
     @staticmethod
     def _fake_ollama(**kwargs):

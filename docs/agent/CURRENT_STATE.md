@@ -23,6 +23,7 @@
 | F10 | AI 설명은 Python이 확정한 explanation_facts(구별 축 점수·순위·강점/약점/중립, 역할 구 비교 순서, 지배 관계, 6개 중 확보 3개)만 옮기고, 같은 사실로 결정적 검증(강약 뒤집기·최상/최하 표현·두 구 비교·지배 방향·숫자 귀속·역할 구문·미확보 축 강약 표현·N개 중 M개·계산 안 한 가정) | `analysis/explanation_facts.py`, `agent/planner_loop.py` | 동작(단위 456개·실제 Ollama) |
 | F11 | 설명 경로 통일: explanation_facts → Python 기본 설명(항상 사실) → AI 다듬기 1회 → 검증 → 실패 시 기본 설명. 최초 추천(AI 계획 실패 포함)·피드백 재평가 공용 | `agent/planner_loop.py` `explain_from_facts`, `analysis/explanation_facts.py` `render_explanation` | 동작(단위 468개·AppTest·실제 Ollama 4/4) |
 | F12 | 교육시설 수 참고 정보: 결과 화면에 구별 초·중·고·총 학교 수·분교 수, 출처·기준일, 한계 표시. 추천 점수·후보·Critic·피드백에 쓰지 않음(DEC-19), 파일 없으면 "미확보" 안내 후 추천은 그대로 | `services/schools.py`, `app.py` `_render_school_reference` | 동작(단위·AppTest), 브라우저 미확인 |
+| F13 | 추천 결과 화면 재구성(U2): 결론(후보 요약) → Critic 확인할 점 → AI 설명 → 5개 구 비교표 → 조건 바꾸기 → 접힌 상세(Agent가 한 일·계산 근거·데이터 출처/한계·교육시설). 피드백 승인 시 맨 위 결과 교체 | `app.py` `render_result_view`·`render_feedback_section`·`render_detail_sections` | 동작(AppTest·서버 기동), 브라우저 미확인 |
 | F6 | 정부용 구별 시설 현황·가상 증감 시뮬레이션 | `pages/government.py`, `analysis/simulation.py` | 동작 (주제 연결은 OPEN-3) |
 
 공통: `agent/llm.py`(백엔드 선택·호출 수·입력 길이 제한), `agent/llm_json.py`(JSON 추출).

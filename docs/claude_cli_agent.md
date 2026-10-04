@@ -47,7 +47,7 @@ python -m unittest tests.test_claude_cli -v # 단위 테스트(실제 호출 없
 | 파일 | 위치 | 쓰이는 화면 |
 |---|---|---|
 | `agent/ollama_agent.py` | `generate_followup_questions()` | 메인 화면 "📝 AI의 추가 질문" |
-| `agent/ollama_agent.py` | `interpret_weight_feedback()` | 가중치 확인, "🔄 조건 조정 후 다시 비교하기"의 자연어 입력 |
+| `agent/ollama_agent.py` | `interpret_weight_feedback()` | 가중치 확인, "🔄 조건 바꿔서 다시 비교하기"의 자연어 입력 |
 | `agent/planner.py` | `call_planner()` | 최초 추천 시 AI 분석 계획 |
 | `agent/location_agent.py` | `call_location_planner()` | `pages/user.py` "5. 🤖 AI에게 주변 생활시설 분석 요청하기" |
 
