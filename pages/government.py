@@ -174,9 +174,9 @@ for category in CATEGORIES:
             )
 
 # ---------------------------------------------------------------------------
-# 3. 구 선택 상세 조회
+# 3. 지역 선택 상세 조회
 # ---------------------------------------------------------------------------
-st.header("3. 구 선택 상세 조회")
+st.header("3. 지역 선택 상세 조회")
 region_names = [r["region_name"] for r in regions]
 selected_name = st.selectbox("조회할 지역을 선택하세요", region_names, key="gov_selected_region")
 selected_region = next(r for r in regions if r["region_name"] == selected_name)

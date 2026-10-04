@@ -5,7 +5,7 @@
 현재 상태:
     - 이 파일은 어디에서도 import되지 않는다.
     - data/region_indicators.csv의 monthly_rent_avg(월세 평균)·jeonse_avg(전세 평균)는
-      5개 구 모두 "미확보"이며, 점수 계산(analysis/scoring.py)에 쓰지 않는다.
+      22개 지역 모두 "미확보"이며, 점수 계산(analysis/scoring.py)에 쓰지 않는다.
     - app.py의 "주거비 예산" 입력은 참고용으로만 저장된다.
 
 예정 역할:
