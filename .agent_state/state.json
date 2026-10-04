@@ -1,13 +1,13 @@
 {
   "steward_branch": "jhy-next",
   "submission_deadline": "2026-10-06T12:00",
-  "last_synced_commit": "0c45494",
+  "last_synced_commit": "0ba6465",
   "last_synced_at": "2026-10-04",
   "last_test_result": "489 passed, 1 skipped (2026-10-04, G5-B 보정)",
   "last_loop": {
     "date": "2026-10-04",
-    "task": "G4-A 재개 시도 (재발급 키로 전월세 API inspect)",
-    "result": "MOLIT_SERVICE_KEY 로딩 확인, inspect 4종 모두 resultCode 30 → BLOCKED 유지, 코드 변경 없음. 사용자 지시로 정지"
+    "task": "전월세 API inspect 재확인",
+    "result": "4종 resultCode 30(두 키 모두). 두 키는 병원 API에서 정상 → 전월세 API 등록 미반영. BLOCKED 유지, 코드 변경 없음"
   },
   "next_candidates": [
     "OPEN-7 AI 다듬기 on/off 결정 (오탈자·검증 거부 관찰)",
