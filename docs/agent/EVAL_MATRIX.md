@@ -65,7 +65,7 @@ R-AG-2(6요소 중 4개 이상): 코드 기준 6개 모두 IMPLEMENTED. 단 "시
 | 세부 | 상태 | 증거 / 공백 |
 |---|---|---|
 | 데이터·저작권 (3) | 부분 | 출처·기준일 화면 표시(`app.py:114-157`), `README.md` 데이터 표 / 데이터 이용약관·라이선스 정리 없음, 출처·AI 활용 신고서 없음 |
-| 개인정보·보안 (3) | 부분 | `.env` gitignore·커밋 차단(`.claude/settings.json`), 개인정보 미수집 구조, LLM 호출·입력 길이 제한(`agent/llm.py`, `docs/deploy_readiness.md`) / 악의적 입력 테스트 기록 없음 |
+| 개인정보·보안 (3) | 부분 | 보안·개인정보 점검 `docs/security_review.md`(2026-10-04: HIGH 0·MEDIUM 1·LOW 7, Git 이력 비밀키 0, 사용자 입력·좌표 파일 저장 없음, 좌표 프롬프트 미전달) / `.env` gitignore·커밋 차단(`.claude/settings.json`), 개인정보 미수집 구조, LLM 호출·입력 길이 제한(`agent/llm.py`, `docs/deploy_readiness.md`) / 악의적 입력 테스트 기록 없음 |
 | AI 오류·편향·안전 (4) | 증거 있음 | 설명은 Python 기본 설명이 기준이고 AI는 다듬기만, 새 숫자·사실·누락이 있으면 기본 설명으로 대체 - AI가 틀려도 결과 품질 불변(R6 미커밋) / AI 설명의 강점·약점·대소관계·숫자 귀속을 Python 확정 사실(explanation_facts)로 검증, 실제 Ollama 의미 오류 3유형을 회귀 테스트로 고정, 실패 시 결정적 요약(R5 미커밋) / AI 숫자 검증 후 실패 시 Python 요약, 승인 전 미적용, 좌표·반경 Python 소유, 미지원 반경 거절, 미확보 데이터 표시, 직선거리 명시(`pages/user.py:76`) |
 
 ## R-EV-7 비즈니스 모델 (10) — [규정] 별표 5
