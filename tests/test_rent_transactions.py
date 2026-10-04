@@ -173,7 +173,7 @@ class AnalyzeTest(unittest.TestCase):
 
 
 class GyeongnamGroupTest(unittest.TestCase):
-    """경남 22개 지역: 수집 대상은 22개, 분석은 같은 유형 그룹(창원시 구 / 시 / 군) 안에서만 비교한다."""
+    """경남 22개 지역: 수집 대상은 22개, 분석은 같은 유형 그룹(구 지역 / 시 지역 / 군 지역) 안에서만 비교한다."""
 
     def test_22_lawd_codes_with_changwon_ids_kept(self):
         self.assertEqual(len(col.DISTRICTS), 22)

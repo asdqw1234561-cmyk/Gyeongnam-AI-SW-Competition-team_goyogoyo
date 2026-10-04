@@ -130,7 +130,7 @@ def simulate_facility_change(
             "message": f"'{region_id}'은(는) 경남 비교 지역에 해당하지 않는 지역 ID입니다. "
             f"가능한 값: {sorted(valid_region_ids)}",
         }
-    # 같은 유형(창원시 구 / 시 / 군)끼리만 비교한다 - 점수 계산과 같은 비교 범위.
+    # 같은 유형(구 지역 / 시 지역 / 군 지역)끼리만 비교한다 - 점수 계산과 같은 비교 범위.
     target_type = next(r.get("region_type") for r in all_regions if r["region_id"] == region_id)
     baseline_regions = [r for r in all_regions if r.get("region_type") == target_type]
 

@@ -728,7 +728,7 @@ def _indicator_sources(codes: list[str]) -> list[dict]:
 
 
 REFERENCE_TYPE_ORDER = {"구": 0, "시": 1, "군": 2}
-REFERENCE_TYPE_LABELS = {"구": "창원시 구", "시": "시", "군": "군"}
+REFERENCE_TYPE_LABELS = {"구": "구 지역", "시": "시 지역", "군": "군 지역"}
 
 
 def _indicator_value(region: dict, category: str, code: str) -> float | None:
@@ -1183,8 +1183,8 @@ st.set_page_config(page_title="경남 이주자 생활권 탐색 AI", page_icon=
 
 st.title("🏡 경남 이주자 맞춤형 생활권 탐색 AI")
 st.caption(
-    "경상남도 22개 지역(창원시 5개 구·시 7곳·군 10곳)을 내 생활 조건(교통·의료·생활편의)으로 비교하고, "
-    "AI Agent가 성격이 다른 정착 후보를 "
+    "경상남도 22개 지역(구 5곳·시 7곳·군 10곳)을 같은 행정유형끼리 묶어 내 생활 조건(교통·의료·생활편의)으로 "
+    "비교하고, AI Agent가 성격이 다른 정착 후보를 "
     "골라 근거와 함께 설명합니다. 공공데이터로 계산한 결과만 보여주며, 없는 데이터는 '미확보'로 표시합니다."
 )
 
@@ -1349,7 +1349,7 @@ if st.session_state.stage == "input":
             "비교 범위 (경상남도)",
             REGION_OPTIONS,
             index=_option_index(REGION_OPTIONS, prev.get("희망지역")),
-            help="규모가 비슷한 같은 유형 지역끼리만 비교합니다(창원시 구끼리 / 시끼리 / 군끼리). 유형이 다른 "
+            help="경남 22개 지역 중 규모가 비슷한 같은 행정유형끼리만 비교합니다(구 지역끼리 / 시 지역끼리 / 군 지역끼리). 유형이 다른 "
                  "지역을 한 표에서 점수로 비교하면 큰 도시나 군 지역으로 결과가 크게 쏠리기 때문입니다.",
         )
         workplace_choice = st.selectbox(
@@ -1404,7 +1404,7 @@ if st.session_state.stage == "input":
         elif not is_supported_region(region_text):
             st.error(
                 f"'{region_text}'은(는) 현재 지원 범위 밖입니다. 이 서비스는 현재 "
-                "**경상남도 22개 지역(창원시 5개 구·시 7곳·군 10곳)**만 지원합니다. "
+                "**경상남도 22개 지역(구 5곳·시 7곳·군 10곳)**만 지원합니다. "
                 "비교 범위를 다시 골라 주세요."
             )
         else:

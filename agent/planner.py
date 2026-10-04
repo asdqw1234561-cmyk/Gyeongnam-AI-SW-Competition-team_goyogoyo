@@ -400,7 +400,7 @@ def run_agent_plan(
                 대응 데이터가 없는 항목 이름)는 Critic의 데이터 커버리지 점검에만 쓴다.
         }
     """
-    # 비교 범위(같은 유형끼리: 창원시 구 / 경남 시 / 경남 군)는 사용자가 고른 희망지역(비교 범위)으로 정한다.
+    # 비교 범위(같은 유형끼리: 구 지역 / 시 지역 / 군 지역)는 사용자가 고른 희망지역(비교 범위)으로 정한다.
     regions = get_all_regions(region_type=region_type_for(desired_region))
 
     if confirmed_weights:
