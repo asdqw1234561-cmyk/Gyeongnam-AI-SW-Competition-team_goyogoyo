@@ -12,7 +12,7 @@ from pathlib import Path
 from unittest import mock
 
 from analysis import simulation
-from services.region_data import INDICATORS_CSV, get_all_changwon_regions
+from services.region_data import INDICATORS_CSV, get_all_regions
 
 ALL_REGION_IDS = ["CW-UICHANG", "CW-SEONGSAN", "CW-MASANHAPPO", "CW-MASANHOEWON", "CW-JINHAE"]
 
@@ -44,7 +44,7 @@ class ValidationTest(unittest.TestCase):
     """4,5) 음수 결과·잘못된 ID/코드 거부."""
 
     def test_negative_resulting_value_rejected(self):
-        regions = get_all_changwon_regions()
+        regions = get_all_regions()
         jinhae = next(r for r in regions if r["region_id"] == "CW-JINHAE")
         current = next(
             i for i in jinhae["categories"]["의료"] if i["indicator_code"] == "hospital_count"
@@ -154,7 +154,7 @@ class TieHandlingTest(unittest.TestCase):
         ]
     ]
 
-    @mock.patch("analysis.simulation.get_all_changwon_regions")
+    @mock.patch("analysis.simulation.get_all_regions")
     def test_all_equal_after_simulation_gives_tied_50_points(self, mock_get_regions):
         mock_get_regions.return_value = copy.deepcopy(self.FAKE_REGIONS)
         result = simulation.simulate_facility_change(
@@ -188,7 +188,7 @@ class MissingIndicatorTest(unittest.TestCase):
         ]
     ]
 
-    @mock.patch("analysis.simulation.get_all_changwon_regions")
+    @mock.patch("analysis.simulation.get_all_regions")
     def test_indicator_not_confirmed_everywhere_is_rejected(self, mock_get_regions):
         mock_get_regions.return_value = copy.deepcopy(self.FAKE_REGIONS_PARTIAL)
         result = simulation.simulate_facility_change("CW-UICHANG", "hospital_count", 10)

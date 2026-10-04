@@ -1,6 +1,6 @@
 """
 agent/planner.py의 Agent Planner(계획 수립 -> 검증 -> 허용된 도구 실행) 단위 테스트.
-ollama.chat과 services.region_data.get_all_changwon_regions를 모킹해서 실제 서버/CSV
+ollama.chat과 services.region_data.get_all_regions를 모킹해서 실제 서버/CSV
 없이도 결정적으로 검증한다.
 
     python -m unittest tests.test_planner -v
@@ -55,7 +55,7 @@ def _fake_chat_response(content: str) -> dict:
 
 
 def _patched_regions():
-    return mock.patch("agent.planner.get_all_changwon_regions", return_value=copy.deepcopy(FAKE_REGIONS))
+    return mock.patch("agent.planner.get_all_regions", return_value=copy.deepcopy(FAKE_REGIONS))
 
 
 class ToolGetAvailableIndicatorsTest(unittest.TestCase):

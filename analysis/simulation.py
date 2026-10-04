@@ -10,10 +10,10 @@
 
 [원본 데이터 보호]
     data/region_indicators.csv는 이 모듈에서 전혀 쓰지(write) 않는다.
-    services.region_data.get_all_changwon_regions()로 매번 새로 읽은 뒤
+    services.region_data.get_all_regions()로 매번 새로 읽은 뒤
     copy.deepcopy()한 사본에만 가상값을 적용하고, 원본 리스트/딕셔너리는 절대
     변형(mutate)하지 않는다. simulate_facility_change()를 몇 번 호출하든 매번
-    get_all_changwon_regions()부터 다시 시작하므로 가상 변경량이 누적되지 않는다.
+    get_all_regions()부터 다시 시작하므로 가상 변경량이 누적되지 않는다.
 
 [점수 계산 재사용]
     min-max 정규화·가중합·정렬은 전부 analysis.scoring.compute_region_scores_from_weights()
@@ -34,7 +34,7 @@ from analysis.scoring import (
     collect_confirmed_indicator,
     compute_region_scores_from_weights,
 )
-from services.region_data import get_all_changwon_regions
+from services.region_data import get_all_regions
 
 # 현재 시뮬레이션 대상 지표(요구사항: 이 3개뿐). VALID_SCORABLE_INDICATOR_CODES와
 # 항상 같은 값을 쓰되, 시뮬레이션 모듈에서도 의미가 드러나도록 별칭을 둔다.
@@ -121,15 +121,18 @@ def simulate_facility_change(
             }
     """
     # 매번 새로 조회한다 - 이전 호출의 가상값이 남아있을 수 없다(누적 방지).
-    baseline_regions = get_all_changwon_regions()
+    all_regions = get_all_regions()
 
-    valid_region_ids = {r["region_id"] for r in baseline_regions}
+    valid_region_ids = {r["region_id"] for r in all_regions}
     if region_id not in valid_region_ids:
         return {
             "status": "error",
-            "message": f"'{region_id}'은(는) 창원시 5개 구에 해당하지 않는 지역 ID입니다. "
+            "message": f"'{region_id}'은(는) 경남 비교 지역에 해당하지 않는 지역 ID입니다. "
             f"가능한 값: {sorted(valid_region_ids)}",
         }
+    # 같은 유형(창원시 구 / 시 / 군)끼리만 비교한다 - 점수 계산과 같은 비교 범위.
+    target_type = next(r.get("region_type") for r in all_regions if r["region_id"] == region_id)
+    baseline_regions = [r for r in all_regions if r.get("region_type") == target_type]
 
     if indicator_code not in SIMULATABLE_INDICATOR_CODES:
         return {

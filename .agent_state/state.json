@@ -1,18 +1,18 @@
 {
   "steward_branch": "jhy-next",
   "submission_deadline": "2026-10-06T12:00",
-  "last_synced_commit": "62b5c0d",
+  "last_synced_commit": "124e034",
   "last_synced_at": "2026-10-04",
   "last_test_result": "489 passed, 1 skipped (2026-10-04, G5-B 보정)",
   "last_loop": {
     "date": "2026-10-04",
-    "task": "U2 추천 결과 화면 재구성",
-    "result": "결론부터·중복 제거·용어 정리, 계산 로직 불변, 전체 489 통과, 브라우저 확인 필요"
+    "task": "GN-B 경남 22개 지역 전환(같은 유형끼리, 인구 1만 명당)",
+    "result": "운영 CSV·점수·화면·검증기 일반화, 테스트 통과. 위치 탐색 경남 확장(C)과 test_cases 재실행 남음"
   },
   "next_candidates": [
-    "브라우저로 U2 화면 확인 후 남은 불편 수정",
-    "위치 탐색 화면(pages/user.py) 같은 원칙으로 정리",
-    "G4-A 재개 (전월세 API 반영 시)"
+    "test_cases.md를 현재 코드로 재실행·갱신 (제출 증거)",
+    "GN-C 위치 기반 탐색 경남 확장",
+    "실제 Ollama·브라우저로 경남 범위 확인"
   ],
   "open_decisions": [
     "OPEN-1",
@@ -22,5 +22,5 @@
     "OPEN-6",
     "OPEN-7"
   ],
-  "current_priority": "현실적인 정착 데이터 보강 (DEC-17)"
+  "current_priority": "경남 확장 안정화 + 제출 증거 갱신"
 }

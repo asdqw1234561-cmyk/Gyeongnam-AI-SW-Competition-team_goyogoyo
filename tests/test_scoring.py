@@ -117,7 +117,7 @@ class AllValuesEqualEndToEndTest(unittest.TestCase):
         ]
     ]
 
-    @mock.patch("analysis.scoring.get_all_changwon_regions")
+    @mock.patch("analysis.scoring.get_all_regions")
     def test_tied_scores_marked_and_no_crash(self, mock_get_regions):
         mock_get_regions.return_value = self.FAKE_REGIONS
         result = scoring.compute_region_scores(user_conditions=[], candidate_count=5)
@@ -225,9 +225,9 @@ class PublicCollectConfirmedIndicatorTest(unittest.TestCase):
     """다른 모듈용 공개 이름은 내부 판정 함수를 그대로 위임해야 한다(기준이 갈라지지 않음)."""
 
     def test_public_name_matches_private_result(self):
-        from services.region_data import get_all_changwon_regions
+        from services.region_data import get_all_regions
 
-        regions = get_all_changwon_regions()
+        regions = get_all_regions()
         for code in scoring.VALID_SCORABLE_INDICATOR_CODES:
             self.assertEqual(
                 scoring.collect_confirmed_indicator(regions, code),

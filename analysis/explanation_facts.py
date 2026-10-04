@@ -19,8 +19,8 @@ from analysis.candidates import (
     AXIS_STATUS_MISSING,
     AXIS_STATUS_USED,
     EVALUATION_AXES,
-    STRENGTH_MAX_RANK,
-    WEAKNESS_MIN_RANK,
+    strength_max_rank,
+    weakness_min_rank,
     _axis_ranks,
 )
 
@@ -38,10 +38,11 @@ def _r1(value) -> float:
     return round(float(value), 1)
 
 
-def judge(rank: int) -> str:
-    if rank <= STRENGTH_MAX_RANK:
+def judge(rank: int, region_count: int = 5) -> str:
+    """비교 지역 수에 비례한 판정: 상위 40% 강점, 하위 40% 약점(5곳이면 1~2위 강점, 4~5위 약점)."""
+    if rank <= strength_max_rank(region_count):
         return JUDGE_STRENGTH
-    if rank >= WEAKNESS_MIN_RANK:
+    if rank >= weakness_min_rank(region_count):
         return JUDGE_WEAKNESS
     return JUDGE_NEUTRAL
 
@@ -69,7 +70,7 @@ def render_explanation(facts: dict) -> str:
         if strengths and weaknesses:
             line += f" {role['region']}의 강점은 {_join(strengths)}이고, 약점은 {_join(weaknesses)}입니다."
         elif strengths:
-            line += f" {role['region']}의 강점은 {_join(strengths)}이며 {facts['region_count']}개 구 중 하위권인 축은 없습니다."
+            line += f" {role['region']}의 강점은 {_join(strengths)}이며 비교한 {facts['region_count']}개 지역 중 하위권인 축은 없습니다."
         elif weaknesses:
             line += f" {role['region']}의 약점은 {_join(weaknesses)}입니다."
         if role.get("revised_from"):
@@ -92,7 +93,7 @@ def render_explanation(facts: dict) -> str:
     if suff["not_reflected_conditions"]:
         lines.append(f"- 입력하셨지만 대응 데이터가 없어 반영하지 못한 조건: {_join(suff['not_reflected_conditions'])}.")
     lines.append(f"- 판단 한계: {facts['scope']}의 시설 수 상대 비교이며 실제 거주 적합도를 확정하지 않습니다. "
-                 f"후보 단위가 창원시 {facts['region_count']}개 구라 같은 구 안의 생활권(동네) 차이는 판단하지 못합니다.")
+                 "후보 단위가 시·군·구라 같은 지역 안의 생활권(동네) 차이는 판단하지 못합니다.")
     return "\n".join(lines)
 
 
@@ -151,9 +152,9 @@ def build_explanation_facts(score_result: dict, candidate_review: dict | None) -
             "region": row["region_name"], "roles": roles_by_region.get(row["region_name"], []),
             "rank": row["rank"], "total_score": _r1(row["total_score"]),
             # 축별 판정(강점·약점·중립)은 이 세 목록으로만 전달한다(축마다 중복 저장하지 않음 - 입력 길이 절약)
-            "strengths": [a for a, f in axis_facts.items() if judge(f["rank"]) == JUDGE_STRENGTH],
-            "weaknesses": [a for a, f in axis_facts.items() if judge(f["rank"]) == JUDGE_WEAKNESS],
-            "neutral": [a for a, f in axis_facts.items() if judge(f["rank"]) == JUDGE_NEUTRAL],
+            "strengths": [a for a, f in axis_facts.items() if judge(f["rank"], len(rows)) == JUDGE_STRENGTH],
+            "weaknesses": [a for a, f in axis_facts.items() if judge(f["rank"], len(rows)) == JUDGE_WEAKNESS],
+            "neutral": [a for a, f in axis_facts.items() if judge(f["rank"], len(rows)) == JUDGE_NEUTRAL],
             "axes": axis_facts,
         })
 
@@ -175,7 +176,8 @@ def build_explanation_facts(score_result: dict, candidate_review: dict | None) -
     scope = f"현재 확보된 {'·'.join(used_axes)} 기준"
     return {
         "scope": scope,
-        "region_count": len(rows),  # 비교한 구 수(창원시 5개 구)
+        "region_count": len(rows),  # 비교한 지역 수(같은 유형끼리: 구 5 / 시 7 / 군 10)
+        "region_names": [r["region_name"] for r in rows],  # 설명 검증이 지역 이름을 찾을 때 쓰는 전체 목록
         "data_sufficiency": {"available_dimensions": len(used_axes), "total_dimensions": len(EVALUATION_AXES),
                              "missing_dimensions": missing, "unused_confirmed_dimensions": unused,
                              "not_reflected_conditions": coverage.get("not_reflected", [])},

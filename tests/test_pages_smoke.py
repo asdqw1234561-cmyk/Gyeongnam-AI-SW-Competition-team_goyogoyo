@@ -52,21 +52,21 @@ class PagesFirstRenderTest(unittest.TestCase):
         self.assertEqual(at.session_state["stage"], "input")
 
     def test_app_input_form_uses_select_options(self):
-        """희망지역·직장/학교 위치·주거비 예산은 자유입력이 아니라 선택지다."""
+        """비교 범위(같은 유형끼리)·직장/학교 위치·주거비 예산은 자유입력이 아니라 선택지다."""
         at = self._run("app.py")
         labels = {s.label: s.options for s in at.selectbox}
-        region = next(opts for label, opts in labels.items() if label.startswith("희망 지역"))
-        self.assertEqual(region[0], "창원시 전체")
-        self.assertIn("창원시 진해구", region)
+        region = next(opts for label, opts in labels.items() if label.startswith("비교 범위"))
+        self.assertEqual(region, ["창원시 5개 구", "경남 시 지역 (7곳)", "경남 군 지역 (10곳)"])
         self.assertIn("선택 안 함", labels["직장 또는 학교 위치"])
+        self.assertIn("경남 김해시", labels["직장 또는 학교 위치"])
         self.assertIn("월세 30~50만원", labels["주거비 예산"])
         # 세 항목은 더 이상 text_input이 아니다
-        self.assertFalse(any(t.label.startswith(("희망 지역", "직장", "주거비")) for t in at.text_input))
+        self.assertFalse(any(t.label.startswith(("비교 범위", "직장", "주거비")) for t in at.text_input))
 
     def test_app_submit_saves_selected_values(self):
         """선택값 저장: '선택 안 함'은 기존 자유입력의 빈 값과 같게 ""로 저장된다."""
         at = AppTest.from_file(os.path.join(PROJECT_ROOT, "app.py"), default_timeout=TIMEOUT_S).run()
-        at.selectbox[0].select("창원시 성산구")  # 희망 지역
+        at.selectbox[0].select("경남 시 지역 (7곳)")  # 비교 범위
         at.selectbox[1].select("창원시 의창구")  # 직장 또는 학교 위치
         # 주거비 예산은 기본값("선택 안 함") 그대로
         no_questions = {"message": {"content": '{"questions": []}'}}
@@ -74,10 +74,15 @@ class PagesFirstRenderTest(unittest.TestCase):
             at.button[0].click().run()  # "다음 단계로"
         self.assertEqual([e.value for e in at.exception], [])
         saved = at.session_state["initial_input"]
-        self.assertEqual(saved["희망지역"], "창원시 성산구")
+        self.assertEqual(saved["희망지역"], "경남 시 지역 (7곳)")
         self.assertEqual(saved["직장/학교 위치"], "창원시 의창구")
         self.assertEqual(saved["주거비 예산"], "")
         self.assertEqual(at.session_state["stage"], "done")
+        # 같은 유형끼리만: 시 지역을 고르면 7개 시만 인구 1만 명당으로 비교한다
+        result = at.session_state["initial_recommendation"]
+        self.assertEqual(result["basis"], "per_10k_population")
+        self.assertEqual(len(result["region_scores"]), 7)
+        self.assertTrue(all(r["region_name"].endswith("시") for r in result["region_scores"]))
 
     def test_done_screen_shows_candidate_roles_and_critic(self):
         """결과 화면: 종합 1위 하나가 아니라 최적·균형 후보와 Critic 점검이 실제 데이터로 표시된다."""
@@ -92,8 +97,9 @@ class PagesFirstRenderTest(unittest.TestCase):
         self.assertEqual(review["status"], "ok")
         markdown = " ".join(m.value for m in at.markdown)
         self.assertIn("추천 결과", " ".join(h.value for h in at.subheader))
-        self.assertIn("최적 · 성산구", markdown)
-        self.assertIn("균형, 대안 · 의창구", markdown)  # 같은 구가 맡은 역할은 한 줄로 합쳐 보여준다
+        self.assertIn("최적 · 마산합포구", markdown)  # 기본 범위 창원시 5개 구, 인구 1만 명당
+        self.assertIn("균형 · 의창구", markdown)
+        self.assertIn("대안 · 진해구", markdown)
         captions = " ".join(c.value for c in at.caption)
         self.assertIn("가성비** — 제공 안 함", captions)
         warnings = " ".join(w.value for w in at.warning)
@@ -171,7 +177,7 @@ class PagesFirstRenderTest(unittest.TestCase):
         self.assertEqual(final["source"], "deterministic")
         self.assertTrue(any("계산으로 확정된 사실" in c.value for c in at.caption))
         shown = " ".join(m.value for m in at.markdown)
-        self.assertIn("최적 후보는 성산구입니다", shown)
+        self.assertIn("최적 후보는 마산합포구입니다", shown)
         self.assertNotIn("진해구가 최적 후보", shown)
 
     def test_feedback_reevaluation_explanation_reflects_new_candidates(self):
@@ -182,7 +188,7 @@ class PagesFirstRenderTest(unittest.TestCase):
             system = kwargs["messages"][0]["content"]
             if "가중치 조정" in system:
                 content = ('{"type": "adjust_direction", "message": null, "adjustments": '
-                           '[{"axis": "교통", "direction": "increase", "strength_explicit": true, "strength": "strong"}]}')
+                           '[{"axis": "의료", "direction": "increase", "strength_explicit": false}]}')
             elif "문장 다듬기 도우미" in system:  # Python 기본 설명을 받아 그대로 다듬은 척 돌려준다
                 base = kwargs["messages"][-1]["content"].split("[기본 설명]\n", 1)[1]
                 content = json.dumps({"answer": base.replace("Agent가 고른 정착 후보입니다.", "다시 평가한 후보입니다.")},
@@ -194,22 +200,22 @@ class PagesFirstRenderTest(unittest.TestCase):
         at = AppTest.from_file(os.path.join(PROJECT_ROOT, "app.py"), default_timeout=TIMEOUT_S).run()
         with mock.patch("ollama.chat", side_effect=fake):
             at.button[0].click().run()
-            at.text_input(key="nl_feedback_input").input("교통을 훨씬 더 중요하게").run()
+            at.text_input(key="nl_feedback_input").input("의료를 더 중요하게").run()
             next(b for b in at.button if b.label == "AI로 해석하기").click().run()
             next(b for b in at.button if b.label == "✅ 이 가중치로 다시 평가하기").click().run()
         self.assertEqual([e.value for e in at.exception], [])
         history = at.session_state["feedback_history"]
         best = next(c for c in history[-1]["candidate_changes"] if c["role"] == "best")
-        self.assertEqual((best["before"], best["after"]), ("성산구", "의창구"))
+        self.assertEqual((best["before"], best["after"]), ("마산합포구", "성산구"))
         final = at.session_state["feedback_explanation"]["final_answer"]
         self.assertEqual(final["source"], "ai_paraphrase")
-        self.assertIn("최적 후보는 의창구입니다", final["text"])
-        self.assertIn("최적 후보는 의창구입니다", final["deterministic_text"])
+        self.assertIn("최적 후보는 성산구입니다", final["text"])
+        self.assertIn("최적 후보는 성산구입니다", final["deterministic_text"])
         self.assertTrue(any("AI의 재평가 결과 설명" in m.value for m in at.markdown))
         # 맨 위 결과 영역이 승인된 피드백 결과로 바뀌고, 처음 결과와의 후보 변화가 보인다
         self.assertTrue(any("조건을 바꾼 뒤" in h.value for h in at.subheader))
-        self.assertTrue(any("최적 성산구 → 의창구" in i.value for i in at.info))
-        self.assertIn("최적, 균형 · 의창구", " ".join(m.value for m in at.markdown))
+        self.assertTrue(any("최적 마산합포구 → 성산구" in i.value for i in at.info))
+        self.assertIn("최적 · 성산구", " ".join(m.value for m in at.markdown))
 
     @staticmethod
     def _fake_ollama(**kwargs):

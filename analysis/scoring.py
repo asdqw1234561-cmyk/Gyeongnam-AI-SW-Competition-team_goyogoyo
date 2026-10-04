@@ -1,11 +1,17 @@
 # 생활권 적합도
 """
-창원시 5개 구 사이의 "상대 비교 점수"를 계산한다.
+경상남도 22개 비교 단위(창원시 5개 구 + 17개 시·군) 사이의 "상대 비교 점수"를 계산한다.
 
-중요: 이 점수는 "실제 거주 적합도"가 아니라 "현재 확보된 시설 수 지표를 5개 구끼리
-min-max 정규화해서 비교한 상대 점수"일 뿐이다. 인구나 면적으로 보정하지 않았고,
-100점이 "완벽한 정주환경"을 뜻하지도 않는다(그 지표에서 5개 구 중 1위라는 뜻일 뿐).
+중요: 이 점수는 "실제 거주 적합도"가 아니라 "현재 확보된 시설 수를 인구 1만 명당으로 바꿔
+22개 지역끼리 min-max 정규화해서 비교한 상대 점수"일 뿐이다. 면적·실제 거리·이동시간은 보정하지
+않았고, 100점이 "완벽한 정주환경"을 뜻하지도 않는다(그 지표에서 22개 지역 중 1위라는 뜻일 뿐).
 자세한 주의사항은 CAVEATS를 참고.
+
+[인구 1만 명당 비교] (2026-10-04 사용자 승인 - 규모가 수십 배 다른 시·군을 시설 수 그대로 비교하면
+사실상 인구 순위가 되기 때문)
+    비교값 = 시설 수 ÷ 주민등록 인구 × 10,000. 인구(category '인구', indicator_code 'population')가
+    비교 지역 전부 '확보'일 때만 적용하고, 하나라도 없으면 변환하지 않고 시설 수 그대로 비교하며
+    결과의 basis로 어느 쪽인지 밝힌다. component_scores의 raw_value는 언제나 실제 시설 수다.
 
 [점수 계산에 쓰는 지표] (요구사항: 현재 이 3개뿐)
     교통         -> bus_stop_count (버스정류장 수)
@@ -21,13 +27,13 @@ min-max 정규화해서 비교한 상대 점수"일 뿐이다. 인구나 면적�
       교육/안전/자연환경/문화시설 - 전부 미확보이므로 선택되어도 제외한다.
 
 [정규화 방식]
-    구 값들에 대해 min-max 정규화: (값 - 최소값) / (최대값 - 최소값) * 100
-    5개 구 값이 전부 같으면 0으로 나누지 않고 전부 50.0점(우열을 가릴 근거가 없다는
+    비교값(인구 1만 명당 값)에 대해 min-max 정규화: (값 - 최소값) / (최대값 - 최소값) * 100
+    비교 지역 값이 전부 같으면 0으로 나누지 않고 전부 50.0점(우열을 가릴 근거가 없다는
     뜻)을 준다. 어떤 수식을 썼는지는 compute_region_scores()의 반환값
     (`normalization[indicator_code]["formula"]`)으로 그대로 확인할 수 있다.
 
 [가중치]
-    사용자가 선택한 "중요 생활조건" 중, 위 3개 지표에 대응하면서 5개 구 전부
+    사용자가 선택한 "중요 생활조건" 중, 위 3개 지표에 대응하면서 비교 지역 전부
     data_status=='확보'인 것만 "사용된 조건"으로 채택하고, 그 수만큼 동일 가중치
     (1/n)를 준다. 조건을 하나도 선택하지 않았으면 확보된 지표 전체(현재 3개)에
     동일 가중치를 준다. 선택한 조건이 전부 미확보/대응 지표 없음이면 점수를 억지로
@@ -36,7 +42,7 @@ min-max 정규화해서 비교한 상대 점수"일 뿐이다. 인구나 면적�
 
 from __future__ import annotations
 
-from services.region_data import get_all_changwon_regions
+from services.region_data import DEFAULT_REGION_TYPE, get_all_regions
 
 # 사용자 "중요 생활조건" 선택지(app.py의 multiselect 보기)와 실제 점수 계산용
 # 지표 코드의 대응관계. 교육/안전/자연환경/문화시설은 대응하는 지표 자체가 아직
@@ -64,10 +70,16 @@ VALID_SCORABLE_INDICATOR_CODES: tuple[str, ...] = tuple(CONDITION_TO_INDICATOR_C
 NO_DATA_MESSAGE = "현재 비교 가능한 데이터가 없습니다."
 ALL_WEIGHTS_ZERO_MESSAGE = "모든 가중치가 0입니다. 하나 이상의 조건에 가중치를 주세요."
 
+PER_CAPITA_UNIT = 10_000
+POPULATION_CATEGORY = "인구"
+POPULATION_CODE = "population"
+BASIS_PER_CAPITA = "per_10k_population"
+BASIS_COUNT = "count"
+
 CAVEATS: list[str] = [
-    "현재 시설 수는 인구·면적을 보정한 접근성 지표가 아닙니다.",
+    "시설 수를 인구 1만 명당으로 바꿔 비교했지만, 면적·실제 거리·이동시간은 반영하지 않았습니다.",
     "점수는 '시설 수 기반 상대 비교 점수'일 뿐, 실제 거주 적합도를 확정하는 값이 아닙니다.",
-    "100점은 해당 지표에서 창원시 5개 구 중 수치가 가장 높다는 뜻일 뿐, "
+    "100점은 해당 지표에서 경남 22개 지역 중 인구 1만 명당 값이 가장 높다는 뜻일 뿐, "
     "완벽한 정주환경을 의미하지 않습니다.",
 ]
 
@@ -81,7 +93,7 @@ def _normalize_min_max(raw_values: dict[str, float]) -> tuple[dict[str, float], 
     if vmax == vmin:
         return (
             {rid: 50.0 for rid in raw_values},
-            f"5개 구 값이 모두 {vmin:g}로 동일 -> 우열을 가릴 수 없어 전 구 50.0점 부여",
+            f"비교 지역 값이 모두 {vmin:g}로 동일 -> 우열을 가릴 수 없어 전 지역 50.0점 부여",
         )
     formula = f"(값 - {vmin:g}) / ({vmax:g} - {vmin:g}) * 100"
     scores = {rid: (v - vmin) / (vmax - vmin) * 100 for rid, v in raw_values.items()}
@@ -92,7 +104,7 @@ def _collect_confirmed_indicator(
     regions: list[dict], indicator_code: str
 ) -> tuple[dict[str, float], str] | None:
     """
-    5개 구 전부 해당 indicator_code가 data_status=='확보'이고 숫자로 변환 가능해야
+    비교 지역 전부 해당 indicator_code가 data_status=='확보'이고 숫자로 변환 가능해야
     (raw_values, indicator_name)을 반환한다. 하나라도 아니면 None(사용 불가).
     """
     category = INDICATOR_CATEGORY[indicator_code]
@@ -124,6 +136,24 @@ def collect_confirmed_indicator(
     return _collect_confirmed_indicator(regions, indicator_code)
 
 
+def population_by_region(regions: list[dict]) -> dict[str, float] | None:
+    """비교 지역 전부 인구가 '확보'이고 양수일 때만 {region_id: 인구}. 하나라도 아니면 None(변환 안 함)."""
+    populations: dict[str, float] = {}
+    for region in regions:
+        indicator = next((i for i in region["categories"].get(POPULATION_CATEGORY, [])
+                          if i["indicator_code"] == POPULATION_CODE), None)
+        if indicator is None or indicator["data_status"] != "확보" or indicator["value"] is None:
+            return None
+        try:
+            value = float(indicator["value"])
+        except (TypeError, ValueError):
+            return None
+        if value <= 0:
+            return None
+        populations[region["region_id"]] = value
+    return populations
+
+
 def _build_ok_result(
     regions: list[dict],
     used_meta: list[dict],
@@ -132,22 +162,32 @@ def _build_ok_result(
 ) -> dict:
     """
     used_meta(각 항목에 최소 indicator_code/indicator_name/weight가 있어야 함, "condition"은
-    선택)로 min-max 정규화 + 가중합 + 5개 구 정렬/동점 판정까지 공통 처리한다.
+    선택)로 min-max 정규화 + 가중합 + 비교 지역 정렬/동점 판정까지 공통 처리한다.
     compute_region_scores()와 compute_region_scores_from_weights() 둘 다 이 함수로
     귀결되므로, 정규화 방식과 집계 로직은 호출 경로와 무관하게 완전히 동일하다.
     """
     region_name_by_id = {r["region_id"]: r["region_name"] for r in regions}
+    populations = population_by_region(regions)
+    basis = BASIS_PER_CAPITA if populations else BASIS_COUNT
 
     indicator_raw_values: dict[str, dict[str, float]] = {}
+    compare_values_by_indicator: dict[str, dict[str, float]] = {}
     normalization: dict[str, dict] = {}
     normalized_by_indicator: dict[str, dict[str, float]] = {}
     for meta in used_meta:
         code = meta["indicator_code"]
         raw_values, _name = _collect_confirmed_indicator(regions, code)
         indicator_raw_values[code] = raw_values
-        normalized, formula = _normalize_min_max(raw_values)
+        compare_values = (
+            {rid: v / populations[rid] * PER_CAPITA_UNIT for rid, v in raw_values.items()} if populations else raw_values
+        )
+        compare_values_by_indicator[code] = compare_values
+        normalized, formula = _normalize_min_max(compare_values)
+        if populations:
+            formula = f"인구 1만 명당 값(= 개수 ÷ 인구 × 10,000)으로 {formula}"
         normalized_by_indicator[code] = normalized
-        normalization[code] = {"formula": formula, "raw_values": raw_values, "normalized": normalized}
+        normalization[code] = {"formula": formula, "raw_values": raw_values, "compare_values": compare_values,
+                               "normalized": normalized, "basis": basis}
 
     # 점수 계산에 실제로 쓰였는지와 무관하게, 화면에서 후보지역의 "실제 수치"를
     # 보여줄 때 참고하도록 확보된 3개 지표를 전부 모아둔다.
@@ -171,6 +211,7 @@ def _build_ok_result(
             total += weighted
             component_scores[code] = {
                 "raw_value": raw_value,
+                "per_10k": compare_values_by_indicator[code][rid] if populations else None,
                 "normalized_score": norm_score,
                 "weight": meta["weight"],
                 "weighted_score": weighted,
@@ -186,6 +227,7 @@ def _build_ok_result(
                 "total_score": total,
                 "component_scores": component_scores,
                 "reference_indicators": reference_indicators,
+                "population": populations.get(rid) if populations else None,
             }
         )
 
@@ -201,6 +243,7 @@ def _build_ok_result(
 
     return {
         "status": "ok",
+        "basis": basis,
         "used_conditions": used_meta,
         "excluded_conditions": excluded_conditions,
         "caveats": CAVEATS,
@@ -216,7 +259,7 @@ def compute_region_scores(
     regions: list[dict] | None = None,
 ) -> dict:
     """
-    창원시 5개 구를 사용자가 선택한 "중요 생활조건" 중 실제 데이터가 확보된 것만으로
+    경남 22개 지역을 사용자가 선택한 "중요 생활조건" 중 실제 데이터가 확보된 것만으로
     상대 비교한다(최초 추천용 - 조건 기반, 동일 가중치).
 
     Args:
@@ -224,9 +267,9 @@ def compute_region_scores(
             조건 미선택으로 간주해 확보된 지표 전체를 동일 가중치로 쓴다.
         candidate_count: 최종으로 잘라서 보여줄 후보 구 개수(1~5 권장이나 값 자체를
             강제하지는 않음 - 화면단 number_input에서 1~5로 제한한다).
-        regions: 생략하면(기본값 None) 기존처럼 get_all_changwon_regions()로 실제
-            공공데이터를 조회한다. 값을 넘기면 그 목록을 그대로 쓴다 - 창원시 5개 구
-            전체가 포함된 get_all_changwon_regions()와 같은 형식의 데이터여야 하며,
+        regions: 생략하면(기본값 None) 기존처럼 get_all_regions()로 실제
+            공공데이터를 조회한다. 값을 넘기면 그 목록을 그대로 쓴다 - 경남 22개 지역
+            전체가 포함된 get_all_regions()와 같은 형식의 데이터여야 하며,
             analysis/simulation.py가 "원본의 깊은 복사본에 가상값만 바꾼" 목록을
             넘길 때 쓰는 용도다. 이주자용 추천(app.py)은 이 인자를 쓰지 않으므로
             동작이 전혀 바뀌지 않는다.
@@ -241,7 +284,7 @@ def compute_region_scores(
             message: str
         status=="ok"일 때 추가:
             normalization: {indicator_code: {"formula","raw_values","normalized"}}
-            region_scores: 5개 구 전체, total_score 내림차순 정렬
+            region_scores: 비교 지역 전체, total_score 내림차순 정렬
                 [{"region_id","region_name","rank","total_score","tied",
                   "component_scores": {indicator_code: {"raw_value","normalized_score",
                                                            "weight","weighted_score"}},
@@ -250,7 +293,8 @@ def compute_region_scores(
                   }, ...]
             top_candidates: region_scores[:candidate_count]
     """
-    regions = regions if regions is not None else get_all_changwon_regions()
+    # 비교 대상을 넘기지 않으면 기본 범위(창원시 5개 구)만 비교한다 - 유형이 다른 지역을 섞지 않는다.
+    regions = regions if regions is not None else get_all_regions(region_type=DEFAULT_REGION_TYPE)
 
     conditions = list(user_conditions) if user_conditions else []
     target_conditions = conditions if conditions else list(ALL_SCORABLE_CONDITIONS)
@@ -269,7 +313,7 @@ def compute_region_scores(
         collected = _collect_confirmed_indicator(regions, indicator_code)
         if collected is None:
             excluded_conditions.append(
-                {"condition": condition, "reason": f"'{indicator_code}' 지표가 5개 구 전부 확보되지 않아 제외"}
+                {"condition": condition, "reason": f"'{indicator_code}' 지표가 비교 지역 전부 확보되지 않아 제외"}
             )
             continue
 
@@ -321,7 +365,7 @@ def compute_region_scores_from_weights(
     regions: list[dict] | None = None,
 ) -> dict:
     """
-    사용자가 "조건 바꿔서 다시 보기"에서 직접 지정한 가중치로 5개 구를
+    사용자가 "조건 바꿔서 다시 보기"에서 직접 지정한 가중치로 22개 지역을
     재평가한다(피드백 전용 경로). min-max 정규화와 지표값 자체는
     compute_region_scores()와 완전히 동일한 내부 함수(_normalize_min_max,
     _collect_confirmed_indicator)를 그대로 쓴다 - 바뀌는 건 가중치뿐이다.
@@ -341,7 +385,8 @@ def compute_region_scores_from_weights(
         (전부 0 이하이거나, 가리키는 지표가 아직 확보되지 않았으면)
         status="no_usable_conditions"를 반환하고 계산하지 않는다.
     """
-    regions = regions if regions is not None else get_all_changwon_regions()
+    # 비교 대상을 넘기지 않으면 기본 범위(창원시 5개 구)만 비교한다 - 유형이 다른 지역을 섞지 않는다.
+    regions = regions if regions is not None else get_all_regions(region_type=DEFAULT_REGION_TYPE)
 
     positive_weights = {
         code: w

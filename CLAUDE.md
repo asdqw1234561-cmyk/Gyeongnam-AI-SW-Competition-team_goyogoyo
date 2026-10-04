@@ -18,16 +18,16 @@
 
 | 영역 | 파일 | 내용 |
 |---|---|---|
-| 이주자용 5개 구 비교 | `app.py` | 입력 → AI 추가질문/가중치 확인(승인) → Agent Planner → min-max 상대 비교 → 자연어·슬라이더 피드백 |
+| 이주자용 지역 비교 | `app.py` | 비교 범위 선택(창원시 5개 구 / 경남 시 7곳 / 경남 군 10곳) → AI 추가질문/가중치 확인(승인) → Agent Planner → 인구 1만 명당 min-max 상대 비교 → 자연어·슬라이더 피드백 |
 | 위치 기반 탐색 | `pages/user.py` | 확정 좌표 주변 300m/500m/1km 버스정류장·편의점, Folium 지도, 위치 AI Agent |
-| 정부용 분석 | `pages/government.py` | 구별 시설 수 비교, 차이, 가상 시설 증감 시뮬레이션 |
-| 점수 계산 | `analysis/scoring.py` | min-max 정규화 + 가중합 (유일한 점수 계산 경로) |
+| 정부용 분석 | `pages/government.py` | 비교 범위별 시설 수 비교, 차이, 가상 시설 증감 시뮬레이션 |
+| 점수 계산 | `analysis/scoring.py` | 인구 1만 명당 변환 → min-max 정규화 + 가중합 (유일한 점수 계산 경로) |
 | 정착 후보군·Critic | `analysis/candidates.py` | 점수 결과로 최적·균형·대안 후보와 Critic 점검을 결정적으로 계산(새 점수식 없음, 가성비는 주거비 미확보로 산출 불가) |
 | 설명용 확정 사실 | `analysis/explanation_facts.py` | AI 설명에 넘길 사실(구별 축 점수·순위·강점/약점/중립, 역할 구 비교 순서, 지배 관계, 확보/전체 평가축 수)을 결정적으로 생성. LLM은 판정·대소관계를 추론하지 않고 이것만 옮기며 검증도 이 기준 |
 | 피드백 재평가 | `analysis/feedback.py` | 방향성 피드백 배율 규칙(×1.5/×1.25/×2.0 후 재정규화), 모든 피드백이 쓰는 단일 재평가 경로(점수 → 후보·Critic), `feedback_history` 기록 |
 | 시뮬레이션 | `analysis/simulation.py` | deepcopy 사본에 가상값 → `compute_region_scores_from_weights()` 재사용 |
 | 데이터 조회 | `services/region_data.py`, `services/bus_stops.py`, `services/convenience.py`, `services/map_markers.py`, `services/schools.py`(구별 학교 수 참고 정보 - 점수 미사용) | CSV 읽기 전용 |
-| 수집·집계 | `scripts/` | 공공데이터 수집, 버스정류장 공간판정·집계 |
+| 수집·집계 | `scripts/` | 공공데이터 수집, 버스정류장 공간판정·집계. 경남 22개 지역은 `scripts/gyeongnam_regions.py`(마스터) → `ingest_gyeongnam_*.py`(data/gyeongnam/) → `build_gyeongnam_indicators.py`(운영 CSV) |
 
 **AI Agent**
 - `agent/ollama_agent.py` (Ollama qwen3.5:4b): 추가질문 생성, 자연어 가중치 해석. 승인 전에는 적용하지 않는다.
@@ -39,18 +39,24 @@
 - `agent/agent_loop.py`: 위치 Agent 계획형 경로의 결과 검토 루프(관찰 → 판단 → 행동, 최대 3회). AI 답변 숫자를 검증해 실패하면 Python 요약으로 대체한다. MCP 반복형 답변도 같은 `verify_answer` 기준을 쓰며, 두 경로 모두 결과의 `final_answer`(source: ai_verified / python_summary)로 화면·대화 기억에 전달된다. `agent/agent_state.py`의 `ConversationMemory`가 같은 위치의 최근 대화를 후속 질문 맥락으로 넘긴다.
 - 모든 Ollama 호출은 `think=False`를 유지한다(qwen3.5의 thinking이 토큰을 소모해 응답이 비는 문제).
 
-`app.py`의 구별 점수와 `pages/user.py`의 위치 주변 시설 수는 **서로 다른 분석**이다. 둘을 섞어 새 점수를 만들지 않는다.
+`app.py`의 지역별 점수와 `pages/user.py`의 위치 주변 시설 수는 **서로 다른 분석**이다. 둘을 섞어 새 점수를 만들지 않는다. 위치 기반 탐색은 아직 **창원시만** 지원한다(정류장·편의점 좌표 원본이 창원 기준).
 
 ## 3. 데이터 (기준값은 CSV가 원본, 아래는 검증용 참고치)
 
-| 지표 | 의창 | 성산 | 마산합포 | 마산회원 | 진해 | 합계 | 파일 |
-|---|---|---|---|---|---|---|---|
-| bus_stop_count | 831 | 452 | 760 | 365 | 518 | 2,926 | `data/raw/changwon_bus_stops.csv` (원본 3,526, 경계 밖 600 제외) |
-| hospital_count | 262 | 398 | 242 | 256 | 200 | 1,358 | `data/region_indicators.csv` (구별 집계만, 위치 데이터 없음) |
-| convenience_store_count | 199 | 245 | 159 | 151 | 196 | 950 | `data/convenience/*.csv` |
+비교 단위는 **경상남도 22개 지역** = 창원시 5개 구(CW-*) + 시 7곳 + 군 10곳(GN-*). **같은 유형끼리만 비교한다**(구끼리/시끼리/군끼리) -
+유형이 다른 지역을 한 표에서 점수로 비교하면 시설 수 그대로는 인구 순위, 인구당은 군 쏠림이 된다(DEC-21).
+
+| 지표 | 창원 5개 구 (의창/성산/마산합포/마산회원/진해) | 경남 22개 합계 | 출처 · 집계 파일 |
+|---|---|---|---|
+| bus_stop_count | 788 / 451 / 779 / 375 / 525 | 18,207 | 국토교통부 전국 버스정류장 위치정보(2025-10-31), 자기 시·군 등록분 중 SGIS 경계 안 · `data/gyeongnam/bus_stop_counts.csv` |
+| hospital_count | 262 / 397 / 242 / 256 / 200 | 4,256 | HIRA 병원정보서비스(sidoCd=경남) · `data/gyeongnam/hospital_counts.csv` |
+| convenience_store_count | 199 / 245 / 159 / 151 / 196 | 3,305 | 상가정보 G20405(2026-06) · `data/gyeongnam/convenience_counts.csv` |
+| population (분모, 점수 축 아님) | 209,833 / 244,872 / 174,168 / 173,677 / 182,463 | 3,191,645 | 행안부 주민등록 인구(2026-08-31) · `data/gyeongnam/population.csv` |
+
+- 창원시 위치 기반 탐색용 정류장 원본은 계속 `data/raw/changwon_bus_stops.csv`(창원시 정류소, 공식 집계 2,926)다. 지역 비교 점수의 버스정류장 수(위 표)와 출처가 다르다.
 
 - `data/region_indicators.csv`가 운영 지표다. `data/region_indicators_sample_dev.csv`는 개발용 더미이며 실제 추천에 쓰지 않는다(`include_dev_sample=False` 기본).
-- 버스정류장: 정류소아이디 기준, SGIS 행정경계 공간판정, 보정 3건(`SPATIAL_OVERRIDES`)·품질 예외 8건 기준을 유지한다. `services.bus_stops.verify_official_counts()`가 원본으로 다시 세서 검증한다.
+- 창원시 정류소 원본(위치 탐색용): 정류소아이디 기준, SGIS 행정경계 공간판정, 보정 3건(`SPATIAL_OVERRIDES`)·품질 예외 8건 기준을 유지한다. `services.bus_stops.verify_official_counts()`가 원본으로 다시 세서 검증한다.
 - 편의점: "상가정보에 **등록된 업소 수**"다. 동일 주소 중복 등록 가능성이 있어 실제 영업 매장 수라고 단정하지 않는다.
 - 의료: 의원·치과의원·한의원·보건소 등 전 종별 합산이다. "종합병원 수"·"병원 수"로 단정하지 말고 **"의료기관 수"**로 표현한다.
 - 원본 CSV·GeoJSON은 수정하지 않는다. 데이터 수치를 코드에 하드코딩하지 않는다(기존 `EXPECTED_COUNTS` 같은 검증용 상수는 예외).
@@ -60,8 +66,9 @@
 
 ## 4. 점수와 거리 해석
 
-- 점수: 각 지표를 창원시 5개 구 사이에서 min-max 정규화(0~100) → 승인된 가중치로 가중합. 값이 모두 같으면 50점. 5개 구 전부 `확보`인 지표만 사용.
-- **100점 = 5개 구 중 그 지표 값이 가장 높다는 뜻일 뿐**, 완벽한 거주지가 아니다. 인구·면적·접근성·통근시간을 보정하지 않은 "시설 수 기반 상대 비교"다.
+- 점수: 각 지표를 **인구 1만 명당**으로 바꾼 뒤 같은 유형 비교 지역 사이에서 min-max 정규화(0~100) → 승인된 가중치로 가중합. 값이 모두 같으면 50점. 비교 지역 전부 `확보`인 지표만 사용. 인구가 하나라도 없으면 변환하지 않고 시설 수로 비교하며 결과 `basis`에 밝힌다.
+- 강점·약점 판정은 비교 지역 수에 비례한다(상위 40% 강점, 하위 40% 약점 - 5곳이면 1~2위/4~5위).
+- **100점 = 비교 지역 중 그 지표의 인구 1만 명당 값이 가장 높다는 뜻일 뿐**, 완벽한 거주지가 아니다. 면적·접근성·통근시간을 보정하지 않은 "시설 수 기반 상대 비교"다. 특히 인구당 버스정류장 수는 넓게 흩어진 지역에서 크게 나오므로 교통 편의로 단정하지 않는다.
 - `analysis/scoring.py` 계산식은 임의로 바꾸지 않는다. 바꿔야 하면 먼저 보고한다.
 - 시뮬레이션은 실제 정책 효과 예측이 아니다 — "시설 수가 가상으로 바뀌면 상대 점수가 어떻게 변하는가"만 보여준다.
 - 위치 기반 거리는 **하버사인 직선거리**다. "500m 안"은 직선거리 500m이며 도보 500m·도보 5분·실제 이동거리·접근성 보장이 아니다. 화면과 AI 설명 모두에서 구분한다.

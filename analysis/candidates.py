@@ -49,19 +49,30 @@ AXIS_STATUS_MISSING = "미확보"
 
 CLOSE_GAP_POINTS = 5.0       # 1·2위 종합점수 차이가 이보다 작으면 순위 불안정 경고
 SINGLE_AXIS_SHARE = 0.7      # 최적 후보 종합점수 중 한 축 기여 비율이 이 이상이면 경고
-STRENGTH_MAX_RANK = 2        # 축별 순위 1~2위 = 강점
-WEAKNESS_MIN_RANK = 4        # 축별 순위 4~5위 = 약점
+STRENGTH_MAX_RANK = 2        # 비교 지역 5곳일 때: 축별 순위 1~2위 = 강점
+WEAKNESS_MIN_RANK = 4        # 비교 지역 5곳일 때: 축별 순위 4~5위 = 약점
+STRENGTH_SHARE = 0.4         # 비교 지역 수가 달라지면 상위 40%를 강점, 하위 40%를 약점으로 본다(5곳이면 위와 같음)
+
+
+def strength_max_rank(region_count: int) -> int:
+    """이 순위 이하면 강점. 5곳 → 2, 7곳 → 3, 10곳 → 4."""
+    return max(1, round(region_count * STRENGTH_SHARE))
+
+
+def weakness_min_rank(region_count: int) -> int:
+    """이 순위 이상이면 약점. 5곳 → 4, 7곳 → 5, 10곳 → 7."""
+    return region_count - strength_max_rank(region_count) + 1
 
 ROLE_LABELS = {"best": "최적", "balanced": "균형", "value": "가성비", "alternative": "대안"}
 VALUE_UNAVAILABLE_REASON = "주거비(월세·전세) 데이터가 미확보라 비용 대비 생활여건을 계산할 수 없습니다."
 GRANULARITY_NOTE = (
-    "후보 단위가 창원시 5개 구라서, 같은 구 안의 특정 생활권(동네)에 후보가 몰리는지는 "
+    "후보 단위가 시·군·구라서, 같은 지역 안의 특정 생활권(동네)에 후보가 몰리는지는 "
     "판단할 수 없습니다(행정동 단위 지표 미확보)."
 )
 
 
 def _axis_ranks(normalized: dict[str, dict[str, float]], codes: list[str]) -> dict[str, dict[str, int]]:
-    """{region_id: {code: 5개 구 중 순위(동점은 같은 순위)}}"""
+    """{region_id: {code: 비교 지역 중 순위(동점은 같은 순위)}}"""
     ranks: dict[str, dict[str, int]] = {rid: {} for rid in normalized}
     for code in codes:
         values = {rid: round(scores[code], 6) for rid, scores in normalized.items()}
@@ -104,8 +115,8 @@ def _role_entry(role: str, row: dict, codes: list[str], ranks: dict[str, dict[st
         "total_score": row["total_score"],
         "reason": reason,
         "axis_profile": axis_profile,
-        "strengths": [p["axis"] for p in axis_profile if p["axis_rank"] <= STRENGTH_MAX_RANK],
-        "weaknesses": [p["axis"] for p in axis_profile if p["axis_rank"] >= WEAKNESS_MIN_RANK],
+        "strengths": [p["axis"] for p in axis_profile if p["axis_rank"] <= strength_max_rank(len(ranks))],
+        "weaknesses": [p["axis"] for p in axis_profile if p["axis_rank"] >= weakness_min_rank(len(ranks))],
     }
 
 
@@ -169,9 +180,9 @@ def build_candidate_set(score_result: dict, unscored_inputs: list[str] | None = 
             key=lambda r: (min(normalized[r["region_id"]].values()), r["total_score"], -rows.index(r)),
         )
         weakest = min(normalized[balanced_row["region_id"]].values())
-        reason = f"평가축 중 가장 약한 축도 {weakest:.1f}점으로, 약점이 가장 작은 구"
+        reason = f"평가축 중 가장 약한 축도 {weakest:.1f}점으로, 약점이 가장 작은 지역"
         if balanced_row["region_id"] == best["region_id"]:
-            reason += " (최적 후보와 같은 구)"
+            reason += " (최적 후보와 같은 지역)"
         roles.append(_role_entry("balanced", balanced_row, used_codes, ranks, reason))
     else:
         roles.append(_unavailable("balanced", "평가축이 1개라 축 사이의 균형을 따질 수 없습니다."))
@@ -201,11 +212,11 @@ def build_candidate_set(score_result: dict, unscored_inputs: list[str] | None = 
                     alt = _pick(undominated)
             reason = (
                 f"최적 후보({best['region_name']})의 가장 약한 축인 {AXIS_BY_CODE[weak_code]}"
-                f"({best_scores[weak_code]:.1f}점)에서 {normalized[alt['region_id']][weak_code]:.1f}점으로 앞서는 구"
+                f"({best_scores[weak_code]:.1f}점)에서 {normalized[alt['region_id']][weak_code]:.1f}점으로 앞서는 지역"
             )
             same_as = [r["role_label"] for r in roles if r["status"] == "ok" and r["region_id"] == alt["region_id"]]
             if same_as:
-                reason += f" ({'·'.join(same_as)} 후보와 같은 구)"
+                reason += f" ({'·'.join(same_as)} 후보와 같은 지역)"
             entry = _role_entry("alternative", alt, used_codes, ranks, reason)
             if revised_from:
                 first, doms = revised_from
@@ -299,7 +310,7 @@ def build_candidate_set(score_result: dict, unscored_inputs: list[str] | None = 
     tied_names = [r["region_name"] for r in rows if r.get("tied")]
     if tied_names:
         checks.append({"code": "ties", "level": "info", "facts": {"regions": tied_names},
-                       "message": f"종합점수가 같은 구가 있습니다: {', '.join(tied_names)}."})
+                       "message": f"종합점수가 같은 지역이 있습니다: {', '.join(tied_names)}."})
 
     return {
         "status": "ok",

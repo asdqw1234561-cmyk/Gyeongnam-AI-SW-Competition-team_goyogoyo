@@ -4,7 +4,7 @@
 
 목적은 "시설 수 기반 지역 간 차이 분석"을 보여주는 것이지, 어떤 지역을 "정주
 저해요인 확정"이나 "인프라 부족 지역 확정"으로 판정하는 것이 아니다. 데이터 조회는
-전부 services/region_data.py의 get_all_changwon_regions()를 통해서만 하며(원본 CSV를
+전부 services/region_data.py의 get_all_regions()를 통해서만 하며(원본 CSV를
 직접 읽거나 수치를 하드코딩하지 않는다), 이 페이지는 조회만 할 뿐 어떤 경로로도
 CSV를 수정하지 않는다 - 조회 대상 구를 바꿔도 원본 데이터는 그대로다.
 
@@ -19,7 +19,7 @@ import streamlit as st
 
 from analysis import simulation
 from analysis.scoring import INDICATOR_CATEGORY
-from services.region_data import get_all_changwon_regions
+from services.region_data import REGION_SCOPES, get_all_regions
 
 CHART_ACCENT_COLOR = "#2a78d6"
 CATEGORIES = ["교통", "의료", "생활편의"]
@@ -69,29 +69,30 @@ def _is_fully_confirmed(regions: list[dict], category: str, code: str) -> bool:
     return True
 
 
-st.set_page_config(page_title="창원시 시설 현황 분석 (정부용)", page_icon="🏛️")
+st.set_page_config(page_title="경남 시설 현황 분석 (정부용)", page_icon="🏛️")
 
-st.title("🏛️ 창원시 생활권 시설 현황 및 지역 간 차이 분석")
+st.title("🏛️ 경남 생활권 시설 현황 및 지역 간 차이 분석")
 st.caption(
-    "창원시 5개 구의 공공데이터 확보 지표를 비교합니다. 특정 지역을 "
+    "경남의 같은 유형 지역(창원시 구끼리 / 시끼리 / 군끼리)의 공공데이터 확보 지표를 비교합니다. 특정 지역을 "
     "'정주 저해요인 확정' 또는 '인프라 부족 지역 확정'으로 판정하는 화면이 아니며, "
-    "인구·면적·수요를 보정하지 않은 단순 시설 수 비교 결과입니다."
+    "표의 시설 수는 인구·면적·수요를 보정하지 않은 단순 개수이며, 시뮬레이션 점수만 인구 1만 명당으로 비교합니다."
 )
 with st.expander("⚠️ 이 화면을 해석할 때 반드시 유의할 점", expanded=True):
     for c in PAGE_CAVEATS:
         st.write(f"- {c}")
 
-# 항상 창원시 5개 구 전체를 조회한다(점수 계산 없음, 원본 CSV를 그대로 읽기만 함).
-regions = get_all_changwon_regions()
+# 비교 범위(같은 유형끼리)를 고른 뒤 그 유형 전체를 조회한다(점수 계산 없음, 원본 CSV를 그대로 읽기만 함).
+scope_label = st.selectbox("비교 범위", list(REGION_SCOPES), key="gov_scope")
+regions = get_all_regions(region_type=REGION_SCOPES[scope_label])
 
 # ---------------------------------------------------------------------------
-# 1. 창원시 5개 구 전체 시설 수 현황
+# 1. 비교 범위 전체 시설 수 현황
 # ---------------------------------------------------------------------------
-st.header("1. 창원시 5개 구 전체 시설 수 현황")
+st.header(f"1. {scope_label} 시설 수 현황")
 
 summary_rows = []
 for region in regions:
-    row = {"구": region["region_name"]}
+    row = {"지역": region["region_name"]}
     for category in CATEGORIES:
         for code in _indicator_codes_for_category(regions, category):
             if _is_fully_confirmed(regions, category, code):
@@ -100,12 +101,12 @@ for region in regions:
     summary_rows.append(row)
 
 summary_df = pd.DataFrame(summary_rows)
-confirmed_columns = [c for c in summary_df.columns if c != "구"]
+confirmed_columns = [c for c in summary_df.columns if c != "지역"]
 if confirmed_columns:
     st.dataframe(summary_df, hide_index=True, width="stretch")
-    st.caption(f"현재 5개 구 전체가 확보된 지표: {', '.join(confirmed_columns)}")
+    st.caption(f"현재 {scope_label} 전체가 확보된 지표: {', '.join(confirmed_columns)}")
 else:
-    st.info("아직 5개 구 전체가 확보된 지표가 없습니다.")
+    st.info("아직 비교 범위 전체가 확보된 지표가 없습니다.")
 
 # ---------------------------------------------------------------------------
 # 2. 항목별(교통/의료/생활편의) 비교표와 그래프
@@ -177,7 +178,7 @@ for category in CATEGORIES:
 # ---------------------------------------------------------------------------
 st.header("3. 구 선택 상세 조회")
 region_names = [r["region_name"] for r in regions]
-selected_name = st.selectbox("조회할 구를 선택하세요", region_names, key="gov_selected_region")
+selected_name = st.selectbox("조회할 지역을 선택하세요", region_names, key="gov_selected_region")
 selected_region = next(r for r in regions if r["region_name"] == selected_name)
 
 st.markdown(f"#### {selected_region['region_name']} 상세 지표")
@@ -208,7 +209,7 @@ st.caption(
 # 4. 구별 시설 수 차이 비교
 # ---------------------------------------------------------------------------
 st.header("4. 구별 시설 수 차이 비교")
-st.caption("5개 구 사이의 수치 분포(최댓값·최솟값·차이)를 그대로 보여줍니다. 많고 적음이 곧 우열을 뜻하지 않습니다.")
+st.caption("비교 지역 사이의 수치 분포(최댓값·최솟값·차이)를 그대로 보여줍니다. 많고 적음이 곧 우열을 뜻하지 않습니다.")
 
 diff_rows = []
 for category in CATEGORIES:
@@ -235,7 +236,7 @@ for category in CATEGORIES:
 if diff_rows:
     st.dataframe(pd.DataFrame(diff_rows), hide_index=True, width="stretch")
 else:
-    st.info("아직 5개 구 전체가 확보된 지표가 없어 차이를 비교할 수 없습니다.")
+    st.info("아직 비교 범위 전체가 확보된 지표가 없어 차이를 비교할 수 없습니다.")
 
 # ---------------------------------------------------------------------------
 # 5. 가상 시설 증감 시뮬레이션
@@ -243,8 +244,8 @@ else:
 st.divider()
 st.header("5. 가상 시설 증감 시뮬레이션")
 st.caption(
-    "창원시 5개 구 중 한 곳의 시설 수를 가상으로 늘리거나 줄였을 때, 시설 수 기준 "
-    "상대 비교 점수와 5개 구 사이의 수치 차이가 어떻게 달라지는지 보여줍니다. "
+    "비교 범위 중 한 곳의 시설 수를 가상으로 늘리거나 줄였을 때, 인구 1만 명당 기준 "
+    "상대 비교 점수와 같은 유형 지역 사이의 수치 차이가 어떻게 달라지는지 보여줍니다. "
     "**이것은 가정에 따른 수치 변화 시뮬레이션이며 실제 정책 효과 예측이 아닙니다** "
     "(실제 통근시간, 의료 접근성, 정주율, 인구 유입, 사업비 대비 효과 등은 계산하지 "
     "않습니다). 원본 데이터(data/region_indicators.csv)는 이 시뮬레이션으로 전혀 "
@@ -266,11 +267,11 @@ indicator_name_by_code = {
 }
 
 if not simulatable_codes:
-    st.info("현재 시뮬레이션 가능한(5개 구 전부 확보된) 지표가 없습니다.")
+    st.info("현재 시뮬레이션 가능한(비교 범위 전부 확보된) 지표가 없습니다.")
 else:
     col1, col2, col3 = st.columns(3)
     with col1:
-        sim_region_name = st.selectbox("① 분석 대상 구", region_names, key="gov_sim_region")
+        sim_region_name = st.selectbox("① 분석 대상 지역", region_names, key="gov_sim_region")
     with col2:
         sim_indicator_code = st.selectbox(
             "② 분석 대상 시설 지표",
@@ -340,7 +341,7 @@ else:
             "(가상값은 이 화면 표시용일 뿐 원본 CSV에는 반영되지 않습니다)"
         )
 
-        st.markdown("**⑦ 5개 구 전체 변경 전후 비교**")
+        st.markdown("**⑦ 비교 범위 전체 변경 전후 비교**")
         compare_rows = [
             {
                 "구": sim_result["score_change"][region["region_id"]]["region_name"],

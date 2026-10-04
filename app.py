@@ -9,10 +9,10 @@ from agent.planner import OLLAMA_MODEL as PLANNER_MODEL
 from agent.planner_loop import REVIEW_TOOL_LABELS, explain_candidates
 from analysis import feedback, scoring
 from analysis.candidates import build_candidate_set
-from services.region_data import get_all_changwon_regions, is_supported_region
+from services.region_data import REGION_SCOPES, get_all_regions, is_supported_region, region_type_for
 from services.schools import SCHOOL_REFERENCE_LIMITATIONS, SCHOOL_REFERENCE_TITLE, load_school_reference
 
-MAX_CANDIDATE_COUNT = 5  # 현재 지원 지역(창원시 5개 구) 수와 동일하게 맞춤
+MAX_CANDIDATE_COUNT = 5  # 가장 작은 비교 범위(창원시 5개 구) 수와 같게 맞춤
 
 # 피드백(가중치 직접 조정) 슬라이더의 session_state 키와 표시 라벨.
 # 키 집합은 analysis.scoring.VALID_SCORABLE_INDICATOR_CODES와 항상 일치해야 한다.
@@ -26,16 +26,18 @@ FEEDBACK_INDICATOR_LABELS = {
     "hospital_count": "의료 (의료기관 수)",
     "convenience_store_count": "생활편의 (편의점 수)",
 }
-SPECIFIC_DISTRICT_NAMES = ["의창구", "성산구", "마산합포구", "마산회원구", "진해구"]
+CHANGWON_DISTRICT_NAMES = ["의창구", "성산구", "마산합포구", "마산회원구", "진해구"]
+GYEONGNAM_CITY_COUNTY_NAMES = ["진주시", "통영시", "사천시", "김해시", "밀양시", "거제시", "양산시", "의령군", "함안군",
+                               "창녕군", "고성군", "남해군", "하동군", "산청군", "함양군", "거창군", "합천군"]
 
-# 최초 입력 폼 선택지. 희망지역은 지원 범위(창원시 5개 구) 안에서만 고르게 해 미지원 지역
+# 최초 입력 폼 선택지. 희망지역은 비교 범위(같은 유형끼리: 창원시 5개 구 / 경남 시 / 경남 군) 중에서만 고르게 해 미지원 지역
 # 입력 자체가 생기지 않게 한다. 직장/학교 위치·주거비 예산은 아직 대응 지표(이동시간,
 # 실거래 주거비)가 없어 점수 계산에 쓰지 않고 참고용으로만 저장한다 - "선택 안 함"은
 # 기존 자유입력의 빈 값과 같게 ""로 저장한다.
 NOT_SELECTED = "선택 안 함"
-REGION_OPTIONS = ["창원시 전체"] + [f"창원시 {d}" for d in SPECIFIC_DISTRICT_NAMES]
-WORKPLACE_OPTIONS = [NOT_SELECTED] + [f"창원시 {d}" for d in SPECIFIC_DISTRICT_NAMES] + [
-    "창원시 외 경남 지역",
+REGION_OPTIONS = list(REGION_SCOPES)
+WORKPLACE_OPTIONS = [NOT_SELECTED] + [f"창원시 {d}" for d in CHANGWON_DISTRICT_NAMES] + [
+    f"경남 {name}" for name in GYEONGNAM_CITY_COUNTY_NAMES] + [
     "경남 외 지역",
     "재택근무·해당 없음",
 ]
@@ -71,19 +73,19 @@ REFERENCE_INDICATOR_ORDER = ["hospital_count", "bus_stop_count", "convenience_st
 UNAVAILABLE_DATA_NOTICE = (
     "실제 대중교통 소요시간, 월세·전세 가격, 응급실 운영 병원 수, 대형마트 수, "
     "교육·안전·자연환경·문화시설 지표는 아직 확보되지 않아 추천 계산에 사용되지 않습니다. "
-    "(구별 초·중·고 학교 수는 바로 아래 '교육시설 수 참고정보'로만 보여 주며 점수에는 쓰지 않습니다.)"
+    "(지역별 초·중·고 학교 수는 바로 아래 '교육시설 수 참고정보'로만 보여 주며 점수에는 쓰지 않습니다.)"
 )
 
 RELATIVE_SCORE_CAVEAT = (
-    "이 점수는 인구·면적이나 실제 접근성을 보정하지 않은, 시설 수 기준 상대 비교 "
-    "점수입니다(100점 = 해당 지표에서 5개 구 중 수치가 가장 높다는 뜻일 뿐, "
+    "이 점수는 시설 수를 인구 1만 명당으로 바꿔 같은 유형 지역끼리 비교한 상대 점수이며, 면적·실제 거리·"
+    "이동시간은 반영하지 않았습니다(100점 = 해당 지표에서 비교 지역 중 인구 1만 명당 값이 가장 높다는 뜻일 뿐, "
     "완벽한 정주환경을 의미하지 않습니다)."
 )
 
 
 def _render_school_reference() -> None:
     """구별 초·중·고 학교 수 참고정보. 추천 점수·후보·Critic과 무관하게 읽기만 한다(DEC-19)."""
-    reference = load_school_reference()
+    reference = load_school_reference(region_ids=[r["region_id"] for r in _scope_regions()])
     with st.expander(f"📚 {SCHOOL_REFERENCE_TITLE}"):
         if reference["status"] != "확보":
             st.info(f"교육시설 수: 미확보 - {reference['reason']} 추천 결과에는 영향이 없습니다.")
@@ -285,17 +287,40 @@ def _current_view_result() -> dict | None:
     return st.session_state.initial_recommendation
 
 
+def _scope_label() -> str:
+    """지금 비교 중인 범위 이름(희망지역에서 고른 값). 예전 입력은 창원시 5개 구로 본다."""
+    text = st.session_state.initial_input.get("희망지역", "")
+    return text if text in REGION_SCOPES else "창원시 5개 구"
+
+
+def _scope_regions() -> list[dict]:
+    """피드백 재평가가 최초 추천과 같은 비교 범위(같은 유형 지역)만 쓰도록 넘기는 지역 목록."""
+    return get_all_regions(region_type=region_type_for(st.session_state.initial_input.get("희망지역", "")))
+
+
+def _compare_value(component: dict) -> float:
+    """비교에 쓴 값: 인구 1만 명당 값이 있으면 그것, 없으면 시설 수(점수 계산 basis와 같음)."""
+    return component["per_10k"] if component.get("per_10k") is not None else component["raw_value"]
+
+
+def _value_text(component: dict) -> str:
+    text = f"{component['raw_value']:.0f}개"
+    if component.get("per_10k") is not None:
+        text += f" (1만 명당 {component['per_10k']:.1f})"
+    return text
+
+
 def _axis_value_ranks(result: dict) -> dict[str, dict[str, int]]:
-    """표시용: 지표별 실제 값의 5개 구 내 순위(값이 같으면 같은 순위). 점수 계산과 무관하다."""
+    """표시용: 지표별 비교값(인구 1만 명당)의 비교 지역 내 순위(값이 같으면 같은 순위). 점수 계산과 무관하다."""
     ranks: dict[str, dict[str, int]] = {}
     for uc in result["used_conditions"]:
         code = uc["indicator_code"]
-        values = {r["region_id"]: r["component_scores"][code]["raw_value"] for r in result["region_scores"]}
+        values = {r["region_id"]: _compare_value(r["component_scores"][code]) for r in result["region_scores"]}
         ranks[code] = {rid: 1 + sum(1 for v in values.values() if v > value) for rid, value in values.items()}
     return ranks
 
 
-def _render_candidate_summary(candidate_set: dict) -> None:
+def _render_candidate_summary(candidate_set: dict, result: dict) -> None:
     """
     analysis.candidates.build_candidate_set()이 확정한 후보 역할을 결론부터 보여준다.
     같은 구가 여러 역할을 맡으면 한 줄로 합친다. 후보·순위는 Python이 계산한 그대로이며 AI가 만들지 않는다.
@@ -306,14 +331,19 @@ def _render_candidate_summary(candidate_set: dict) -> None:
     for role in candidate_set["roles"]:
         if role["status"] == "ok":
             groups.setdefault(role["region_id"], []).append(role)
+    components = {r["region_id"]: r["component_scores"] for r in result.get("region_scores", [])}
+    region_count = len(result.get("region_scores", []))
     with st.container(border=True):
         for roles in groups.values():
             head = roles[0]
             st.markdown(
                 f"**{ROLE_ICONS.get(head['role'], '•')} {', '.join(r['role_label'] for r in roles)} · "
-                f"{head['region_name']}** — 종합 {head['total_score']:.1f}점 (5개 구 중 {head['rank']}위)"
+                f"{head['region_name']}** — 종합 {head['total_score']:.1f}점 ({region_count}곳 중 {head['rank']}위)"
             )
-            profile = " · ".join(f"{p['axis']} {p['raw_value']:.0f}개({p['axis_rank']}위)" for p in head["axis_profile"])
+            profile = " · ".join(
+                f"{p['axis']} {_value_text(components[head['region_id']][p['indicator_code']])} {p['axis_rank']}위"
+                for p in head["axis_profile"]
+            )
             st.caption(
                 f"강점: {', '.join(head['strengths']) or '없음'} · 약점: {', '.join(head['weaknesses']) or '없음'}"
                 f" | {profile}"
@@ -339,24 +369,28 @@ def _render_critic_highlights(candidate_set: dict) -> None:
 
 
 def _render_comparison_table(result: dict) -> None:
-    """5개 구 종합점수와 항목별 실제 개수·순위를 표 하나로 보여준다."""
+    """비교 지역 종합점수와 항목별 실제 개수·인구 1만 명당 값·순위를 표 하나로 보여준다."""
     ranks = _axis_value_ranks(result)
     rows = []
     for r in result["region_scores"]:
-        row = {"순위": r["rank"], "구": r["region_name"] + (" (동점)" if r["tied"] else ""),
+        row = {"순위": r["rank"], "지역": r["region_name"] + (" (동점)" if r["tied"] else ""),
                "종합점수": round(r["total_score"], 1)}
         for uc in result["used_conditions"]:
             code = uc["indicator_code"]
             row[f"{AXIS_SHORT_LABELS.get(code, code)} ({uc['indicator_name']})"] = (
-                f"{r['component_scores'][code]['raw_value']:.0f}개 · {ranks[code][r['region_id']]}위"
+                f"{_value_text(r['component_scores'][code])} · {ranks[code][r['region_id']]}위"
             )
+        if r.get("population"):
+            row["인구"] = f"{r['population']:,.0f}명"
         rows.append(row)
-    st.markdown("### 📊 5개 구 한눈에 비교")
+    st.markdown(f"### 📊 {_scope_label()} 한눈에 비교")
     st.dataframe(pd.DataFrame(rows), hide_index=True, width="stretch")
     requested = [r["region_name"] for r in result.get("top_candidates", [])]
     st.caption(
         f"요청하신 후보 {len(requested)}곳(종합점수 순): {', '.join(requested)} · "
-        "시설 수를 5개 구끼리 비교한 상대 점수이며, 인구·면적·실제 이동시간은 반영하지 않았습니다."
+        + ("시설 수를 인구 1만 명당으로 바꿔 같은 유형 지역끼리 비교한 상대 점수이며(순위도 1만 명당 값 기준), "
+           "면적·실제 거리·이동시간은 반영하지 않았습니다." if result.get("basis") == scoring.BASIS_PER_CAPITA
+           else "시설 수 그대로 비교한 상대 점수이며(인구 데이터 미확보), 인구·면적·실제 이동시간은 반영하지 않았습니다.")
     )
 
 
@@ -392,7 +426,7 @@ def _render_change_summary(initial_result: dict, current_result: dict, current_r
             else:
                 rank_change = f"▼{row['rank'] - prev_rank}"
             rows.append({
-                "구": row["region_name"],
+                "지역": row["region_name"],
                 "처음 순위": prev_rank if prev_rank is not None else "-",
                 "지금 순위": row["rank"],
                 "순위 변화": rank_change,
@@ -400,7 +434,7 @@ def _render_change_summary(initial_result: dict, current_result: dict, current_r
                 "지금 점수": round(row["total_score"], 1),
                 "점수 변화": round(row["total_score"] - prev_score, 1) if prev_score is not None else "-",
             })
-        st.markdown("**5개 구 점수·순위 변화**")
+        st.markdown("**비교 지역 점수·순위 변화**")
         st.dataframe(pd.DataFrame(rows), hide_index=True, width="stretch")
 
 
@@ -429,19 +463,14 @@ def render_result_view() -> None:
         final = log.get("final_answer")
         explanation_heading = "### 🤖 AI의 추천 결과 설명"
 
-    region_text = initial_input.get("희망지역", "")
-    mentioned_districts = [d for d in SPECIFIC_DISTRICT_NAMES if d in region_text]
-    if mentioned_districts:
-        st.caption(
-            f"ℹ️ 희망 지역으로 {', '.join(mentioned_districts)}를 고르셨지만, 비교는 항상 창원시 5개 구 전체로 합니다."
-        )
+    st.caption(f"🗺️ 비교 범위: {_scope_label()} — 규모가 비슷한 같은 유형 지역끼리만 인구 1만 명당으로 비교합니다.")
 
     if result["status"] == "no_usable_conditions":
         st.info(f"ℹ️ {result['message']} 선택하신 조건에 대응하는 실제 데이터가 아직 없습니다. "
                 "교통·의료·생활편의 중 하나 이상을 골라 다시 시작해 주세요.")
         return
 
-    _render_candidate_summary(candidate_set)
+    _render_candidate_summary(candidate_set, result)
     _render_critic_highlights(candidate_set)
     if is_feedback:
         _render_change_summary(initial_result, result, candidate_set)
@@ -515,15 +544,15 @@ def _not_used_inputs(result: dict) -> list[str]:
 def _indicator_sources(codes: list[str]) -> list[dict]:
     """점수에 쓴 지표의 출처·기준일(data/region_indicators.csv 그대로)."""
     found: dict[str, dict] = {}
-    for region in get_all_changwon_regions():
+    for region in get_all_regions():
         for indicators in region["categories"].values():
             for i in indicators:
                 if i["indicator_code"] in codes and i["indicator_code"] not in found:
                     found[i["indicator_code"]] = {
-                        "항목": f"{AXIS_SHORT_LABELS.get(i['indicator_code'], '')} ({i['indicator_name']})",
+                        "항목": f"{AXIS_SHORT_LABELS.get(i['indicator_code'], '인구')} ({i['indicator_name']})",
                         "출처": i["source"] or "-",
                         "기준일": i["reference_date"] or "-",
-                        "주의": SHORT_NOTES.get(i["indicator_code"], ""),
+                        "주의": SHORT_NOTES.get(i["indicator_code"], "인구 1만 명당 비교의 분모로만 사용"),
                     }
     return [found[c] for c in codes if c in found]
 
@@ -558,8 +587,8 @@ def render_detail_sections(result: dict) -> None:
         with st.expander("🧮 점수 계산 방법과 근거"):
             st.markdown(f"**적용 비율:** {_weights_text(result)}")
             st.caption(
-                "각 항목의 실제 개수를 5개 구 안에서 0~100점으로 바꾼 뒤(가장 많은 구 100점, 가장 적은 구 0점, "
-                "min-max 정규화) 비율대로 더했습니다."
+                "각 항목의 실제 개수를 인구 1만 명당 값으로 바꾸고, 비교 지역 안에서 0~100점으로 바꾼 뒤"
+                "(가장 높은 지역 100점, 가장 낮은 지역 0점, min-max 정규화) 비율대로 더했습니다."
             )
             for code, info in result["normalization"].items():
                 name = next(uc["indicator_name"] for uc in result["used_conditions"] if uc["indicator_code"] == code)
@@ -567,8 +596,8 @@ def render_detail_sections(result: dict) -> None:
             st.markdown("**구별 계산 근거**")
             for row in result["region_scores"]:
                 parts = [
-                    f"{uc['indicator_name']} {row['component_scores'][uc['indicator_code']]['raw_value']:.0f}개"
-                    f"({row['component_scores'][uc['indicator_code']]['normalized_score']:.1f}점 × {uc['weight'] * 100:.0f}%)"
+                    f"{uc['indicator_name']} {_value_text(row['component_scores'][uc['indicator_code']])}"
+                    f"→{row['component_scores'][uc['indicator_code']]['normalized_score']:.1f}점 × {uc['weight'] * 100:.0f}%"
                     for uc in result["used_conditions"]
                 ]
                 st.caption(f"{row['region_name']}: " + " + ".join(parts) + f" = {row['total_score']:.1f}점")
@@ -576,6 +605,8 @@ def render_detail_sections(result: dict) -> None:
 
     with st.expander("📋 데이터 출처와 한계"):
         codes = [uc["indicator_code"] for uc in result.get("used_conditions", [])]
+        if result.get("basis") == scoring.BASIS_PER_CAPITA:
+            codes.append(scoring.POPULATION_CODE)
         if codes:
             st.markdown("**점수에 사용한 공공데이터**")
             st.dataframe(pd.DataFrame(_indicator_sources(codes)), hide_index=True, width="stretch")
@@ -599,7 +630,7 @@ def render_detail_sections(result: dict) -> None:
 def _render_input_summary() -> None:
     """완료 화면 맨 위의 입력 요약 한 줄 + 전체 입력 내용(접힌 영역)."""
     inp = st.session_state.initial_input
-    parts = [inp.get("희망지역") or "창원시 전체",
+    parts = ["비교 범위: " + (inp.get("희망지역") or "창원시 5개 구"),
              "중요 조건: " + (", ".join(inp.get("중요 생활조건") or []) or "선택 안 함(확보된 항목 전체)"),
              f"후보 {inp.get('원하는 후보 개수') or 3}곳"]
     st.caption("📝 입력: " + " · ".join(parts))
@@ -656,7 +687,8 @@ def _apply_feedback(weights: dict[str, float], *, source: str, text: str | None 
     """
     before_result = _current_applied_result()
     candidate_count = st.session_state.initial_input.get("원하는 후보 개수") or 3
-    outcome = feedback.reevaluate(weights, candidate_count, _unscored_inputs(st.session_state.initial_input))
+    outcome = feedback.reevaluate(weights, candidate_count, _unscored_inputs(st.session_state.initial_input),
+                                  regions=_scope_regions())
     st.session_state.feedback_recommendation = outcome["score_result"]
     st.session_state.feedback_explanation = None
     if outcome["score_result"].get("status") == "ok":
@@ -866,7 +898,7 @@ def _apply_slider_weights() -> None:
 def render_feedback_section() -> None:
     """
     '조건 바꿔서 다시 보기' - 문장(AI 해석 + 승인) 또는 슬라이더로 교통/의료/생활편의 비율을 바꿔
-    창원시 5개 구를 재평가한다. 재평가 결과는 화면 맨 위 결과 영역에 바로 반영된다.
+    같은 비교 범위의 지역을 재평가한다. 재평가 결과는 화면 맨 위 결과 영역에 바로 반영된다.
     비율 정규화와 재계산은 analysis.feedback.reevaluate()가 결정적으로 수행하며, AI는 문장을
     비율 '제안'으로 해석만 할 뿐 점수를 계산하지 않는다.
     """
@@ -938,7 +970,8 @@ st.set_page_config(page_title="경남 이주자 생활권 탐색 AI", page_icon=
 
 st.title("🏡 경남 이주자 맞춤형 생활권 탐색 AI")
 st.caption(
-    "창원시 5개 구를 내 생활 조건(교통·의료·생활편의)으로 비교하고, AI Agent가 성격이 다른 정착 후보를 "
+    "경상남도 22개 지역(창원시 5개 구·시 7곳·군 10곳)을 내 생활 조건(교통·의료·생활편의)으로 비교하고, "
+    "AI Agent가 성격이 다른 정착 후보를 "
     "골라 근거와 함께 설명합니다. 공공데이터로 계산한 결과만 보여주며, 없는 데이터는 '미확보'로 표시합니다."
 )
 
@@ -1096,10 +1129,11 @@ if st.session_state.stage == "input":
 
     with st.form("initial_input_form"):
         region = st.selectbox(
-            "희망 지역 (현재는 창원시 5개 구만 지원합니다)",
+            "비교 범위 (경상남도)",
             REGION_OPTIONS,
             index=_option_index(REGION_OPTIONS, prev.get("희망지역")),
-            help="특정 구를 골라도 추천은 항상 창원시 5개 구 전체를 비교합니다.",
+            help="규모가 비슷한 같은 유형 지역끼리만 비교합니다(창원시 구끼리 / 시끼리 / 군끼리). 유형이 다른 "
+                 "지역을 한 표에서 점수로 비교하면 큰 도시나 군 지역으로 결과가 크게 쏠리기 때문입니다.",
         )
         workplace_choice = st.selectbox(
             "직장 또는 학교 위치",
@@ -1153,8 +1187,8 @@ if st.session_state.stage == "input":
         elif not is_supported_region(region_text):
             st.error(
                 f"'{region_text}'은(는) 현재 지원 범위 밖입니다. 이 서비스는 현재 "
-                "**창원시 5개 구(의창구·성산구·마산합포구·마산회원구·진해구)**만 지원합니다. "
-                "희망 지역에 '창원시' 또는 '창원시 OO구'처럼 창원시를 포함해 다시 입력해 주세요."
+                "**경상남도 22개 지역(창원시 5개 구·시 7곳·군 10곳)**만 지원합니다. "
+                "비교 범위를 다시 골라 주세요."
             )
         else:
             st.session_state.initial_input = {

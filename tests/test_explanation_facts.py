@@ -19,6 +19,12 @@ from analysis.candidates import build_candidate_set
 from analysis.explanation_facts import build_explanation_facts, judge
 from analysis.scoring import compute_region_scores_from_weights
 
+from tests import changwon_fixture
+
+# 규칙 테스트는 경남 확장 이전 창원 5개 구 시설 수(고정값)로 시나리오를 재현한다(tests/changwon_fixture.py).
+setUpModule = changwon_fixture.start
+tearDownModule = changwon_fixture.stop
+
 EQUAL = {"bus_stop_count": 1, "hospital_count": 1, "convenience_store_count": 1}
 SCOPE = "현재 확보된 교통·의료·생활편의 기준에서는 성산구가 최적 후보입니다. "
 

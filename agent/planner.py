@@ -6,7 +6,7 @@
 
 [설계 원칙]
 - AI는 계획(어떤 도구를, 어떤 순서로, 어떤 인자로 호출할지)만 제안한다. 실제 데이터
-  조회와 점수 계산은 전부 기존 함수(services.region_data.get_all_changwon_regions,
+  조회와 점수 계산은 전부 기존 함수(services.region_data.get_all_regions,
   analysis.scoring의 collect_confirmed_indicator/compute_region_scores_from_weights)
   를 그대로 재사용하는 Python 도구 함수가 수행한다 - AI가 시설 수·점수·통근시간·
   주거비 등의 숫자를 직접 만들어낼 방법이 구조적으로 없다.
@@ -15,7 +15,7 @@
   AI가 다른 숫자를 적더라도 그 숫자는 쓰이지 않는다(검증 단계에서 무시했다는 사실만
   기록에 남긴다).
 - 조회(get_region_indicators)와 계산(calculate_region_scores)은 run_agent_plan()
-  안에서 딱 한 번 조회한 같은 regions 스냅샷(get_all_changwon_regions())을 공유한다
+  안에서 딱 한 번 조회한 같은 regions 스냅샷(get_all_regions())을 공유한다
   (analysis/simulation.py가 먼저 도입한 regions 선택적 주입 기능을 그대로 재사용) -
   "조회한 자료와 점수 계산에 쓴 자료가 다르다"는 불일치가 날 수 없다.
 - Ollama 호출(call_planner)이 실패하거나 계획이 검증을 통과하지 못하면, 같은 도구들을
@@ -39,7 +39,7 @@ from analysis.scoring import (
     compute_region_scores,
     compute_region_scores_from_weights,
 )
-from services.region_data import get_all_changwon_regions
+from services.region_data import get_all_regions, region_type_for
 
 OLLAMA_MODEL = "qwen3.5:4b"
 
@@ -101,10 +101,10 @@ PLANNER_SYSTEM_PROMPT = """당신은 경남 이주자 생활권 탐색 서비스
 어떤 순서로, 어떤 인자로 호출할지 "계획"만 세우세요. 실제 실행과 검증은 Python이 합니다.
 
 [사용 가능한 도구 - 이 3개뿐, 그 외 도구는 존재하지 않습니다]
-1. get_available_indicators: 창원시 5개 구 전체에서 확보된 지표를 확인합니다. 인자 없음.
-2. get_region_indicators: 지정한 지표(indicator_codes)의 창원시 5개 구 실제 수치를 조회합니다.
+1. get_available_indicators: 비교 지역 전체에서 확보된 지표를 확인합니다. 인자 없음.
+2. get_region_indicators: 지정한 지표(indicator_codes)의 비교 지역 실제 수치를 조회합니다.
    indicator_codes는 아래 "지원 지표" 목록의 코드만 쓸 수 있습니다.
-3. calculate_region_scores: 승인된 가중치로 창원시 5개 구를 상대 비교합니다. weights 필드에
+3. calculate_region_scores: 승인된 가중치로 비교 지역을 인구 1만 명당 기준으로 상대 비교합니다. weights 필드에
    아래 "승인된 가중치"를 그대로 옮겨 적으세요 - 실제 계산은 Python이 그 값으로만 수행하며,
    다른 숫자를 적어도 무시됩니다. 숫자를 새로 만들거나 바꾸지 마세요.
 
@@ -369,7 +369,7 @@ def run_agent_plan(
     최초 추천 계산의 Agent 진입점. app.py의 _finalize_initial_recommendation()이
     이 함수 하나만 호출하면 된다.
 
-    - regions는 이 함수 안에서 딱 한 번만 조회한다(get_all_changwon_regions()) -
+    - regions는 이 함수 안에서 딱 한 번만 조회한다(get_all_regions()) -
       이후 모든 조회·계산 도구가 같은 스냅샷을 공유하므로 "조회한 데이터와 점수
       계산에 쓴 데이터가 다르다"는 불일치가 구조적으로 생기지 않는다.
     - confirmed_weights가 있으면 그대로 "승인된 가중치"로 쓴다. 없으면(가중치
@@ -400,7 +400,8 @@ def run_agent_plan(
                 대응 데이터가 없는 항목 이름)는 Critic의 데이터 커버리지 점검에만 쓴다.
         }
     """
-    regions = get_all_changwon_regions()
+    # 비교 범위(같은 유형끼리: 창원시 구 / 경남 시 / 경남 군)는 사용자가 고른 희망지역(비교 범위)으로 정한다.
+    regions = get_all_regions(region_type=region_type_for(desired_region))
 
     if confirmed_weights:
         approved_weights = {k: float(v) for k, v in confirmed_weights.items() if v}

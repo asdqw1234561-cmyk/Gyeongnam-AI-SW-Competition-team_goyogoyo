@@ -1,10 +1,11 @@
 # 생활권(지역) 데이터 조회
 """
-창원시 생활권(행정구) 비교 데이터 조회 서비스.
+경상남도 비교 단위(창원시 5개 구 + 17개 시·군, 22개 지역) 데이터 조회 서비스.
 
 [데이터 소스 구성]
 - data/regions.csv
-    생활권(행정구) 목록(마스터 데이터). region_id, region_name, city, description.
+    비교 단위 목록(마스터 데이터). region_id, region_name, city, province, region_type(구/시/군), description.
+    scripts/build_gyeongnam_indicators.py가 data/gyeongnam/ 집계로 만든다.
 - data/region_indicators.csv
     실제 운영용 지표 데이터(long format). 아직 실제 공공데이터를 확보하지 못한 항목은
     value를 비워두고 data_status="미확보"로 표시한다. 수치를 임의로 채우지 않는다.
@@ -17,7 +18,7 @@
     region_id, region_name, category, indicator_code, indicator_name,
     value, unit, source, reference_date, data_status, note
 
-    - category: "교통" | "의료" | "생활편의" | "주거비"
+    - category: "교통" | "의료" | "생활편의" | "주거비" | "인구"(점수 축 아님, 인구 1만 명당 비교의 분모)
     - data_status: "확보"(실제 공공데이터로 확인됨) | "미확보"(아직 값 없음) | "예시(개발용)"(더미)
 
 [추후 공공데이터 API / DB 교체 방법]
@@ -57,8 +58,32 @@ REGIONS_CSV = os.path.join(_DATA_DIR, "regions.csv")
 INDICATORS_CSV = os.path.join(_DATA_DIR, "region_indicators.csv")
 INDICATORS_SAMPLE_DEV_CSV = os.path.join(_DATA_DIR, "region_indicators_sample_dev.csv")
 
-TARGET_CITY = "창원시"
-VALID_CATEGORIES = ("교통", "의료", "생활편의", "주거비")
+TARGET_PROVINCE = "경상남도"
+VALID_CATEGORIES = ("교통", "의료", "생활편의", "주거비", "인구")
+# 지원 범위 판정용 이름(희망지역 문자열에 이 중 하나가 들어 있으면 지원). 창원시 구 이름은 "창원"으로 판정한다.
+SUPPORTED_REGION_KEYWORDS = ("경상남도", "경남", "창원")
+
+# 비교 범위: 규모가 비슷한 같은 유형끼리만 비교한다(2026-10-04 사용자 결정 - 서로 다른 유형을 한 표에서
+# 점수로 비교하면 시설 수 그대로는 인구 순위, 인구당은 군 지역 쏠림으로 왜곡이 크다).
+REGION_SCOPES: dict[str, str] = {
+    "창원시 5개 구": "구",
+    "경남 시 지역 (7곳)": "시",
+    "경남 군 지역 (10곳)": "군",
+}
+DEFAULT_REGION_TYPE = "구"
+
+
+def region_type_for(region_text: str | None) -> str:
+    """희망지역(비교 범위) 문자열 → 비교할 지역 유형(구/시/군). 예전 입력("창원시 의창구" 등)은 구로 본다."""
+    text = region_text or ""
+    for label, region_type in REGION_SCOPES.items():
+        if label in text:
+            return region_type
+    regions = _load_regions()
+    for _, row in regions.iterrows():
+        if row["region_type"] != "구" and row["city"] and row["city"] in text:
+            return row["region_type"]
+    return DEFAULT_REGION_TYPE
 
 # app.py의 "중요 생활조건" 보기 값을 지표 category 값으로 매핑한다.
 CONDITION_TO_CATEGORY = {
@@ -69,10 +94,10 @@ CONDITION_TO_CATEGORY = {
 }
 
 
-def _load_regions(city: str = TARGET_CITY) -> pd.DataFrame:
+def _load_regions(province: str = TARGET_PROVINCE) -> pd.DataFrame:
     df = pd.read_csv(REGIONS_CSV, dtype=str).fillna("")
-    if city:
-        df = df[df["city"] == city]
+    if province:
+        df = df[df["province"] == province]
     return df.reset_index(drop=True)
 
 
@@ -105,17 +130,19 @@ def _row_to_indicator(row: pd.Series) -> dict:
     }
 
 
-def get_available_regions(city: str = TARGET_CITY) -> list[dict]:
-    """지원 대상 도시의 생활권(행정구) 목록을 반환한다."""
-    regions_df = _load_regions(city)
+def get_available_regions(province: str = TARGET_PROVINCE) -> list[dict]:
+    """지원 대상(경상남도) 비교 단위 22개 목록을 반환한다."""
+    regions_df = _load_regions(province)
     return regions_df.to_dict(orient="records")
 
 
 def is_supported_region(region_text: str) -> bool:
-    """사용자가 입력한 '희망지역' 문자열이 현재 지원 범위(창원시)인지 판단한다."""
+    """사용자가 입력한 '희망지역' 문자열이 현재 지원 범위(경상남도 22개 지역)인지 판단한다."""
     if not region_text:
         return False
-    return TARGET_CITY.replace("시", "") in region_text or TARGET_CITY in region_text
+    if any(keyword in region_text for keyword in SUPPORTED_REGION_KEYWORDS):
+        return True
+    return any(name and name in region_text for name in _load_regions()["city"])
 
 
 def get_region_detail(
@@ -141,7 +168,7 @@ def get_region_detail(
         }
     해당 region_id가 없으면 None을 반환한다.
     """
-    regions_df = _load_regions(city="")
+    regions_df = _load_regions(province="")
     region_row = regions_df[regions_df["region_id"] == region_id]
     if region_row.empty:
         return None
@@ -161,6 +188,7 @@ def get_region_detail(
         "region_id": region_row["region_id"],
         "region_name": region_row["region_name"],
         "city": region_row["city"],
+        "region_type": region_row.get("region_type", ""),
         "categories": grouped,
     }
 
@@ -227,7 +255,7 @@ def get_regions_for_user_input(
         candidate_count = 5
     candidate_count = max(1, min(candidate_count, 5))
 
-    all_regions = get_available_regions(city=TARGET_CITY)
+    all_regions = get_available_regions()
     region_ids = [r["region_id"] for r in all_regions][:candidate_count]
 
     return compare_regions(
@@ -235,20 +263,21 @@ def get_regions_for_user_input(
     )
 
 
-def get_all_changwon_regions(
+def get_all_regions(
     categories: Optional[list[str]] = None,
     include_dev_sample: bool = False,
+    region_type: Optional[str] = None,
 ) -> list[dict]:
     """
-    창원시 5개 구 전체의 비교 데이터를 항상 전부 반환한다.
+    경상남도 비교 단위 22개 전체(region_type을 주면 그 유형 - 구 5 / 시 7 / 군 10 - 전부)의 비교 데이터를 반환한다.
 
     get_regions_for_user_input()은 사용자가 입력한 "원하는 후보 개수"만큼 앞에서부터
     잘라서 반환하므로, 적합도 계산(analysis/scoring.py 등) 직전처럼 "후보 개수와 무관하게
     전체 구를 다 봐야 하는" 단계에서는 이 함수를 사용한다. 점수 계산이나 순위화는 하지 않고
     compare_regions()와 동일한 형식의 원본 지표 데이터만 반환한다.
     """
-    all_regions = get_available_regions(city=TARGET_CITY)
-    region_ids = [r["region_id"] for r in all_regions]
+    all_regions = get_available_regions()
+    region_ids = [r["region_id"] for r in all_regions if not region_type or r.get("region_type") == region_type]
     return compare_regions(
         region_ids, categories=categories, include_dev_sample=include_dev_sample
     )

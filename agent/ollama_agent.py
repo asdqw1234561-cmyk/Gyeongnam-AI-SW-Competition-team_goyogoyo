@@ -233,7 +233,7 @@ WEIGHT_FEEDBACK_SUPPORTED_INDICATORS = {
     "convenience_store_count": "생활편의(편의점 수)",
 }
 
-WEIGHT_FEEDBACK_SYSTEM_PROMPT = """당신은 창원시 생활권 비교 앱에서 사용자의 가중치 조정
+WEIGHT_FEEDBACK_SYSTEM_PROMPT = """당신은 경상남도 생활권 비교 앱에서 사용자의 가중치 조정
 요청을 해석하는 도우미입니다. 점수 계산이나 지역 추천은 당신의 역할이 아닙니다 -
 오직 사용자의 문장을 구조화해서 분류하는 것만 하세요. 가중치 숫자를 새로 만들지 마세요.
 

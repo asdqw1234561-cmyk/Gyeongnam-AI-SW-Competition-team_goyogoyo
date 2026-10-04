@@ -1,6 +1,23 @@
-region_id,region_name,city,description
-CW-UICHANG,의창구,창원시,창원시 산하 일반구
-CW-SEONGSAN,성산구,창원시,창원시 산하 일반구
-CW-MASANHAPPO,마산합포구,창원시,창원시 산하 일반구
-CW-MASANHOEWON,마산회원구,창원시,창원시 산하 일반구
-CW-JINHAE,진해구,창원시,창원시 산하 일반구
+region_id,region_name,city,province,region_type,description
+CW-UICHANG,의창구,창원시,경상남도,구,창원시 산하 일반구
+CW-SEONGSAN,성산구,창원시,경상남도,구,창원시 산하 일반구
+CW-MASANHAPPO,마산합포구,창원시,경상남도,구,창원시 산하 일반구
+CW-MASANHOEWON,마산회원구,창원시,경상남도,구,창원시 산하 일반구
+CW-JINHAE,진해구,창원시,경상남도,구,창원시 산하 일반구
+GN-JINJU,진주시,진주시,경상남도,시,경상남도 시
+GN-TONGYEONG,통영시,통영시,경상남도,시,경상남도 시
+GN-SACHEON,사천시,사천시,경상남도,시,경상남도 시
+GN-GIMHAE,김해시,김해시,경상남도,시,경상남도 시
+GN-MIRYANG,밀양시,밀양시,경상남도,시,경상남도 시
+GN-GEOJE,거제시,거제시,경상남도,시,경상남도 시
+GN-YANGSAN,양산시,양산시,경상남도,시,경상남도 시
+GN-UIRYEONG,의령군,의령군,경상남도,군,경상남도 군
+GN-HAMAN,함안군,함안군,경상남도,군,경상남도 군
+GN-CHANGNYEONG,창녕군,창녕군,경상남도,군,경상남도 군
+GN-GOSEONG,고성군,고성군,경상남도,군,경상남도 군
+GN-NAMHAE,남해군,남해군,경상남도,군,경상남도 군
+GN-HADONG,하동군,하동군,경상남도,군,경상남도 군
+GN-SANCHEONG,산청군,산청군,경상남도,군,경상남도 군
+GN-HAMYANG,함양군,함양군,경상남도,군,경상남도 군
+GN-GEOCHANG,거창군,거창군,경상남도,군,경상남도 군
+GN-HAPCHEON,합천군,합천군,경상남도,군,경상남도 군

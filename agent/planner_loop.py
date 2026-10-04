@@ -1,6 +1,6 @@
 # 최초 추천(planner) 결과 관찰 -> 판단 -> 행동 반복
 """
-agent/planner.py 가 승인된 가중치로 창원시 5개 구 점수를 계산한 "뒤"에 붙는 단계다.
+agent/planner.py 가 승인된 가중치로 비교 지역(경남의 같은 유형 시·군·구) 점수를 계산한 "뒤"에 붙는 단계다.
 AI가 계산 결과를 보고 다음 중 하나를 고른다.
 
     answer           추천 결과 설명 작성 (왜 1위인지, 주의할 점 등)
@@ -15,7 +15,7 @@ AI가 계산 결과를 보고 다음 중 하나를 고른다.
       바꿀 수 없다(가정 계산은 별도 결과로만 저장).
     - 가정 계산도 기존 compute_region_scores_from_weights() 를 같은 regions 스냅샷으로
       부르기만 한다. 새 계산식 없음. 최대 MAX_WHAT_IF 회.
-    - 조회 지표는 "5개 구 모두 확보"된 지원 지표만 허용.
+    - 조회 지표는 "비교 지역 모두 확보"된 지원 지표만 허용.
     - AI 설명은 숫자를 단위별로 검사한다: "N점"=실제 점수, "N개"=실제 시설 수,
       "N%"=실제 가중치, "N위"=1~5. 배수·시간·금액 등 계산한 값은 거부.
       실패하면 이유를 알려주고 다시 쓰게 하며, 그래도 실패하면 Python 요약을 쓴다.
@@ -60,7 +60,7 @@ INDICATOR_LABELS = {
 }
 
 REVIEW_SYSTEM_PROMPT = """당신은 경남 이주자 생활권 탐색 서비스의 추천 결과 설명 도우미입니다.
-Python이 사용자가 승인한 가중치로 창원시 5개 구의 "시설 수 기반 상대 비교 점수"를 이미 계산했습니다.
+Python이 사용자가 승인한 가중치로 경남의 같은 유형 비교 지역(창원시 구끼리 / 시끼리 / 군끼리)의 "인구 1만 명당 시설 수 기반 상대 비교 점수"를 이미 계산했습니다.
 관찰 내용(JSON)을 보고 다음 중 하나를 결정하세요.
 
 1. 관찰 내용만으로 추천 결과를 설명할 수 있으면 설명을 작성합니다.
@@ -198,7 +198,8 @@ def call_reviewer(observation: dict, force_answer: bool, feedback: str | None, m
 # ---------------------------------------------------------------------------
 def _fact_sets(observation: dict) -> dict[str, set[float]]:
     scores, counts, percents = set(), set(), set()
-    ranks = {float(i) for i in range(1, 6)}
+    region_count = len((observation.get("explanation_facts") or {}).get("region_names") or []) or 5
+    ranks = {float(i) for i in range(1, region_count + 1)}
 
     def add_ranking(rows):
         for row in rows or []:
@@ -223,7 +224,7 @@ def _fact_sets(observation: dict) -> dict[str, set[float]]:
         for value in (sim.get("weights_percent") or {}).values():
             percents.add(value)
         add_ranking(sim.get("ranking"))
-    counts.add(5.0)  # "창원시 5개 구"
+    counts.add(float(region_count))  # "N개 지역"
     facts = observation.get("explanation_facts") or {}
     for region in facts.get("regions") or []:
         scores.add(region["total_score"])
@@ -253,13 +254,14 @@ def verify_answer(answer: str, observation: dict) -> tuple[bool, str]:
             return False, f"관찰 내용에 없는 값({number}{unit})을 사용했습니다."
         if value not in facts.get(unit, set()):
             return False, f"관찰 내용에 없는 숫자({number}{unit})를 사용했습니다."
-    allowed = _numbers_in(json.dumps(observation, ensure_ascii=False)) | {str(i) for i in range(1, 6)}  # 순위, "5개 구"
+    region_count = len((observation.get("explanation_facts") or {}).get("region_names") or []) or 5
+    allowed = _numbers_in(json.dumps(observation, ensure_ascii=False)) | {str(i) for i in range(1, region_count + 1)}  # 순위, "N개 지역"
     unknown = sorted(_numbers_in(text) - allowed)
     if unknown:
         return False, f"관찰 내용에 없는 숫자를 사용했습니다: {', '.join(unknown[:5])}"
     facts = observation.get("explanation_facts")
     if facts:
-        ok, why = verify_fact_claims(text, facts, list(DISTRICTS.values()),
+        ok, why = verify_fact_claims(text, facts, _region_names(facts),
                                      has_what_if=bool(observation.get("what_if_simulations")))
         if not ok:
             return False, why
@@ -291,6 +293,11 @@ def _axes_in(clause: str) -> list[str]:
 
 def _has(clause: str, markers) -> bool:
     return any(m in clause for m in markers)
+
+
+def _region_names(facts: dict) -> list[str]:
+    """설명 검증에서 찾을 지역 이름 = 실제로 비교한 지역 전체(없으면 예전 기본값인 창원시 5개 구)."""
+    return list(facts.get("region_names") or DISTRICTS.values())
 
 
 def verify_fact_claims(text: str, facts: dict, region_names: list[str], has_what_if: bool = False) -> tuple[bool, str]:
@@ -397,9 +404,9 @@ def _region_axis_violations(sentences: list[str], facts: dict, region_names: lis
                 if "약점" in clause and axis not in facts_r["weaknesses"]:
                     out.append(f"{subject}의 {axis}은(는) 약점이 아닌데 약점이라고 설명했습니다.")
                 if _has(clause, MAX_MARKERS) and rank != 1:
-                    out.append(f"{subject}의 {axis}은(는) 5개 구 중 {rank}위인데 가장 많다/높다고 설명했습니다.")
+                    out.append(f"{subject}의 {axis}은(는) {max_rank}개 지역 중 {rank}위인데 가장 많다/높다고 설명했습니다.")
                 if _has(clause, MIN_MARKERS) and rank != max_rank:
-                    out.append(f"{subject}의 {axis}은(는) 5개 구 중 {rank}위인데 가장 적다/낮다고 설명했습니다.")
+                    out.append(f"{subject}의 {axis}은(는) {max_rank}개 지역 중 {rank}위인데 가장 적다/낮다고 설명했습니다.")
                 if _has(clause, POSITIVE_MARKERS) and not _has(clause, NEGATIVE_MARKERS) and axis in facts_r["weaknesses"]:
                     out.append(f"{subject}의 {axis}은(는) 약점인데 앞서거나 많다고 설명했습니다.")
                 if _has(clause, NEGATIVE_MARKERS) and not _has(clause, POSITIVE_MARKERS) and axis in facts_r["strengths"]:
@@ -706,7 +713,7 @@ def validate_paraphrase(text: str, base_text: str, facts: dict) -> tuple[bool, s
     new_numbers = sorted(_numbers_in(t) - _numbers_in(base_text))
     if new_numbers:
         return False, f"기본 설명에 없는 숫자를 썼습니다: {', '.join(new_numbers[:5])}"
-    regions = list(DISTRICTS.values())
+    regions = _region_names(facts)
     base_violations = set(fact_violations(base_text, facts, regions))
     new_violations = [v for v in fact_violations(t, facts, regions) if v not in base_violations]
     if new_violations:
