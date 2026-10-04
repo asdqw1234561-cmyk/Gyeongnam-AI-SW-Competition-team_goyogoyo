@@ -19,7 +19,10 @@ from streamlit.testing.v1 import AppTest
 # AppTest.from_file()은 상대경로를 호출한 파일(tests/) 기준으로 풀기 때문에 프로젝트 루트 기준 절대경로로 넘긴다.
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 TIMEOUT_S = 120
-SEARCH_CENTER = (35.2280, 128.6811)
+from services.example_locations import default_location  # noqa: E402
+
+# 위치 탐색 첫 화면의 기본 예시 위치(의창구청 부근). 예시 위치 모드에서는 이 값이 검색 중심이 된다.
+SEARCH_CENTER = default_location()["coord"]
 
 
 def _no_ai_calls():
@@ -368,6 +371,70 @@ class PagesFirstRenderTest(unittest.TestCase):
             at = self._run("pages/user.py", {"search_center": SEARCH_CENTER,
                                              "location_agent_result": self._location_result(mode, final)})
             self.assertTrue(any("AI 답변" in s.value for s in at.success), mode)
+
+class ExampleLocationUiTest(unittest.TestCase):
+    """위치 탐색 '예시 위치 선택': 범위(구/시/군) → 세부 지역 2단계. 반경·조회·Agent 로직은 그대로."""
+
+    def _user_page(self) -> AppTest:
+        at = AppTest.from_file(os.path.join(PROJECT_ROOT, "pages/user.py"), default_timeout=TIMEOUT_S)
+        ollama_patch, cli_patch = _no_ai_calls()
+        with ollama_patch, cli_patch:
+            at.run()
+        self.assertEqual([e.value for e in at.exception], [])
+        return at
+
+    def test_scope_then_region_selection_updates_search_center(self):
+        at = self._user_page()
+        self.assertEqual(at.selectbox(key="example_scope").options,
+                         ["경남 구 지역 (5곳)", "경남 시 지역 (7곳)", "경남 군 지역 (10곳)"])
+        self.assertEqual(at.selectbox(key="example_region_구").options,
+                         ["의창구", "성산구", "마산합포구", "마산회원구", "진해구"])
+        self.assertTrue(any("경상남도 22개 지역" in c.value and "특정 주거지 추천을 의미하지 않습니다" in c.value
+                            for c in at.caption))
+        self.assertEqual(at.session_state["search_center"], SEARCH_CENTER)
+
+        at.selectbox(key="example_region_구").select("성산구").run()
+        self.assertTrue(any("성산구청 부근 예시 위치 (근사 좌표)" in i.value for i in at.info))
+        self.assertEqual(at.session_state["search_center"], (35.1985, 128.7025))
+
+        at.selectbox(key="example_scope").select("경남 시 지역 (7곳)").run()
+        self.assertEqual(len(at.selectbox(key="example_region_시").options), 7)
+        at.selectbox(key="example_region_시").select("김해시").run()
+        self.assertEqual([e.value for e in at.exception], [])
+        self.assertEqual(at.session_state["search_center"], (35.2285, 128.8894))  # 기존 김해시청 예시 좌표
+        # 반경별 표는 기존 조회 함수 결과 그대로(500m 포함)
+        from services import bus_stops
+        expected = bus_stops.count_nearby_by_radius(35.2285, 128.8894)
+        self.assertEqual(expected["status"], "ok")
+        table = next(d.value for d in at.dataframe if "500m" in list(d.value.columns))
+        bus_row = table[table["시설"] == "🚌 버스정류장"].iloc[0]
+        self.assertEqual(bus_row["500m"], f"{expected['counts'][500]}건")
+
+        at.selectbox(key="example_scope").select("경남 군 지역 (10곳)").run()
+        self.assertEqual(len(at.selectbox(key="example_region_군").options), 10)
+        at.selectbox(key="example_region_군").select("합천군").run()
+        self.assertEqual(at.session_state["search_center"], (35.5667, 128.1658))
+
+    def test_direct_coordinate_input_still_works(self):
+        at = self._user_page()
+        at.radio[0].set_value("위도·경도 직접 입력").run()
+        at.number_input[0].set_value(35.2285).run()
+        at.number_input[1].set_value(128.8894).run()
+        self.assertEqual([e.value for e in at.exception], [])
+        self.assertEqual(at.session_state["search_center"], (35.2285, 128.8894))
+        self.assertEqual(len([s for s in at.selectbox if s.key and s.key.startswith("example_")]), 0)
+
+    def test_map_click_candidate_needs_confirmation(self):
+        at = self._user_page()
+        at.radio[0].set_value("지도 클릭으로 위치 선택").run()
+        before = at.session_state["search_center"]
+        at.session_state["map_click_candidate"] = (35.5667, 128.1658)
+        at.run()
+        self.assertEqual(at.session_state["search_center"], before)  # 확정 전에는 검색 중심 그대로
+        next(b for b in at.button if b.label == "📍 이 위치에서 주변 시설 검색").click().run()
+        self.assertEqual([e.value for e in at.exception], [])
+        self.assertEqual(at.session_state["search_center"], (35.5667, 128.1658))
+
 
 class ScopeDisplayTest(unittest.TestCase):
     """비교 범위: 화면에는 '경남 구 지역 (5곳)', 내부 저장값은 '창원시 5개 구' 그대로."""

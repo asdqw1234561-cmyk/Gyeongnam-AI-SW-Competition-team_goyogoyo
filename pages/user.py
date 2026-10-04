@@ -44,6 +44,7 @@ from agent import llm
 from agent.agent_state import ConversationMemory
 from agent.location_agent import run_location_agent
 from services import bus_stops, convenience
+from services.example_locations import EXAMPLE_GUIDE, EXAMPLE_SCOPES, default_location, locations_in_scope
 from services.geo import is_within_gyeongnam_bbox
 from services.map_markers import (
     SEARCH_CENTER_MARKER_COLOR,
@@ -61,15 +62,6 @@ except ImportError:
     _MAP_AVAILABLE = False
 
 CHART_ACCENT_COLOR = "#2a78d6"
-
-# 시청 부근 근사 좌표(창원시청은 docs/convenience_data.md 기록값). 정확한 건물 출입구나
-# 특정 주거지 좌표가 아니다 - 예시 위치로만 쓴다.
-EXAMPLE_LOCATIONS = {
-    "창원시청 부근 예시 위치(근사 좌표)": (35.2280, 128.6811),
-    "김해시청 부근 예시 위치(근사 좌표)": (35.2285, 128.8894),
-    "진주시청 부근 예시 위치(근사 좌표)": (35.1800, 128.1076),
-}
-_DEFAULT_LOCATION_LABEL = next(iter(EXAMPLE_LOCATIONS))
 
 RADII_M = (300, 500, 1000)
 LOCATION_MODES = ["예시 위치 선택", "위도·경도 직접 입력", "지도 클릭으로 위치 선택"]
@@ -530,7 +522,7 @@ st.caption(
 )
 
 if "search_center" not in st.session_state:
-    st.session_state.search_center = EXAMPLE_LOCATIONS[_DEFAULT_LOCATION_LABEL]
+    st.session_state.search_center = default_location()["coord"]
 if "map_click_candidate" not in st.session_state:
     st.session_state.map_click_candidate = None  # 지도에서 클릭했지만 아직 확정 안 한 좌표
 if "map_click_seen" not in st.session_state:
@@ -546,12 +538,21 @@ st.subheader("1. 검색 중심 위치 설정")
 location_mode = st.radio("위치 설정 방식", LOCATION_MODES, horizontal=True)
 
 if location_mode == "예시 위치 선택":
-    label = st.selectbox("예시 위치", list(EXAMPLE_LOCATIONS.keys()))
-    lat_input, lon_input = EXAMPLE_LOCATIONS[label]
+    st.caption(EXAMPLE_GUIDE)
+    col_scope, col_region = st.columns(2)
+    with col_scope:
+        example_scope = st.selectbox("예시 위치 범위", list(EXAMPLE_SCOPES), key="example_scope")
+    scope_locations = locations_in_scope(example_scope)
+    with col_region:
+        # 범위마다 키를 따로 둬 범위를 바꿨을 때 이전 범위의 세부 지역이 남지 않게 한다.
+        region_name = st.selectbox("세부 지역", [loc["region_name"] for loc in scope_locations],
+                                   key=f"example_region_{EXAMPLE_SCOPES[example_scope]}")
+    example = next(loc for loc in scope_locations if loc["region_name"] == region_name)
+    lat_input, lon_input = example["coord"]
     st.session_state.search_center = (lat_input, lon_input)
     st.info(
-        f"ℹ️ '{label}' (위도 {lat_input}, 경도 {lon_input})를 사용합니다. 이 좌표는 "
-        "근사치이며, 정확한 건물 출입구 위치나 특정 주거지 좌표가 아닙니다."
+        f"ℹ️ 선택된 대표 위치: **{example['label']}** (위도 {lat_input}, 경도 {lon_input}). 이 좌표는 "
+        "검색 시작을 위한 근사치이며, 정확한 건물 출입구 위치나 특정 주거지 좌표가 아닙니다."
     )
 
 elif location_mode == "위도·경도 직접 입력":

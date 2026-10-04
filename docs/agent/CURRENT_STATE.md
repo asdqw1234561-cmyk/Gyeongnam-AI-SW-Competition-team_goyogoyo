@@ -17,7 +17,7 @@
 | F1 | 비교 범위 선택(경남 구 지역 5곳 / 경남 시 지역 7곳 / 경남 군 지역 10곳) + 이주 조건 입력 → AI 추가질문 → 가중치 해석·승인 | `app.py`, `agent/ollama_agent.py` | 동작(모킹·AppTest), 브라우저 클릭 흐름 수동 확인 필요 |
 | F2 | Agent Planner: AI 계획 → Python 검증 → 도구 실행 → 같은 유형 비교 지역의 인구 1만 명당 상대 비교 점수 | `agent/planner.py`, `analysis/scoring.py` | 동작(단위·실제 Ollama) |
 | F3 | 결과 검토 루프: AI 설명 → 숫자·사실 검증 → 실패 시 Python 기본 설명, 자연어·슬라이더 피드백 재계산 | `agent/planner_loop.py`, `app.py` | 동작 |
-| F4 | 위치 기반 주변 시설 탐색(300m/500m/1km 직선거리, 버스정류장·편의점, 지도 클릭 승인) — **경남 22개 지역**(창원시는 창원시 정류소 원본, 그 외 17개 시·군은 `data/gyeongnam/`) | `pages/user.py`, `services/bus_stops.py`, `services/convenience.py` | 동작(단위·AppTest 김해시청) |
+| F4 | 위치 기반 주변 시설 탐색(300m/500m/1km 직선거리, 버스정류장·편의점, 지도 클릭 승인, 예시 위치 = 범위(구 5·시 7·군 10) → 세부 지역 22곳 시·군·구청 부근 근사 좌표 `services/example_locations.py`·`docs/example_locations.md`) — **경남 22개 지역**(창원시는 창원시 정류소 원본, 그 외 17개 시·군은 `data/gyeongnam/`) | `pages/user.py`, `services/bus_stops.py`, `services/convenience.py` | 동작(단위·AppTest 김해시청) |
 | F5 | 위치 AI Agent: MCP 반복형(claude_cli) / 계획형+검토 루프(ollama) / 기본 절차 폴백, 답변 숫자 검증, 같은 위치 대화 기억 | `agent/location_agent.py`, `agent/location_mcp_server.py`, `agent/agent_loop.py`, `agent/agent_state.py` | 동작(실제 Ollama 김해시청 ai_verified, 2026-10-04). claude_cli 경로는 이번에 미확인 |
 | F6 | 정부용 시설 현황·지역 간 차이·가상 증감 시뮬레이션 — 비교 범위 선택 | `pages/government.py`, `analysis/simulation.py` | 동작(AppTest 군 지역 시뮬레이션), 주제 연결은 OPEN-3 |
 | F7 | 정착 후보군 + Critic: 최적·균형·대안(가성비는 주거비 미확보로 제공 안 함), 6개 평가축 상태, Critic 점검(근소차·한 축 의존·지배 관계·쏠림·커버리지)·지배된 대안 교체 — 최초·피드백 결과 모두. 강점·약점 기준은 비교 지역 수에 비례 | `analysis/candidates.py`, `app.py` `_render_candidate_summary`·`_render_critic_highlights` | 동작(단위·AppTest·실제 Ollama) |
@@ -46,7 +46,7 @@
 
 ## 테스트
 
-- 단위 테스트: `python -m unittest discover -s tests` → **530개 통과, skip 1** (2026-10-05, 비교 범위 표시 이름 W2 후, 실제 AI 호출 없음)
+- 단위 테스트: `python -m unittest discover -s tests` → **539개 통과, skip 1** (2026-10-05, 위치 탐색 예시 위치 22개 W3 후, 실제 AI 호출 없음)
 - 실제 Ollama(qwen3.5:4b): 제출용 Test Case 5건(`docs/test_cases.md`, `b352c85`, 세 비교 범위) 기대와 일치 / 위치 AI Agent 김해시청 500m ai_verified (2026-10-04)
 - AppTest: 3개 화면 첫 렌더링, 최초 추천·피드백 승인·관심 지역 강조·참고 표·시 지역 7곳 비교·정부용 군 지역 시뮬레이션·위치 탐색 김해 예시 위치
 - **브라우저 E2E: 미실시** — 수동 확인 체크리스트 `docs/e2e_browser_checklist.md`

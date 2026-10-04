@@ -3,11 +3,11 @@
   "submission_deadline": "2026-10-06T12:00",
   "last_synced_commit": "cabc379",
   "last_synced_at": "2026-10-05",
-  "last_test_result": "530 passed, 1 skipped (2026-10-05, W2 비교 범위 표시 이름)",
+  "last_test_result": "539 passed, 1 skipped (2026-10-05, W3 위치 탐색 예시 위치 22개)",
   "last_loop": {
     "date": "2026-10-05",
-    "task": "W2 비교 범위 표시 이름(경남 구 지역 (5곳))",
-    "result": "표시 매핑+format_func, 내부 값 유지, AppTest 검증, 전체 테스트 통과"
+    "task": "W3 위치 탐색 예시 위치 범위→세부 지역 22곳",
+    "result": "좌표 목록 분리·경계 검증, AppTest, 전체 테스트 통과"
   },
   "next_candidates": [
     "브라우저 E2E 체크리스트 수동 실행(사용자)",
