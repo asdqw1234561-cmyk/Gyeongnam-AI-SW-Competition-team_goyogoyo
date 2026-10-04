@@ -269,6 +269,10 @@
 - 승인: 완료 (사용자: 기능 개발 freeze, 안정화만)
 - 결과: 2026-10-04 · CURRENT_STATE를 `cabc379`·506개 테스트·경남 22개 지역 기준으로 재작성(예전 분석은 '이력'으로 이동), state.json 동기화(freeze 규칙 기록), `docs/e2e_browser_checklist.md` - 10개 흐름(창원 5개 구·시 7곳·군 10곳·가중치 승인·최초 추천+Critic·자연어 피드백·교육시설·관심 지역·창원 밖 위치 탐색·정부용) 조작·결정적 기대값·결과 칸 · 코드 변경 없음 · G4 BLOCKED 유지
 
+## F1. E2E 9-5 위치 AI Agent fallback 진단 (2026-10-04)
+- [x] 상태 (코드 변경 없음)
+- 결과: 원인 = `agent/llm.py` 세션당 AI 호출 한도(`LLM_MAX_CALLS_PER_SESSION`, 기본 30, Streamlit 세션 = 모든 페이지 공유)를 체크리스트 1~8 단계에서 소진 → 위치 planner의 `llm.chat`이 `LLMLimitError` → 설계된 기본 절차(`compare_nearby_facilities`). Ollama·thinking·JSON 추출 문제 아님(`think=False` 위치 planner·결과 검토 모두 적용). 재현: AppTest 실제 Ollama, 김해시청 · 호출 0회 시작 → ai_planned, 도구 2개, ai_verified / 30회 시작 → fallback_default + 한도 메시지. 조치: E2E 체크리스트 준비 단계·CURRENT_STATE에 한도 설정 안내 추가
+
 ---
 
 ## 발견된 작업

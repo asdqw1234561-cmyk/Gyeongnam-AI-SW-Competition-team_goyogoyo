@@ -55,7 +55,8 @@
 
 ## 알려진 문제 / 공백
 
-- 브라우저 수동 E2E 미실시(체크리스트 작성됨) — 제출 전 필수
+- 브라우저 수동 E2E 진행 중(체크리스트 `docs/e2e_browser_checklist.md`) — 제출 전 필수
+- E2E 9-5 위치 AI Agent 기본 절차 전환: **원인 = AI 호출 세션 한도(`LLM_MAX_CALLS_PER_SESSION` 기본 30, 페이지 간 공유)를 앞 단계에서 소진** — 코드 버그 아님(Ollama·JSON·think=False 정상, 새 세션 AppTest 실제 Ollama ai_planned·도구 2개·ai_verified / 호출 30회 상태에서 같은 fallback 재현). 시연·E2E 때 `.env` 한도를 0 또는 100 이상으로
 - 제출물 5종·출처·AI 활용 신고서 미작성 — EVAL_MATRIX 공백 1 (사용자 지시로 자동 진행하지 않음)
 - AI 다듬기 품질(오탈자, 5건 중 3건 거부) — OPEN-7, 동결 기간 중 변경하지 않음
 - `LLM_BACKEND=claude_cli` 경로: 2026-10-03 `401 API key is invalid`(.env의 `ANTHROPIC_API_KEY`가 CLI 로그인보다 우선 적용 추정, 미확인). 시연을 Ollama로 하면 영향 없음
