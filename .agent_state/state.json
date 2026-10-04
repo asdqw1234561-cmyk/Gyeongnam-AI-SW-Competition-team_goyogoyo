@@ -3,14 +3,14 @@
   "submission_deadline": "2026-10-06T12:00",
   "last_synced_commit": "f2bf6c8",
   "last_synced_at": "2026-10-04",
-  "last_test_result": "468 passed, 1 skipped (2026-10-03, G3·G4-A·R4·R5·R6 미커밋 작업 트리)",
+  "last_test_result": "473 passed, 1 skipped (2026-10-04, G5-A)",
   "last_loop": {
     "date": "2026-10-04",
-    "task": "G5 다음 평가축 결정(직장 접근성 vs 교육)",
-    "result": "G4 resultCode 30 BLOCKED 유지. 직장 접근성 축 불가(DEC-18). 교육(구별 학교 수) 선택, 키 필요(OPEN-8)로 정지"
+    "task": "G5-A 창원 5개 구 학교 수 수집·집계",
+    "result": "226교 교차검증 일치(의창50/성산55/합포44/회원40/진해37). 왜곡 위험(작은 차이·성산 쏠림·읍면 학교) 검토 → 연결 방식 OPEN-9로 정지"
   },
   "next_candidates": [
-    "G5-A 교육 학교 수 수집·집계 (OPEN-8 키 확보 후)",
+    "G5-B 교육 축 연결 (OPEN-9 결정 후)",
     "G4-A 재개 (OPEN-5 해제 시)",
     "제출용 대표 Test Case 5건 기록 (R-MVP-2⑦, 마감 D-2)"
   ],
@@ -21,7 +21,7 @@
     "OPEN-5",
     "OPEN-6",
     "OPEN-7",
-    "OPEN-8"
+    "OPEN-9"
   ],
   "current_priority": "현실적인 정착 데이터 보강 (DEC-17)"
 }

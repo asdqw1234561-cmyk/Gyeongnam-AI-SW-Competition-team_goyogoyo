@@ -210,15 +210,15 @@
 - 결과: 2026-10-04 · G4 inspect 재확인 resultCode 30 → BLOCKED 유지 · 직장 접근성은 구 단위 입력·이동시간 데이터 부재로 축 구현 불가(DEC-18) · 교육(구별 초·중·고 학교 수) 선택: NEIS schoolInfo 키 없이 호출 확인(경남 1,017교, 주소에 창원시 ○○구), 학교위치표준데이터 필드 확인 · 전체 수집은 키 필요(OPEN-8). 상세 A~F는 `CURRENT_STATE.md` "다음 평가축 조사".
 
 ## G5-A. 교육 데이터 수집·구별 집계 (scoring 미연결)
-- [!] 상태
-- 승인: 필요 (OPEN-8 키 확보)
+- [x] 상태
+- 승인: 완료 (2026-10-04 사용자가 CSV 추가 후 G5-A 지시)
 - 범위: `scripts/ingest_school_counts.py`(신규) - 경남 학교 목록 수집 → 운영 중 초·중·고, 주소의 창원시 ○○구로 집계(좌표 있으면 SGIS 판정 교차검증) → 출처·기준일과 함께 `data/region_indicators.csv` 교육 5행 / 테스트 신규
 - 완료 조건: 5개 구 값·제외 건수·기준일 확인, 원본 수집 파일 보존, 전체 테스트 통과
-- 결과:
+- 결과: 2026-10-04 · `scripts/ingest_school_counts.py`(원본 읽기 전용, 도로명주소 접두로 창원 추출, 지번주소·SGIS 좌표판정·교육지원청 교차검증, 기대값 상수 검증) → `data/schools/changwon_school_counts.csv`·`changwon_schools.csv` · 원본 12,011 → 창원 226(제외 0, 교차검증 226/226 일치) · 의창 50/성산 55/마산합포 44/마산회원 40/진해 37 · `tests/test_school_counts.py` 5개, 전체 473개 통과(skip 1) · 왜곡 검토 결과 연결 방식은 OPEN-9.
 
 ## G5-B. 교육 평가축 연결
 - [ ] 상태
-- 승인: 필요 (`scoring.py` 매핑 1줄 - 계산식 불변, CLAUDE.md §4 보고 대상)
+- 승인: 필요 (OPEN-9 연결 방식 결정 + `scoring.py` 매핑 1줄 - 계산식 불변, CLAUDE.md §4 보고 대상)
 - 범위: `CONDITION_TO_INDICATOR_CODE`·`EVALUATION_AXES`·`explanation_facts`·`feedback`·`app.py` 라벨, 기존 3축 결과 불변 회귀 테스트
 - 결과:
 
