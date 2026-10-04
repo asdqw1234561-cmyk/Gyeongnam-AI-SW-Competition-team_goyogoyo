@@ -3,22 +3,25 @@
   "submission_deadline": "2026-10-06T12:00",
   "last_synced_commit": "219a4f2",
   "last_synced_at": "2026-10-02",
-  "last_test_result": "377 passed, 1 skipped (2026-10-02, 커밋 219a4f2)",
+  "last_test_result": "468 passed, 1 skipped (2026-10-03, G3·G4-A·R4·R5·R6 미커밋 작업 트리)",
   "last_loop": {
-    "date": "2026-10-02",
-    "task": "R1 정착 후보군 역할 부여 + Critic 점검 (추천 품질 G1+G2)",
-    "result": "구현·테스트·커밋 완료 (3f5da8b ENV, 219a4f2 R1)"
+    "date": "2026-10-03",
+    "task": "R6 설명을 deterministic explanation 중심 구조로 통일",
+    "result": "구현·테스트 완료, 실제 Ollama 4/4 ai_paraphrase(7~18초). 다듬기 문장 오탈자·띄어쓰기 문제(OPEN-7). 미커밋. 사용자 지시로 정지"
   },
   "next_candidates": [
-    "G3 방향성 피드백: '의료를 더 중요하게' 같은 숫자 없는 요청을 현재 가중치 기준 결정적 조정(예: 해당 축 +N%p)으로 제안 → 승인 → 재평가, 피드백 이력(Memory) 유지",
-    "Critic 결과를 planner_loop 관찰(observation)에 넣어 AI 설명이 후보 역할·경고를 근거로 설명하게 하기(숫자 검증 유지)",
-    "제출용 대표 Test Case 5건 기록 (R-MVP-2⑦)"
+    "OPEN-7 결정 후 다듬기 on/off 반영(한 줄)",
+    "G4-A 재개(BLOCKED 해제 시)",
+    "제출용 대표 Test Case 5건 기록 (R-MVP-2⑦, 마감 D-3)"
   ],
   "open_decisions": [
     "OPEN-1",
     "OPEN-2",
     "OPEN-3",
-    "OPEN-4"
+    "OPEN-4",
+    "OPEN-5",
+    "OPEN-6",
+    "OPEN-7"
   ],
   "current_priority": "핵심 Agent 추천 품질 (DEC-11) - 제출자료는 후순위"
 }

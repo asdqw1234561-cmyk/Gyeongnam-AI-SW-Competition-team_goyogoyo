@@ -156,6 +156,53 @@
 - 완료 조건: 실제 CSV 동일 가중치에서 최적≠균형 후보가 나오고 Critic이 근거 숫자와 함께 표시, 기존 테스트 전부 통과.
 - 결과: 2026-10-02 · 새 analysis/candidates.py(build_candidate_set: 6개 평가축 상태, 최적·균형·대안·가성비(산출 불가) 역할, Pareto, Critic 7규칙 close_gap/single_axis/dominated/concentration/granularity/coverage/ties + 지배된 1차 대안을 바꾸는 revised) · agent/planner.py run_agent_plan에 unscored_inputs 인자·candidate_review 결과 추가 · app.py 최초·피드백 결과 화면에 후보군·Critic 표시(_render_candidate_set) · scoring.py 변경 0줄 · tests/test_candidates.py 15개 + planner 1개 + AppTest 1개 추가, 전체 377개 통과(skip 1) · 실데이터 동일 가중치: 최적 성산구 / 균형 의창구 / 대안 1차 마산합포구→Critic이 의창구로 수정 / 가성비 산출 불가 · AppTest로 "다시 비교하기"(교통 80%) 후 최적 의창구·대안 성산구 재평가 확인 · 실제 Ollama·브라우저 확인 미실행.
 
+## R2. 방향성 자연어 피드백 → 결정적 가중치 조정 → 재평가 → feedback_history (추천 품질 G3)
+- [x] 상태
+- 승인: 완료 (2026-10-02 사용자 지시, DEC-12)
+- 근거: `docs/agent/CURRENT_STATE.md` G3, R-EV-2(Memory·Feedback), CHARTER §4 Feedback·Memory
+- 범위: 새 `analysis/feedback.py`(adjust_weights 배율 규칙, reevaluate 단일 재평가 경로, candidate_changes, history_entry, 축 별칭 판정) · `agent/ollama_agent.py` 프롬프트에 adjust_direction/reset 추가, 축 재판정·문장 근거 확인 파서 · `app.py` 슬라이더·숫자·방향·되돌리기를 `_apply_feedback` 한 경로로, 방향성 제안 승인 화면, 무시 기록, 피드백 기록 표시. scoring.py·candidates.py 변경 없음.
+- 결과: 2026-10-02 · 위 3개 파일 + tests/test_feedback.py 22개 + AppTest 1개(승인→재평가·기록, 무시 기록, 슬라이더 같은 경로) · 전체 400개 통과(skip 1) · scoring.py·candidates.py diff 0줄 · 실제 Ollama 8문장 해석 기대대로(단, "날씨"는 LLM이 바로 unsupported를 골라 일반 문구로 안내) · 브라우저 확인 미실행 · 미커밋(사용자 지시).
+
+## R3. G4 주거비 데이터 확보 가능성 조사·설계 (코드 변경 없음)
+- [x] 상태
+- 승인: 완료 (2026-10-02 사용자 지시, DEC-13)
+- 결과: 2026-10-02 · `docs/agent/CURRENT_STATE.md` "G4 feasibility"에 10개 항목 조사 결과와 A/B/C 구현 후보 기록 · 공식 페이지로 확인: 요청 파라미터 LAWD_CD(5자리)·DEAL_YMD, XML/REST, 동·호 제외, 이용허락 제한 없음, 개발계정 10,000회/일 · 창원 5개 구 코드 48121/48123/48125/48127/48129 ↔ region_id 1:1(bjd_code.csv) · 실제 샘플 호출은 키 미등록(resultCode 30)으로 실패 → 필드명·표본 수·중앙값 검증은 활용신청 후(OPEN-5) · 코드·테스트 변경 없음.
+
+## R4. Critic·후보 역할을 AI 설명 단계에 연결
+- [x] 상태
+- 승인: 완료 (2026-10-03 사용자 지시)
+- 근거: R-EV-2(판단·추론), R-AG-5(결과 확인·수정), R-ETH-5(AI 오류 대책), DEC-11
+- 결과: 2026-10-03 · agent/planner_loop.py: candidate_view(후보 역할·revised_from·Critic facts·평가축·미확보 축·반영 못 한 조건·limits)를 관찰에 추가, 프롬프트에 후보군 설명 규칙, verify_answer에 verify_candidate_claims(판단 범위·과장·미확보 축 단정·역할 불일치, 구 이름은 5개 구 전체), python_summary에 후보·교체·경고·한계, 피드백용 explain_candidates, call_reviewer think=False(기존 결함) · agent/planner.py run_review_loop에 candidate_review 전달 · analysis/candidates.py Critic check에 facts만 추가(선정 규칙 불변) · app.py 피드백 재평가 뒤 설명 생성·표시(_render_final_answer 공용) · 입력 길이 4000자 이내로 압축(최악 3,942자) · tests/test_candidate_explanation.py 21개 + AppTest 1개, test_planner_loop 정상 답변 픽스처 3개에 판단 범위 문구 추가(규칙 의미 변경) · 전체 436개 통과(skip 1) · 실제 Ollama 최초·피드백 설명 ai_verified, 단 의미 오류 2건은 검사를 통과(CURRENT_STATE 참고) · 미커밋.
+
+## R5. AI 후보 설명의 의미 정확성 - explanation_facts
+- [x] 상태
+- 승인: 완료 (2026-10-03 사용자 지시)
+- 근거: R4 실제 Ollama 설명의 의미 오류 2건(약점 교통을 "앞선다", "총 3개 중 6개"), R-ETH-5(AI 오류 대책), R-EV-2
+- 결과: 2026-10-03 · 새 analysis/explanation_facts.py(구별 축 value·score·rank, 강점/약점/중립 목록 - candidates와 같은 상수, 축 방향, 역할 구 축별 높은 순서, 지배 관계, 확보/전체 평가축 수·미확보·미사용·반영 못 한 조건) · agent/planner_loop.py: 관찰을 candidate_view → explanation_facts로 교체, 프롬프트에 "사실만 옮기기" 규칙, verify_fact_claims(강점↔약점 뒤집기·가장 많다/적다 순위·두 구 비교 방향·지배 방향·미확보 축 강점/약점 표현·N개 중 M개·가정 결과 없는 "가중치를 바꿔도"·**숫자 귀속**(한 구·한 축 절의 N점/N개/N위는 그 구 그 축 값)·**역할 구문**("균형과 대안 역할"+주어 생략)), Python 요약에 강점/약점·평가축 수 · 입력 최악 3,927자(4,000 이내) · tests/test_explanation_facts.py 20개(사용자 지정 1~7 + 실제 Ollama 오답 3유형 회귀), test_candidate_explanation 키 갱신 · 전체 456개 통과(skip 1) · scoring.py·candidates.py 선정 규칙 변경 없음 · 실제 Ollama 결과는 CURRENT_STATE R5 참고 · 미커밋.
+
+## R6. 설명을 deterministic explanation 중심 구조로 통일
+- [x] 상태
+- 승인: 완료 (2026-10-03 사용자 지시, DEC-16)
+- 결과: 2026-10-03 · analysis/explanation_facts.py에 render_explanation(역할·강점·약점·확보/미확보 축·반영 못 한 조건·판단 한계·Critic 교체 이유·주의), facts에 region_count 추가·limits 제거 · agent/planner_loop.py: explain_from_facts(기본 설명 → 다듬기 1회 → validate_paraphrase → 실패 시 기본 설명), R5 검사를 fact_violations(전부 수집)로 형태만 변경, 리뷰 루프는 후보군이 있으면 answer 문장 대신 공용 경로, explain_candidates는 위임 · agent/planner.py AI 계획 실패 시에도 같은 경로로 설명 · app.py 표시(ai_paraphrase/deterministic) · tests/test_unified_explanation.py 11개 + AppTest 1개, 기존 설명 흐름 테스트(test_planner_loop 6개, test_candidate_explanation 7개, test_explanation_facts 1개, 스모크 1개)를 새 의미로 갱신 · 전체 468개 통과(skip 1) · scoring.py·후보 선정 규칙 변경 없음 · 실제 Ollama 결과는 CURRENT_STATE R6 · 미커밋.
+
+## G4-A. 주거비 데이터 수집·정규화 (scoring 미연결)
+- [!] 상태
+- 승인: 완료 (2026-10-02 사용자 지시 - 아파트·오피스텔·연립다세대·단독/다가구 독립 수집)
+- 범위·완료 조건: `CURRENT_STATE.md` G4 feasibility 표 A행 + "G4-A 진행".
+- 결과: 2026-10-02 · 막힘 - 수집·분석 도구는 완성(scripts/collect_rent_transactions.py, scripts/analyze_rent_transactions.py, tests/test_rent_transactions.py 18개, 전체 418개 통과), 4개 API 공식 기술문서로 필드 확정 · 실제 호출은 4개 모두 resultCode 30(키 유효, 활용승인 미반영) → 실데이터 분석 미산출, G4-B 진행 불가 · 해제 조건: 승인된 키로 `python scripts/collect_rent_transactions.py inspect` 성공.
+
+## G4-B. 주거비 평가축 (낮을수록 좋음 방향 플래그)
+- [ ] 상태
+- 승인: 필요 (scoring.py 변경 · OPEN-6, G4-A 선행)
+- 범위·완료 조건: `CURRENT_STATE.md` G4 feasibility 표 B행.
+- 결과:
+
+## G4-C. 가성비 후보 역할 활성화
+- [ ] 상태
+- 승인: 필요 (후보 역할 의미 추가, G4-B 선행)
+- 범위·완료 조건: `CURRENT_STATE.md` G4 feasibility 표 C행.
+- 결과:
+
 ---
 
 ## 발견된 작업

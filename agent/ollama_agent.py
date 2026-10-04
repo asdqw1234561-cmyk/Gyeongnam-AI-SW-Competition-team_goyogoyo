@@ -7,6 +7,7 @@ import ollama
 from agent.llm_json import extract_json_object
 from agent import llm  # LLM_BACKEND(.env)에 따라 Ollama 또는 Claude Code CLI 호출
 
+from analysis.feedback import STRENGTH_FACTORS, axis_mentioned, resolve_axis
 from analysis.scoring import CONDITION_TO_INDICATOR_CODE
 
 OLLAMA_MODEL = "qwen3.5:4b"
@@ -234,23 +235,29 @@ WEIGHT_FEEDBACK_SUPPORTED_INDICATORS = {
 
 WEIGHT_FEEDBACK_SYSTEM_PROMPT = """당신은 창원시 생활권 비교 앱에서 사용자의 가중치 조정
 요청을 해석하는 도우미입니다. 점수 계산이나 지역 추천은 당신의 역할이 아닙니다 -
-오직 사용자의 문장을 아래 3개 지표에 대한 가중치 요청으로 분류하는 것만 하세요.
+오직 사용자의 문장을 구조화해서 분류하는 것만 하세요. 가중치 숫자를 새로 만들지 마세요.
 
 [다룰 수 있는 지표 - 이 3개뿐]
 - bus_stop_count: 교통(버스정류장 수)
 - hospital_count: 의료(의료기관 수)
 - convenience_store_count: 생활편의(편의점 수)
 
-[판단 기준 - 아래 3가지 type 중 정확히 하나를 고르세요]
+[판단 기준 - 아래 type 중 정확히 하나를 고르세요]
 1. "set_weights": 위 3개 지표 중 하나 이상에 구체적인 숫자(비율·퍼센트)가 명시된 경우.
    weights에 사용자가 말한 숫자를 그대로 넣으세요(%) - 더하거나 빼거나 비율을
    바꾸지 마세요. 합계가 100이 아니어도 계산하지 말고 사용자가 말한 숫자만 그대로
    전달하세요(합계 확인과 재질문은 이후 단계에서 처리합니다). 언급되지 않은 지표는
    weights에 넣지 마세요.
-2. "ask_clarification": "의료가 더 중요해", "교통 위주로 봐줘"처럼 방향성만 있고
-   구체적인 숫자가 없는 경우. 절대 숫자를 임의로 만들어내지 말고, message에 몇
-   %로 할지 되묻는 한국어 질문을 작성하세요.
-3. "unsupported": 사용자가 요청한 것이 위 3개 지표에 전혀 해당하지 않는 경우
+2. "adjust_direction": 숫자 없이 방향만 말한 경우("의료를 더 중요하게", "병원을 더 봐줘",
+   "교통은 조금 덜 중요하게", "생활편의를 더 봐줘"). adjustments에 대상마다
+   {"axis": 축 이름, "direction": "increase" 또는 "decrease",
+    "strength_explicit": 강도 표현("조금","약간","훨씬","많이","매우" 등)이 있으면 true 아니면 false,
+    "strength": "slight"(조금·약간) / "normal"(표현 없음) / "strong"(훨씬·많이·매우)} 를 넣으세요.
+   축 이름은 "교통", "의료", "생활편의", "주거비", "교육", "직장 접근성" 중 하나로 적고,
+   어디에도 해당하지 않으면 사용자가 말한 단어를 그대로 적으세요. 숫자(가중치)는 절대 적지 마세요.
+3. "reset": "원래대로", "처음 조건으로 돌려줘"처럼 최초 추천 기준으로 되돌리려는 경우.
+4. "ask_clarification": 무엇을 어떻게 바꾸려는지 알 수 없는 경우. message에 짧은 한국어 확인 질문.
+5. "unsupported": 사용자가 요청한 것이 위 3개 지표에 전혀 해당하지 않는 경우
    (예: 주거비/월세/전세, 통근시간/대중교통 소요시간, 교육, 안전, 자연환경,
    문화시설, 대형마트, 응급실 등). message에 "현재 해당 데이터를 확보하지
    못했다"는 한국어 안내를 작성하세요. 시설 수·이동시간·주거비·추천 점수 등을
@@ -260,7 +267,11 @@ WEIGHT_FEEDBACK_SYSTEM_PROMPT = """당신은 창원시 생활권 비교 앱에�
 
 {"type": "set_weights", "weights": {"hospital_count": 80, "bus_stop_count": 20}, "message": null}
 또는
-{"type": "ask_clarification", "weights": null, "message": "의료를 몇 %로 둘까요? 예: 의료 70%, 교통 30%"}
+{"type": "adjust_direction", "adjustments": [{"axis": "의료", "direction": "increase", "strength_explicit": false, "strength": "normal"}], "message": null}
+또는
+{"type": "reset", "message": null}
+또는
+{"type": "ask_clarification", "weights": null, "message": "어떤 조건을 더 중요하게 볼까요? 예: 의료를 더 중요하게"}
 또는
 {"type": "unsupported", "weights": null, "message": "주거비(월세·전세) 데이터는 아직 확보되지 않아 가중치에 반영할 수 없습니다."}
 """
@@ -297,7 +308,60 @@ def _validate_weight_value(value) -> float | None:
     return numeric
 
 
-def _parse_weight_feedback(raw_text: str) -> dict:
+def _parse_direction_adjustments(data: dict, user_text: str | None) -> dict:
+    """
+    adjust_direction 응답 검증. LLM이 고른 축 이름은 Python이 다시 판정한다
+    (analysis.feedback.resolve_axis): 확보 축만 조정 대상이 되고, 미확보 축(주거비·교육·직장 접근성)이나
+    존재하지 않는 축이 하나라도 있으면 일부만 적용하지 않고 전체를 unsupported로 돌린다.
+    사용자 문장에 그 축을 가리키는 말이 없으면(LLM이 축을 지어냈을 가능성) 되묻는다.
+    가중치 숫자는 여기서 만들지 않는다 - 조정량은 analysis.feedback.adjust_weights()가 정한다.
+    """
+    raw = data.get("adjustments")
+    if not isinstance(raw, list) or not raw:
+        return {"status": "invalid_response", "type": None, "weights": None,
+                "message": "AI가 조정할 평가축을 지정하지 않았습니다."}
+    adjustments, missing, unknown = [], [], []
+    for item in raw:
+        if not isinstance(item, dict):
+            return {"status": "invalid_response", "type": None, "weights": None,
+                    "message": "AI 응답의 조정 항목 형식이 올바르지 않습니다."}
+        kind, value = resolve_axis(item.get("axis"))
+        if kind == "missing":
+            missing.append(value)
+            continue
+        if kind == "unknown":
+            unknown.append(value or "(빈 값)")
+            continue
+        direction = item.get("direction")
+        if direction not in ("increase", "decrease"):
+            return {"status": "invalid_response", "type": None, "weights": None,
+                    "message": "AI 응답의 방향(increase/decrease) 값이 올바르지 않습니다."}
+        explicit = item.get("strength_explicit") is True
+        strength = item.get("strength") if explicit else "normal"
+        if strength not in STRENGTH_FACTORS:
+            strength, explicit = "normal", False
+        adjustments.append({"indicator_code": value, "axis": WEIGHT_FEEDBACK_SUPPORTED_INDICATORS[value].split("(")[0],
+                            "direction": direction, "strength": strength, "strength_explicit": explicit})
+    if missing or unknown:
+        parts = []
+        if missing:
+            parts.append(f"'{', '.join(dict.fromkeys(missing))}'은(는) 아직 데이터를 확보하지 못한 평가축이라 "
+                         "가중치에 반영할 수 없습니다")
+        if unknown:
+            parts.append(f"'{', '.join(dict.fromkeys(unknown))}'은(는) 이 서비스에 없는 평가축입니다")
+        return {"status": "ok", "type": "unsupported", "weights": None, "message": (
+            " / ".join(parts) + ". 교통·의료·생활편의 중에서 더(덜) 중요하게 볼 조건을 말씀해 주세요.")}
+    if user_text is not None:
+        ungrounded = [a["axis"] for a in adjustments if not axis_mentioned(a["indicator_code"], user_text)]
+        if ungrounded:
+            return {"status": "ok", "type": "ask_clarification", "weights": None, "message": (
+                f"문장에서 '{', '.join(ungrounded)}'에 해당하는 말을 찾지 못했습니다. "
+                "어떤 조건(교통·의료·생활편의)을 더(덜) 중요하게 볼지 다시 말씀해 주세요.")}
+    return {"status": "ok", "type": "adjust_direction", "weights": None, "adjustments": adjustments,
+            "message": None}
+
+
+def _parse_weight_feedback(raw_text: str, user_text: str | None = None) -> dict:
     """
     Ollama 원문 응답을 파싱하고 검증한다. 사용자 의도를 임의로 바꾸지 않는 것을
     최우선으로 한다 - 지원하지 않는 지표가 섞여 있거나, 값이 유효하지 않거나,
@@ -333,7 +397,7 @@ def _parse_weight_feedback(raw_text: str) -> dict:
         }
 
     resp_type = data.get("type")
-    if resp_type not in ("set_weights", "ask_clarification", "unsupported"):
+    if resp_type not in ("set_weights", "adjust_direction", "reset", "ask_clarification", "unsupported"):
         return {
             "status": "invalid_response",
             "type": None,
@@ -344,6 +408,8 @@ def _parse_weight_feedback(raw_text: str) -> dict:
     raw_message = data.get("message")
     message = str(raw_message).strip() if raw_message else None
 
+    if resp_type == "adjust_direction":
+        return _parse_direction_adjustments(data, user_text)
     if resp_type != "set_weights":
         return {"status": "ok", "type": resp_type, "weights": None, "message": message}
 
@@ -435,8 +501,10 @@ def interpret_weight_feedback(user_text: str) -> dict:
     Returns:
         {
             "status": "ok" | "ollama_error" | "invalid_response",
-            "type": "set_weights" | "ask_clarification" | "unsupported" | None,
+            "type": "set_weights" | "adjust_direction" | "reset" | "ask_clarification" | "unsupported" | None,
             "weights": {indicator_code: 0 이상 숫자, ...} | None,  # type=="set_weights"일 때만
+            "adjustments": [{"indicator_code","axis","direction","strength","strength_explicit"}]
+                # type=="adjust_direction"일 때만 - 숫자 없음, 조정량은 analysis.feedback이 결정
             "message": str | None,
         }
         status != "ok"면 type/weights는 항상 None이고, message에 사용자에게 보여줄
@@ -470,4 +538,4 @@ def interpret_weight_feedback(user_text: str) -> dict:
         }
 
     raw_text = response["message"]["content"]
-    return _parse_weight_feedback(raw_text)
+    return _parse_weight_feedback(raw_text, text)

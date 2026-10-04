@@ -23,6 +23,8 @@
 | 정부용 분석 | `pages/government.py` | 구별 시설 수 비교, 차이, 가상 시설 증감 시뮬레이션 |
 | 점수 계산 | `analysis/scoring.py` | min-max 정규화 + 가중합 (유일한 점수 계산 경로) |
 | 정착 후보군·Critic | `analysis/candidates.py` | 점수 결과로 최적·균형·대안 후보와 Critic 점검을 결정적으로 계산(새 점수식 없음, 가성비는 주거비 미확보로 산출 불가) |
+| 설명용 확정 사실 | `analysis/explanation_facts.py` | AI 설명에 넘길 사실(구별 축 점수·순위·강점/약점/중립, 역할 구 비교 순서, 지배 관계, 확보/전체 평가축 수)을 결정적으로 생성. LLM은 판정·대소관계를 추론하지 않고 이것만 옮기며 검증도 이 기준 |
+| 피드백 재평가 | `analysis/feedback.py` | 방향성 피드백 배율 규칙(×1.5/×1.25/×2.0 후 재정규화), 모든 피드백이 쓰는 단일 재평가 경로(점수 → 후보·Critic), `feedback_history` 기록 |
 | 시뮬레이션 | `analysis/simulation.py` | deepcopy 사본에 가상값 → `compute_region_scores_from_weights()` 재사용 |
 | 데이터 조회 | `services/region_data.py`, `services/bus_stops.py`, `services/convenience.py`, `services/map_markers.py` | CSV 읽기 전용 |
 | 수집·집계 | `scripts/` | 공공데이터 수집, 버스정류장 공간판정·집계 |
@@ -32,7 +34,8 @@
 - `agent/planner.py` (Ollama): 5개 구 분석 도구 계획. 가중치는 항상 사용자가 승인한 값으로 강제 치환한다.
 - `agent/location_agent.py` + `agent/location_mcp_server.py`: 위치 기반 Agent. `LLM_BACKEND=claude_cli`면 `claude -p` + stdio MCP 서버(Claude가 도구를 반복 호출), `ollama`면 계획형 + `agent_loop` 결과 검토로 동작하고, 실패 시 계획형 → 기본 절차로 폴백. `LOCATION_AGENT_BACKEND`(`claude_agent`/`claude_cli`/`ollama`)는 명시했을 때만 이를 덮어쓴다.
 - `agent/llm.py` + `agent/claude_cli.py`: LLM 호출 공통 창구. `LLM_BACKEND`(`ollama`/`claude_cli`)로 백엔드를 고르고, 세션·일일 호출 수와 입력 길이를 제한한다. 새 AI 호출은 `ollama.chat` 대신 `llm.chat`을 쓴다.
-- `agent/planner_loop.py`: 5개 구 점수 계산 뒤 AI가 결과를 보고 설명 작성·참고 지표 조회·가중치 가정 계산을 반복(최대 3회). 실제 추천 점수는 바꾸지 않는다.
+- `agent/planner_loop.py`: 5개 구 점수 계산 뒤 AI가 결과를 보고 참고 지표 조회·가중치 가정 계산이 필요한지 판단(최대 3회). 실제 추천 점수는 바꾸지 않는다.
+  설명은 최초 추천·피드백 재평가 모두 `explain_from_facts` 한 경로: explanation_facts → Python 기본 설명(`render_explanation`, 항상 사실) → AI 다듬기 1회 → 검증(새 숫자·새 사실 위반·내용 누락) → 실패·시간 초과·빈 응답이면 기본 설명 그대로. AI가 설명 문장을 처음부터 쓰지 않는다.
 - `agent/agent_loop.py`: 위치 Agent 계획형 경로의 결과 검토 루프(관찰 → 판단 → 행동, 최대 3회). AI 답변 숫자를 검증해 실패하면 Python 요약으로 대체한다. MCP 반복형 답변도 같은 `verify_answer` 기준을 쓰며, 두 경로 모두 결과의 `final_answer`(source: ai_verified / python_summary)로 화면·대화 기억에 전달된다. `agent/agent_state.py`의 `ConversationMemory`가 같은 위치의 최근 대화를 후속 질문 맥락으로 넘긴다.
 - 모든 Ollama 호출은 `think=False`를 유지한다(qwen3.5의 thinking이 토큰을 소모해 응답이 비는 문제).
 

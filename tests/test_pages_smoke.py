@@ -9,6 +9,7 @@ Streamlit 화면 스모크 테스트 - app.py / pages/user.py / pages/government
     python -m unittest tests.test_pages_smoke -v
 """
 
+import json
 import os
 import unittest
 from unittest import mock
@@ -97,6 +98,113 @@ class PagesFirstRenderTest(unittest.TestCase):
         self.assertIn("가성비** — 산출 불가", captions)
         warnings = " ".join(w.value for w in at.warning)
         self.assertIn("직장/학교 위치", warnings)  # coverage 점검이 반영 못 한 입력을 밝힘
+
+    def test_directional_feedback_approve_reject_and_slider_share_one_path(self):
+        """G3: '의료를 더 중요하게' → 규칙으로 계산한 가중치 제안 → 승인 시 재평가·기록 / 무시도 기록 /
+        슬라이더 '다시 비교하기'도 같은 경로로 기록된다."""
+        def fake(**kwargs):
+            system = kwargs["messages"][0]["content"]
+            if "가중치 조정" in system:
+                content = ('{"type": "adjust_direction", "message": null, "adjustments": '
+                           '[{"axis": "의료", "direction": "increase", "strength_explicit": false}]}')
+            else:
+                content = '{"questions": [], "tool_calls": []}'
+            return {"message": {"content": content}}
+
+        at = AppTest.from_file(os.path.join(PROJECT_ROOT, "app.py"), default_timeout=TIMEOUT_S).run()
+        with mock.patch("ollama.chat", side_effect=fake):
+            at.button[0].click().run()
+            self.assertEqual(at.session_state["stage"], "done")
+            at.text_input(key="nl_feedback_input").input("의료를 더 중요하게").run()
+            next(b for b in at.button if b.label == "AI로 해석하기").click().run()
+            self.assertIsNone(at.session_state["feedback_recommendation"])  # 승인 전에는 적용 안 됨
+            self.assertTrue(any("승인 대기" in w.value for w in at.warning))
+            next(b for b in at.button if b.label == "✅ 이 가중치로 다시 평가하기").click().run()
+            self.assertEqual([e.value for e in at.exception], [])
+
+            history = at.session_state["feedback_history"]
+            self.assertEqual(len(history), 1)
+            self.assertEqual((history[0]["source"], history[0]["approved"]), ("nl_direction", True))
+            self.assertEqual(history[0]["after_weights"]["hospital_count"], 42.9)
+            applied = {uc["indicator_code"]: round(uc["weight"] * 100, 1)
+                       for uc in at.session_state["feedback_recommendation"]["used_conditions"]}
+            self.assertEqual(applied["hospital_count"], 42.9)
+
+            # 같은 요청을 다시 해석한 뒤 무시 -> 적용 결과는 그대로, 기록만 approved=False로 추가
+            next(b for b in at.button if b.label == "AI로 해석하기").click().run()
+            next(b for b in at.button if b.label == "❌ 무시하기").click().run()
+            history = at.session_state["feedback_history"]
+            self.assertEqual(len(history), 2)
+            self.assertFalse(history[1]["approved"])
+            self.assertEqual(history[1]["before_weights"]["hospital_count"], 42.9)  # 직전 적용 결과에서 출발
+
+            next(b for b in at.button if b.label == "다시 비교하기").click().run()
+        history = at.session_state["feedback_history"]
+        self.assertEqual(history[-1]["source"], "slider")
+        self.assertEqual([e.value for e in at.exception], [])
+
+    def test_initial_screen_shows_deterministic_explanation_when_llm_is_wrong(self):
+        """최초 추천에서 AI 다듬기가 틀리면 화면에는 Python 기본 설명이 그대로 나온다(품질 유지)."""
+        plan = {"tool_calls": [{"tool": "get_available_indicators", "reason": "r"},
+                               {"tool": "calculate_region_scores",
+                                "weights": {"bus_stop_count": 1, "hospital_count": 1, "convenience_store_count": 1},
+                                "reason": "r"}]}
+
+        def fake(**kwargs):
+            system = kwargs["messages"][0]["content"]
+            if "문장 다듬기 도우미" in system:
+                content = json.dumps({"answer": "현재 확보된 기준에서 진해구가 최적 후보입니다."}, ensure_ascii=False)
+            elif "추천 결과 설명 도우미" in system:
+                content = '{"action": "answer", "answer": ""}'
+            elif "분석 계획" in system:
+                content = json.dumps(plan, ensure_ascii=False)
+            else:
+                content = '{"questions": []}'
+            return {"message": {"content": content}}
+
+        at = AppTest.from_file(os.path.join(PROJECT_ROOT, "app.py"), default_timeout=TIMEOUT_S).run()
+        with mock.patch("ollama.chat", side_effect=fake):
+            at.button[0].click().run()
+        self.assertEqual([e.value for e in at.exception], [])
+        final = at.session_state["agent_execution_log"]["final_answer"]
+        self.assertEqual(final["source"], "deterministic")
+        self.assertTrue(any("Python이 확정 사실" in i.value for i in at.info))
+        shown = " ".join(m.value for m in at.markdown)
+        self.assertIn("최적 후보는 성산구입니다", shown)
+        self.assertNotIn("진해구가 최적 후보", shown)
+
+    def test_feedback_reevaluation_explanation_reflects_new_candidates(self):
+        """자연어 피드백 승인으로 최적 후보가 바뀌면 재평가 설명도 바뀐 후보·판단 한계를 담는다.
+        AI 설명이 검증을 통과하면 그대로, 아니면 Python 요약 - 어느 쪽이든 새 후보 기준이어야 한다."""
+
+        def fake(**kwargs):
+            system = kwargs["messages"][0]["content"]
+            if "가중치 조정" in system:
+                content = ('{"type": "adjust_direction", "message": null, "adjustments": '
+                           '[{"axis": "교통", "direction": "increase", "strength_explicit": true, "strength": "strong"}]}')
+            elif "문장 다듬기 도우미" in system:  # Python 기본 설명을 받아 그대로 다듬은 척 돌려준다
+                base = kwargs["messages"][-1]["content"].split("[기본 설명]\n", 1)[1]
+                content = json.dumps({"answer": base.replace("Agent가 고른 정착 후보입니다.", "다시 평가한 후보입니다.")},
+                                     ensure_ascii=False)
+            else:
+                content = '{"questions": [], "tool_calls": []}'
+            return {"message": {"content": content}}
+
+        at = AppTest.from_file(os.path.join(PROJECT_ROOT, "app.py"), default_timeout=TIMEOUT_S).run()
+        with mock.patch("ollama.chat", side_effect=fake):
+            at.button[0].click().run()
+            at.text_input(key="nl_feedback_input").input("교통을 훨씬 더 중요하게").run()
+            next(b for b in at.button if b.label == "AI로 해석하기").click().run()
+            next(b for b in at.button if b.label == "✅ 이 가중치로 다시 평가하기").click().run()
+        self.assertEqual([e.value for e in at.exception], [])
+        history = at.session_state["feedback_history"]
+        best = next(c for c in history[-1]["candidate_changes"] if c["role"] == "best")
+        self.assertEqual((best["before"], best["after"]), ("성산구", "의창구"))
+        final = at.session_state["feedback_explanation"]["final_answer"]
+        self.assertEqual(final["source"], "ai_paraphrase")
+        self.assertIn("최적 후보는 의창구입니다", final["text"])
+        self.assertIn("최적 후보는 의창구입니다", final["deterministic_text"])
+        self.assertTrue(any("AI의 재평가 결과 설명" in m.value for m in at.markdown))
 
     @staticmethod
     def _fake_ollama(**kwargs):

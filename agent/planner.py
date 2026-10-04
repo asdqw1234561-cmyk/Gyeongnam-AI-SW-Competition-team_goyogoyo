@@ -448,6 +448,7 @@ def run_agent_plan(
 
     # 후보 생성 -> Critic: 종합점수 1위 하나가 아니라 성격이 다른 후보(최적·균형·대안)를
     # 고르고, 근소차·지배 관계·한 축 의존·쏠림·데이터 공백을 Python이 결정적으로 점검한다.
+    # 이 확정 결과는 아래 결과 검토(AI 설명) 단계의 관찰 내용으로도 들어간다 - AI는 설명만 한다.
     candidate_review = build_candidate_set(score_result, unscored_inputs)
 
     # 관찰 -> 판단 -> 행동 반복: AI 계획으로 점수를 계산한 경우에만 결과를 AI에게 보여주고
@@ -463,7 +464,14 @@ def run_agent_plan(
             candidate_count=candidate_count, model=OLLAMA_MODEL,
             get_indicators_fn=tool_get_region_indicators,
             simulate_fn=compute_region_scores_from_weights,
+            candidate_review=candidate_review,
         )
+    elif score_result.get("status") == "ok":
+        # AI 계획이 실패해 결과 검토를 건너뛰어도 설명은 같은 경로(Python 기본 설명 + AI 다듬기 시도)로 만든다
+        explanation = planner_loop.explain_from_facts(score_result=score_result, candidate_review=candidate_review,
+                                                      model=OLLAMA_MODEL)
+        review.update(final_answer=explanation["final_answer"], agent_steps=explanation["agent_steps"],
+                      review_error=explanation["review_error"])
 
     return {
         "mode": mode,

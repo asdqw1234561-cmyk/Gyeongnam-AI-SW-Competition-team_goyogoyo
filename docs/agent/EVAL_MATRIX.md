@@ -15,6 +15,7 @@
 | 3 | 핵심 시연 흐름(구 비교 → 위치 선택 → 위치 Agent)이 화면 간에 연결되지 않음 — 사용자가 사이드바로 직접 이동해 위치를 다시 고름 | R-EV-3 End-to-End, R-PRE-2 |
 | 4 | 버튼 클릭 E2E 흐름의 자동 확인 수단 없음 (AppTest는 첫 렌더링과 일부 흐름만) | R-EV-3 안정성, R-PRE-3 |
 | 5 | 효과측정(Before/After)·사용자검증(+1 가점) 자료 없음 | R-EV-5, R-EV-8 |
+| 6 | G4: 주거비·교육·직장 접근성 축 미확보 — 가성비 후보 산출 불가, 인프라 많은 구로 추천 집중 | R-EV-1 문제정의, R-EV-5 실용성 |
 
 ## R-EV-2 AI Agent 구현성 (20)
 
@@ -22,9 +23,9 @@
 |---|---|---|---|
 | Goal 목표이해 (4) | 증거 있음 | `agent/ollama_agent.py:107` `plan_followup_questions` — 입력이 모호하면 추가질문 / `:426` `interpret_weight_feedback` — 자연어 우선순위를 가중치 제안으로 해석(승인 전 미적용) / 위치 Agent가 자연어에서 시설 종류·반경·"가장 가까운" 의도 해석(`agent/location_agent.py`) | 부분 — 추가질문·가중치 확인 화면은 있음, 브라우저 수동 확인 필요 |
 | Planning 계획·분해 (4) | 증거 있음 | `agent/planner.py:147` `call_planner` → `:197` `validate_and_normalize_plan` → `:360` `run_agent_plan` / 위치 계획형 경로 `agent/location_agent.py:638` | 증거 있음 — `app.py:217-277` "AI가 계획한 작업" vs "Python이 실제로 실행한 작업" 구분 표시 |
-| Reasoning 판단·추론 (4) | 증거 있음 | `analysis/candidates.py` `build_candidate_set` — 축별 점수로 성격이 다른 후보(최적·균형·대안) 선택, 데이터 없는 후보 유형은 산출 불가 판정(결정적, 커밋 219a4f2) / `agent/planner_loop.py:265` `run_review_loop` — 결과를 보고 설명/참고 지표 조회/가중치 가정 계산 중 선택 / `agent/agent_loop.py:299` — answer 또는 추가 도구 호출 판단 / MCP 경로에서 Claude가 도구를 직접 선택(`agent/location_mcp_server.py`) | 부분 — 실행 과정 접기 영역에 표시, 실제 AI로 시연 확인 필요 |
+| Reasoning 판단·추론 (4) | 증거 있음 | AI 설명이 Agent가 확정한 후보 역할·Critic 교체·판단 한계를 근거로 범위를 제한해 설명, 역할·범위·미확보 축 단정을 결정적으로 검증(`agent/planner_loop.py` `verify_candidate_claims`, R4 미커밋) / `analysis/candidates.py` `build_candidate_set` — 축별 점수로 성격이 다른 후보(최적·균형·대안) 선택, 데이터 없는 후보 유형은 산출 불가 판정(결정적, 커밋 219a4f2) / `agent/planner_loop.py:265` `run_review_loop` — 결과를 보고 설명/참고 지표 조회/가중치 가정 계산 중 선택 / `agent/agent_loop.py:299` — answer 또는 추가 도구 호출 판단 / MCP 경로에서 Claude가 도구를 직접 선택(`agent/location_mcp_server.py`) | 부분 — 실행 과정 접기 영역에 표시, 실제 AI로 시연 확인 필요 |
 | Tool Use (4) | 증거 있음 | 공공데이터 CSV 기반 도구: `planner.py:62-89` (지표 확인·조회·점수 계산), `services/bus_stops.py:231,343`, `services/convenience.py:202,299`, MCP 도구 3개(`location_mcp_server.py:165-179`) / 도구 호출 수 제한 `MAX_AGENT_TOOL_CALLS=6` | 증거 있음 — 실행 로그 표시 |
-| Memory·Feedback (4) | 증거 있음 | Critic: 근소차·단일 축 의존·지배 관계·쏠림·데이터 커버리지 점검, 지배된 1차 대안을 스스로 교체·기록(`analysis/candidates.py`, 커밋 219a4f2) / Memory: `agent/agent_state.py:35` `ConversationMemory`(같은 위치 최근 대화 → 후속 질문 맥락), 승인 상태 `st.session_state` / Feedback: `agent_loop.py:237` `verify_answer` → 재작성 요청 → 실패 시 `python_summary`(`:272`), `planner_loop.py:179,200` 동일 구조, 자연어·슬라이더 가중치 피드백 재계산 | 부분 — 위치 화면 후속 질문 기억은 위치 화면 안에서만. 구 비교 결과가 위치 화면으로 이어지지 않음(공백 3) |
+| Memory·Feedback (4) | 증거 있음 | 방향성 피드백 → 규칙 기반 가중치 제안 → 승인 → 단일 재평가 경로 → `feedback_history`(대상 축·방향·이전/변경 가중치·승인 여부·후보 변화) (`analysis/feedback.py`, `app.py` `_apply_feedback`, R2 미커밋) / Critic: 근소차·단일 축 의존·지배 관계·쏠림·데이터 커버리지 점검, 지배된 1차 대안을 스스로 교체·기록(`analysis/candidates.py`, 커밋 219a4f2) / Memory: `agent/agent_state.py:35` `ConversationMemory`(같은 위치 최근 대화 → 후속 질문 맥락), 승인 상태 `st.session_state` / Feedback: `agent_loop.py:237` `verify_answer` → 재작성 요청 → 실패 시 `python_summary`(`:272`), `planner_loop.py:179,200` 동일 구조, 자연어·슬라이더 가중치 피드백 재계산 | 부분 — 위치 화면 후속 질문 기억은 위치 화면 안에서만. 구 비교 결과가 위치 화면으로 이어지지 않음(공백 3) |
 
 R-AG-2(6요소 중 4개 이상): 코드 기준 6개 모두 IMPLEMENTED. 단 "시연에서 보이는가"는 브라우저·실제 AI 확인 전까지 부분.
 
@@ -65,7 +66,7 @@ R-AG-2(6요소 중 4개 이상): 코드 기준 6개 모두 IMPLEMENTED. 단 "시
 |---|---|---|
 | 데이터·저작권 (3) | 부분 | 출처·기준일 화면 표시(`app.py:114-157`), `README.md` 데이터 표 / 데이터 이용약관·라이선스 정리 없음, 출처·AI 활용 신고서 없음 |
 | 개인정보·보안 (3) | 부분 | `.env` gitignore·커밋 차단(`.claude/settings.json`), 개인정보 미수집 구조, LLM 호출·입력 길이 제한(`agent/llm.py`, `docs/deploy_readiness.md`) / 악의적 입력 테스트 기록 없음 |
-| AI 오류·편향·안전 (4) | 증거 있음 | AI 숫자 검증 후 실패 시 Python 요약, 승인 전 미적용, 좌표·반경 Python 소유, 미지원 반경 거절, 미확보 데이터 표시, 직선거리 명시(`pages/user.py:76`) |
+| AI 오류·편향·안전 (4) | 증거 있음 | 설명은 Python 기본 설명이 기준이고 AI는 다듬기만, 새 숫자·사실·누락이 있으면 기본 설명으로 대체 - AI가 틀려도 결과 품질 불변(R6 미커밋) / AI 설명의 강점·약점·대소관계·숫자 귀속을 Python 확정 사실(explanation_facts)로 검증, 실제 Ollama 의미 오류 3유형을 회귀 테스트로 고정, 실패 시 결정적 요약(R5 미커밋) / AI 숫자 검증 후 실패 시 Python 요약, 승인 전 미적용, 좌표·반경 Python 소유, 미지원 반경 거절, 미확보 데이터 표시, 직선거리 명시(`pages/user.py:76`) |
 
 ## R-EV-7 비즈니스 모델 (10)
 

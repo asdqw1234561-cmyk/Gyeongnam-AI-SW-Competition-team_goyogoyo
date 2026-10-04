@@ -5,8 +5,9 @@ import streamlit as st
 from agent import llm
 from agent.ollama_agent import interpret_weight_feedback, plan_followup_questions
 from agent.planner import TOOL_LABELS, run_agent_plan
-from agent.planner_loop import REVIEW_TOOL_LABELS
-from analysis import scoring
+from agent.planner import OLLAMA_MODEL as PLANNER_MODEL
+from agent.planner_loop import REVIEW_TOOL_LABELS, explain_candidates
+from analysis import feedback, scoring
 from analysis.candidates import build_candidate_set
 from services.region_data import get_all_changwon_regions, is_supported_region
 
@@ -381,21 +382,38 @@ def _render_review_steps(log: dict) -> None:
             st.caption(f"  → {step['note']}")
 
 
+def _render_final_answer(final: dict, heading: str) -> None:
+    """검증을 통과한 AI 설명 또는 Python 요약. 최초 추천과 피드백 재평가가 같은 표시 방식을 쓴다."""
+    st.markdown(heading)
+    if final["source"] == "ai_paraphrase":
+        st.success("Python이 확정 사실로 만든 설명을 AI가 자연스럽게 다듬은 문장입니다 · "
+                   "새로운 사실·숫자·후보 역할이 추가되지 않았는지 검증했습니다")
+        st.write(final["text"])
+        with st.expander("Python 기본 설명(검증 기준) 보기"):
+            st.markdown(final["deterministic_text"])
+        return
+    if final["source"] == "deterministic":
+        reason = f" (AI 다듬기를 쓰지 않은 이유: {final['rejected_reason']})" if final.get("rejected_reason") else ""
+        st.info(f"📋 Python이 확정 사실(후보 역할·강점·약점·평가축·한계)로 작성한 설명입니다{reason}")
+        st.markdown(final["text"])
+        return
+    if final["source"] == "ai_verified":
+        st.success("AI가 계산 결과와 Agent가 확정한 후보·Critic 결과를 보고 작성한 설명입니다 · "
+                   "설명 속 숫자와 후보 역할을 실제 결과와 대조해 검증했습니다")
+        st.write(final["text"])
+    else:
+        reason = f" (AI 설명을 쓰지 않은 이유: {final['rejected_reason']})" if final.get("rejected_reason") else ""
+        st.info(f"📋 계산 결과 요약 · Python이 실제 계산 결과로 작성했습니다{reason}")
+        st.text(final["text"])
+
+
 def render_ai_recommendation_explanation() -> None:
     """AI가 점수 계산 결과를 보고 작성한 설명(숫자 검증 통과분)과 가중치 가정 시뮬레이션 결과.
     실제 추천 순위는 위의 결과(승인된 가중치) 그대로이며, 여기 내용은 참고 정보다."""
     log = st.session_state.get("agent_execution_log")
     if not log or not log.get("final_answer"):
         return
-    final = log["final_answer"]
-    st.markdown("### 🤖 AI의 추천 결과 설명")
-    if final["source"] == "ai_verified":
-        st.success("AI가 계산 결과를 직접 확인하고 작성한 설명입니다 · 설명 속 숫자를 실제 결과와 대조해 검증했습니다")
-        st.write(final["text"])
-    else:
-        reason = f" (AI 설명을 쓰지 않은 이유: {final['rejected_reason']})" if final.get("rejected_reason") else ""
-        st.info(f"📋 계산 결과 요약 · Python이 실제 계산 결과로 작성했습니다{reason}")
-        st.text(final["text"])
+    _render_final_answer(log["final_answer"], "### 🤖 AI의 추천 결과 설명")
 
     for sim in log.get("what_if_results") or []:
         weights = ", ".join(f"{FEEDBACK_INDICATOR_LABELS.get(c, c)} {v}%" for c, v in sim["weights_percent"].items())
@@ -579,35 +597,168 @@ def render_recommendation_section() -> None:
         st.caption(f"· {c}")
 
 
-def _reset_feedback_weights() -> None:
-    """'초기 조건으로 되돌리기' 버튼의 on_click 콜백. 슬라이더를 최초 추천 가중치로
-    되돌리고 피드백 결과를 지운다(다음 rerun에서 '변경 전후 비교'가 사라진다)."""
+def _current_applied_result() -> dict | None:
+    """지금 실제로 적용 중인 결과(승인된 피드백 결과가 있으면 그것, 없으면 최초 추천)."""
+    return st.session_state.feedback_recommendation or st.session_state.initial_recommendation
+
+
+def _review_of(result: dict | None) -> dict:
+    return build_candidate_set(result or {}, _unscored_inputs(st.session_state.initial_input))
+
+
+def _sync_sliders(weights: dict[str, float]) -> None:
+    """위젯 값은 on_click 콜백 안에서만 바꿀 수 있으므로 콜백에서만 호출한다."""
+    for code, key in FEEDBACK_SLIDER_KEYS.items():
+        st.session_state[key] = min(100, max(0, round(weights.get(code, 0.0))))
+
+
+def _clear_nl_proposal() -> None:
+    st.session_state.nl_feedback_proposal = None
+    st.session_state.nl_feedback_proposal_text = None
+
+
+def _apply_feedback(weights: dict[str, float], *, source: str, text: str | None = None,
+                    adjustments: list[dict] | None = None) -> None:
+    """
+    모든 피드백(슬라이더 '다시 비교하기', 숫자 자연어, 방향성 자연어)이 공유하는 유일한 적용 경로.
+    analysis.feedback.reevaluate()로 점수 → 후보·Critic을 다시 계산하고, 이전·이후 가중치와
+    후보 변화를 feedback_history(Memory)에 승인된 기록으로 남긴다.
+    """
+    before_result = _current_applied_result()
+    candidate_count = st.session_state.initial_input.get("원하는 후보 개수") or 3
+    outcome = feedback.reevaluate(weights, candidate_count, _unscored_inputs(st.session_state.initial_input))
+    st.session_state.feedback_recommendation = outcome["score_result"]
+    st.session_state.feedback_explanation = None
+    if outcome["score_result"].get("status") == "ok":
+        # 재평가로 바뀐 후보·Critic 결과를 AI가 설명(검증 실패·AI 불가 시 Python 요약)
+        st.session_state.feedback_explanation = explain_candidates(
+            score_result=outcome["score_result"], candidate_review=outcome["candidate_review"],
+            selected_conditions=st.session_state.initial_input.get("중요 생활조건") or [], model=PLANNER_MODEL,
+        )
+        st.session_state.feedback_history.append(feedback.history_entry(
+            source=source, text=text, adjustments=adjustments,
+            before_weights=feedback.weights_from_result(before_result),
+            after_weights=feedback.weights_from_result(outcome["score_result"]), approved=True,
+            before_result=before_result, after_result=outcome["score_result"],
+            before_review=_review_of(before_result), after_review=outcome["candidate_review"],
+        ))
+
+
+def _reset_feedback_weights(text: str | None = None) -> None:
+    """'초기 조건으로 되돌리기' 버튼 / 자연어 '원래대로' 승인의 on_click 콜백. 슬라이더를 최초 추천
+    가중치로 되돌리고 피드백 결과를 지운다(다음 rerun에서 '변경 전후 비교'가 사라진다).
+    되돌린 사실과 후보 변화는 feedback_history에 남긴다."""
+    before_result = _current_applied_result()
+    initial_result = st.session_state.initial_recommendation
     initial_weights = st.session_state.feedback_initial_weights
     for code, key in FEEDBACK_SLIDER_KEYS.items():
         st.session_state[key] = initial_weights.get(code, 0.0)
+    if st.session_state.feedback_recommendation is not None:
+        st.session_state.feedback_history.append(feedback.history_entry(
+            source="reset", text=text,
+            before_weights=feedback.weights_from_result(before_result),
+            after_weights=feedback.weights_from_result(initial_result), approved=True,
+            before_result=before_result, after_result=initial_result,
+            before_review=_review_of(before_result), after_review=_review_of(initial_result),
+        ))
     st.session_state.feedback_recommendation = None
+    st.session_state.feedback_explanation = None
+    _clear_nl_proposal()
 
 
-def _approve_nl_feedback_weights(weights: dict[str, float]) -> None:
+def _approve_nl_feedback_weights(weights: dict[str, float], source: str = "nl_weights",
+                                 adjustments: list[dict] | None = None) -> None:
     """
-    AI가 해석한 가중치를 사용자가 승인했을 때의 on_click 콜백. 슬라이더 값도 맞춰
-    바꾸고, 실제 재계산은 기존 compute_region_scores_from_weights()로 수행한다
-    (AI는 가중치를 "제안"만 했을 뿐 이 계산에 관여하지 않는다). 위젯 session_state
-    는 on_click 콜백 안에서만 안전하게 수정할 수 있어 여기서 처리한다.
+    AI가 해석한(숫자) 또는 Python이 규칙으로 계산한(방향성) 가중치를 사용자가 승인했을 때의
+    on_click 콜백. 슬라이더를 맞추고 _apply_feedback() 한 경로로 재평가한다(AI는 이 계산에
+    관여하지 않는다).
     """
-    for code, key in FEEDBACK_SLIDER_KEYS.items():
-        st.session_state[key] = min(100.0, max(0.0, weights.get(code, 0.0)))
-    candidate_count = st.session_state.initial_input.get("원하는 후보 개수") or 3
-    st.session_state.feedback_recommendation = scoring.compute_region_scores_from_weights(
-        weights, candidate_count
+    text = st.session_state.get("nl_feedback_proposal_text")
+    _sync_sliders(weights)
+    _apply_feedback(weights, source=source, text=text, adjustments=adjustments)
+    _clear_nl_proposal()
+
+
+def _reject_nl_feedback_proposal(weights: dict[str, float] | None = None, source: str = "nl_weights",
+                                 adjustments: list[dict] | None = None) -> None:
+    """무시한 제안도 approved=False로 기록한다(후보 변화 없음)."""
+    if weights:
+        st.session_state.feedback_history.append(feedback.history_entry(
+            source=source, text=st.session_state.get("nl_feedback_proposal_text"), adjustments=adjustments,
+            before_weights=feedback.weights_from_result(_current_applied_result()),
+            after_weights=weights, approved=False,
+        ))
+    _clear_nl_proposal()
+
+
+def _render_direction_proposal(proposal: dict) -> None:
+    """
+    방향성 피드백("의료를 더 중요하게")의 승인 대기 화면. AI는 축·방향·강도 표현만 추출했고,
+    바뀔 가중치는 analysis.feedback.adjust_weights()가 현재 적용 중인 가중치에서 규칙으로 계산한다.
+    """
+    current = feedback.weights_from_result(_current_applied_result())
+    plan = feedback.adjust_weights(current, proposal["adjustments"])
+    targets = ", ".join(
+        f"{a['axis']} {feedback.DIRECTION_LABELS[a['direction']]}"
+        + (f"({feedback.STRENGTH_LABELS[a['strength']]})" if a.get("strength_explicit") else "")
+        for a in proposal["adjustments"]
     )
-    st.session_state.nl_feedback_proposal = None
-    st.session_state.nl_feedback_proposal_text = None
+    st.markdown(f"**AI가 읽은 요청:** {targets}")
+    if plan["status"] == "no_change":
+        st.info(f"ℹ️ {plan['message']}")
+        return
+    st.warning("⏳ **승인 대기 중인 제안** — 아직 적용되지 않았습니다. 아래에서 승인해야 반영됩니다.")
+    st.dataframe(pd.DataFrame([
+        {"지표": FEEDBACK_INDICATOR_LABELS[c], "현재 가중치": f"{plan['before'][c]:.1f}%",
+         "변경될 가중치": f"{plan['after'][c]:.1f}%",
+         "변화": f"{plan['after'][c] - plan['before'][c]:+.1f}%p"}
+        for c in FEEDBACK_SLIDER_KEYS
+    ]), hide_index=True, width="stretch")
+    st.caption(
+        "변경될 가중치는 AI가 아니라 Python 규칙으로 계산했습니다: "
+        + " / ".join(f"{s['axis']} {s['rule']}" + (f" ({s['note']})" if s["note"] else "") for s in plan["steps"])
+        + ". 강도 표현이 없으면 ×1.5, '조금'은 ×1.25, '많이·훨씬'은 ×2.0이며 같은 강도로 높였다 낮추면 원래 값으로 돌아옵니다."
+    )
+    col_approve, col_reject = st.columns(2)
+    with col_approve:
+        st.button("✅ 이 가중치로 다시 평가하기", type="primary", width="stretch",
+                  on_click=_approve_nl_feedback_weights, args=(plan["after"], "nl_direction", plan["steps"]))
+    with col_reject:
+        st.button("❌ 무시하기", width="stretch", on_click=_reject_nl_feedback_proposal,
+                  args=(plan["after"], "nl_direction", plan["steps"]))
 
 
-def _reject_nl_feedback_proposal() -> None:
-    st.session_state.nl_feedback_proposal = None
-    st.session_state.nl_feedback_proposal_text = None
+FEEDBACK_SOURCE_LABELS = {"slider": "슬라이더", "nl_weights": "자연어(숫자)",
+                          "nl_direction": "자연어(방향)", "reset": "되돌리기"}
+
+
+def _render_feedback_history() -> None:
+    """feedback_history(Memory): 승인·무시한 피드백과 그로 인한 후보 변화."""
+    history = st.session_state.feedback_history
+    if not history:
+        return
+
+    def fmt(weights):
+        return ", ".join(f"{FEEDBACK_INDICATOR_LABELS[c].split(' ')[0]} {v:.0f}%" for c, v in weights.items() if v > 0)
+
+    rows = []
+    for i, h in enumerate(history, 1):
+        changes = [f"{c['role_label']} {c['before'] or '-'}→{c['after'] or '-'}"
+                   for c in h["candidate_changes"] if c["changed"]]
+        rows.append({
+            "#": i,
+            "방식": FEEDBACK_SOURCE_LABELS.get(h["source"], h["source"]),
+            "요청": h["text"] or "-",
+            "대상 축·방향": ", ".join(
+                f"{t['axis']} {feedback.DIRECTION_LABELS[t['direction']]}" for t in h["targets"]) or "-",
+            "이전 가중치": fmt(h["before_weights"]),
+            "변경 가중치": fmt(h["after_weights"]),
+            "승인": "승인" if h["approved"] else "무시",
+            "1위": f"{h['top_before']}→{h['top_after']}" if h["approved"] else "-",
+            "후보 변화": ", ".join(changes) or ("변화 없음" if h["approved"] else "-"),
+        })
+    with st.expander(f"🧠 피드백 기록 ({len(history)}건) — 이번 세션에서 기억 중", expanded=False):
+        st.dataframe(pd.DataFrame(rows), hide_index=True, width="stretch")
 
 
 def _render_nl_feedback_proposal(proposal: dict) -> None:
@@ -632,6 +783,14 @@ def _render_nl_feedback_proposal(proposal: dict) -> None:
         return
     if proposal["type"] == "ask_clarification":
         st.info(f"🤔 {proposal['message']}")
+        return
+    if proposal["type"] == "adjust_direction":
+        _render_direction_proposal(proposal)
+        return
+    if proposal["type"] == "reset":
+        st.warning("⏳ **승인 대기 중인 제안** — 최초 추천 가중치로 되돌립니다.")
+        st.button("✅ 최초 추천 기준으로 되돌리기", type="primary",
+                  on_click=_reset_feedback_weights, args=(st.session_state.get("nl_feedback_proposal_text"),))
         return
 
     # type == "set_weights"
@@ -664,7 +823,7 @@ def _render_nl_feedback_proposal(proposal: dict) -> None:
             args=(weights,),
         )
     with col_reject:
-        st.button("❌ 무시하기", width="stretch", on_click=_reject_nl_feedback_proposal)
+        st.button("❌ 무시하기", width="stretch", on_click=_reject_nl_feedback_proposal, args=(weights,))
 
 
 def _current_applied_weights_label() -> str:
@@ -726,18 +885,16 @@ def render_feedback_section() -> None:
         recompute_clicked = st.button("다시 비교하기", type="primary", width="stretch")
     with col_reset:
         st.button(
-            "초기 조건으로 되돌리기", on_click=_reset_feedback_weights, width="stretch"
+            "초기 조건으로 되돌리기", on_click=_reset_feedback_weights, args=(None,), width="stretch"
         )
 
     if recompute_clicked:
-        candidate_count = st.session_state.initial_input.get("원하는 후보 개수") or 3
-        st.session_state.feedback_recommendation = scoring.compute_region_scores_from_weights(
-            current_weights, candidate_count
-        )
+        _apply_feedback(current_weights, source="slider")
 
     st.markdown("**② 자연어로 요청 (AI 해석)**")
     st.caption(
-        f"예: '의료 80%, 교통 20%로 비교해줘'. 버튼을 누를 때만 AI({llm.backend_label()})를 "
+        f"예: '의료 80%, 교통 20%로 비교해줘', '병원을 더 중요하게', '교통은 조금 덜 중요하게'. "
+        f"버튼을 누를 때만 AI({llm.backend_label()})를 "
         "호출하며, AI는 요청을 가중치 '제안'으로 해석만 할 뿐 점수는 계산하지 않습니다 - "
         "실제 재계산은 아래에서 승인해야 적용됩니다."
     )
@@ -764,6 +921,8 @@ def render_feedback_section() -> None:
 
     if st.session_state.nl_feedback_proposal is not None:
         _render_nl_feedback_proposal(st.session_state.nl_feedback_proposal)
+
+    _render_feedback_history()
 
     feedback_result = st.session_state.feedback_recommendation
     if feedback_result is None:
@@ -860,6 +1019,9 @@ def render_feedback_section() -> None:
         build_candidate_set(feedback_result, _unscored_inputs(st.session_state.initial_input)),
         heading="🧭 피드백 기준 정착 후보군 — 다시 평가한 결과",
     )
+    explanation = st.session_state.get("feedback_explanation")
+    if explanation and explanation.get("final_answer"):
+        _render_final_answer(explanation["final_answer"], "### 🤖 AI의 재평가 결과 설명")
     _render_top_candidates(feedback_result, heading="현재 적용 중인 피드백 기준 추천 후보지역")
 
 
@@ -886,6 +1048,10 @@ if "nl_feedback_proposal" not in st.session_state:
     st.session_state.nl_feedback_proposal = None
 if "nl_feedback_proposal_text" not in st.session_state:
     st.session_state.nl_feedback_proposal_text = None
+if "feedback_explanation" not in st.session_state:
+    st.session_state.feedback_explanation = None  # 피드백 재평가 뒤 explain_candidates() 결과
+if "feedback_history" not in st.session_state:
+    st.session_state.feedback_history = []  # 승인·무시한 피드백 기록(analysis.feedback.history_entry)
 if "weight_question_plan" not in st.session_state:
     st.session_state.weight_question_plan = None
 if "weight_interpretation" not in st.session_state:
@@ -922,6 +1088,8 @@ def reset_all():
     st.session_state.feedback_recommendation = None
     st.session_state.nl_feedback_proposal = None
     st.session_state.nl_feedback_proposal_text = None
+    st.session_state.feedback_history = []
+    st.session_state.feedback_explanation = None
     st.session_state.weight_question_plan = None
     st.session_state.weight_interpretation = None
     st.session_state.weight_interpretation_source = None
@@ -964,6 +1132,8 @@ def _finalize_initial_recommendation(confirmed_weights: dict[str, float] | None 
     st.session_state.feedback_recommendation = None
     st.session_state.nl_feedback_proposal = None
     st.session_state.nl_feedback_proposal_text = None
+    st.session_state.feedback_history = []
+    st.session_state.feedback_explanation = None
     for code, key in FEEDBACK_SLIDER_KEYS.items():
         st.session_state[key] = st.session_state.feedback_initial_weights.get(code, 0.0)
 

@@ -234,7 +234,8 @@ def build_candidate_set(score_result: dict, unscored_inputs: list[str] | None = 
     if len(rows) >= 2:
         gap = rows[0]["total_score"] - rows[1]["total_score"]
         if gap < CLOSE_GAP_POINTS:
-            checks.append({"code": "close_gap", "level": "warning", "message": (
+            checks.append({"code": "close_gap", "level": "warning",
+                           "facts": {"first": rows[0]["region_name"], "second": rows[1]["region_name"]}, "message": (
                 f"1위 {rows[0]['region_name']}와 2위 {rows[1]['region_name']}의 종합점수 차이가 {gap:.1f}점으로 "
                 f"{CLOSE_GAP_POINTS:g}점 미만입니다. 가중치를 조금만 바꿔도 순위가 바뀔 수 있습니다.")})
 
@@ -243,14 +244,17 @@ def build_candidate_set(score_result: dict, unscored_inputs: list[str] | None = 
         top_code = max(contrib, key=contrib.get)
         share = contrib[top_code] / best["total_score"]
         if share >= SINGLE_AXIS_SHARE:
-            checks.append({"code": "single_axis", "level": "warning", "message": (
+            checks.append({"code": "single_axis", "level": "warning",
+                           "facts": {"region": best["region_name"], "axis": AXIS_BY_CODE[top_code]}, "message": (
                 f"최적 후보 {best['region_name']}의 종합점수 {best['total_score']:.1f}점 중 {share * 100:.0f}%가 "
                 f"{AXIS_BY_CODE[top_code]} 한 축에서 나옵니다. 다른 축이 중요하다면 균형·대안 후보를 함께 보세요.")})
 
     for r in roles:
         if r.get("revised_from"):
             first = r["revised_from"]
-            checks.append({"code": "revised", "level": "info", "message": (
+            checks.append({"code": "revised", "level": "info",
+                           "facts": {"role": r["role_label"], "from": first["region_name"], "to": r["region_name"],
+                                     "dominated_by": first["dominated_by"]}, "message": (
                 f"Critic 수정: 처음 고른 {r['role_label']} 후보 {first['region_name']}는 "
                 f"{', '.join(first['dominated_by'])}보다 평가에 쓴 모든 축에서 낮거나 같아 "
                 f"{r['region_name']}(으)로 바꿨습니다.")})
@@ -261,16 +265,20 @@ def build_candidate_set(score_result: dict, unscored_inputs: list[str] | None = 
             doms = _dominators(rid, normalized, used_codes)
             if doms:
                 names = ", ".join(row_by_id[d]["region_name"] for d in doms)
-                checks.append({"code": "dominated", "level": "warning", "message": (
+                checks.append({"code": "dominated", "level": "warning",
+                               "facts": {"region": row_by_id[rid]["region_name"],
+                                         "dominated_by": [row_by_id[d]["region_name"] for d in doms]}, "message": (
                     f"{row_by_id[rid]['region_name']}는 {names}보다 평가에 쓴 모든 축에서 낮거나 같습니다.")})
 
     ok_roles = [r for r in roles if r["status"] == "ok"]
     if len(ok_roles) >= 2 and len({r["region_id"] for r in ok_roles}) == 1:
-        checks.append({"code": "concentration", "level": "warning", "message": (
+        checks.append({"code": "concentration", "level": "warning",
+                       "facts": {"region": ok_roles[0]["region_name"], "roles": [r["role_label"] for r in ok_roles]},
+                       "message": (
             f"산출된 후보 역할({', '.join(r['role_label'] for r in ok_roles)})이 모두 "
             f"{ok_roles[0]['region_name']} 한 곳으로 몰렸습니다. 서로 다른 성격의 후보를 비교하기 어렵습니다.")})
 
-    checks.append({"code": "granularity", "level": "info", "message": GRANULARITY_NOTE})
+    checks.append({"code": "granularity", "level": "info", "facts": {}, "message": GRANULARITY_NOTE})
 
     missing_axes = [a["axis"] for a in axes if a["status"] == AXIS_STATUS_MISSING]
     coverage_msg = (
@@ -280,15 +288,17 @@ def build_candidate_set(score_result: dict, unscored_inputs: list[str] | None = 
     not_reflected = list(unscored_inputs or []) + [
         e["condition"] for e in score_result.get("excluded_conditions", []) if e.get("condition")
     ]
+    coverage_facts = {"used_axes": [AXIS_BY_CODE[c] for c in used_codes], "missing_axes": missing_axes,
+                      "not_reflected": list(dict.fromkeys(not_reflected))}
     if not_reflected:
-        checks.append({"code": "coverage", "level": "warning", "message": (
+        checks.append({"code": "coverage", "level": "warning", "facts": coverage_facts, "message": (
             coverage_msg + f" 입력하셨지만 반영하지 못한 조건: {', '.join(dict.fromkeys(not_reflected))}.")})
     else:
-        checks.append({"code": "coverage", "level": "info", "message": coverage_msg})
+        checks.append({"code": "coverage", "level": "info", "facts": coverage_facts, "message": coverage_msg})
 
     tied_names = [r["region_name"] for r in rows if r.get("tied")]
     if tied_names:
-        checks.append({"code": "ties", "level": "info",
+        checks.append({"code": "ties", "level": "info", "facts": {"regions": tied_names},
                        "message": f"종합점수가 같은 구가 있습니다: {', '.join(tied_names)}."})
 
     return {

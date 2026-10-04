@@ -49,16 +49,30 @@ class PlannerLoopTest(unittest.TestCase):
         cls.top = rows[0]
         cls.second = rows[1]
 
+    def _base_text(self):
+        """이 실행의 Python 기본 설명(LLM 없이)."""
+        return planner_loop.explain_from_facts(score_result=self.base["score_result"],
+                                               candidate_review=self.base["candidate_review"], model="m",
+                                               use_llm=False)["final_answer"]["text"]
+
+    def _good_paraphrase(self):
+        return {"answer": self._base_text().replace("Agent가 고른 정착 후보입니다.", "Agent가 추천하는 정착 후보입니다.")}
+
     def _good_answer(self):
         bus = int(self.top["components"]["bus_stop_count"]["raw_value"])
-        return (f"{self.top['region_name']}가 {self.top['total_score']}점으로 1위입니다. 버스정류장이 {bus}개로 가장 많고, "
+        return (f"현재 확보된 교통·생활편의 기준에서 {self.top['region_name']}가 {self.top['total_score']}점으로 1위입니다. "
+                f"버스정류장이 {bus}개로 가장 많고, "
                 f"교통 가중치가 60%로 높게 반영되었습니다. 이 점수는 시설 수 기반 상대 비교일 뿐 실제 거주 적합도를 확정하지 않습니다.")
 
     def test_verified_explanation(self):
-        result, m = _run([PLAN, {"action": "answer", "answer": self._good_answer()}])
-        self.assertEqual(m.call_count, 2)
-        self.assertEqual(result["final_answer"]["source"], "ai_verified")
-        self.assertEqual([s["action"] for s in result["agent_steps"]], ["answer"])
+        """리뷰어는 추가 도구 없음(answer)만 판단하고, 설명은 기본 설명을 AI가 다듬은 문장(검증 통과)."""
+        good = self._good_paraphrase()
+        result, m = _run([PLAN, {"action": "answer", "answer": ""}, good])
+        self.assertEqual(m.call_count, 3)
+        self.assertEqual(result["final_answer"]["source"], "ai_paraphrase")
+        self.assertEqual(result["final_answer"]["text"], good["answer"])
+        self.assertEqual(result["final_answer"]["deterministic_text"], self._base_text())
+        self.assertEqual([s["action"] for s in result["agent_steps"]], ["answer", "deterministic", "paraphrase"])
 
     def test_score_result_never_changes(self):
         result, _ = _run([
@@ -75,23 +89,23 @@ class PlannerLoopTest(unittest.TestCase):
         self.assertEqual(len(sim["ranking"]), 5)
 
     def test_extra_indicator_lookup_and_answer_using_it(self):
+        good = self._good_paraphrase()
+
         def fake(**kwargs):
-            content = kwargs["messages"][-1]["content"]
             n = fake.calls = getattr(fake, "calls", 0) + 1
             if n == 1:
                 return _resp(PLAN)
             if n == 2:
                 return _resp({"action": "call_tools", "reason": "의료 참고",
                               "tool_calls": [{"tool": "get_region_indicators", "indicator_codes": ["hospital_count"]}]})
-            obs = json.loads(content.split("[관찰 내용]\n", 1)[1].split("\n\n", 1)[0])
-            name, value = next(iter(obs["extra_indicators"]["hospital_count"]["values"].items()))
-            return _resp({"action": "answer", "answer": f"참고로 {name}의 병원은 {int(value)}개입니다. "
-                                                      "점수는 시설 수 기반 상대 비교일 뿐입니다."})
+            if n == 3:
+                return _resp({"action": "answer", "answer": ""})
+            return _resp(good)
         with mock.patch.dict(os.environ, {"LLM_BACKEND": "ollama"}), mock.patch("ollama.chat", side_effect=fake):
             result = planner.run_agent_plan(CONDITIONS, WEIGHTS, "창원시", 3)
         self.assertIn("hospital_count", result["extra_indicators"])
         self.assertEqual(result["review_tool_calls"][0]["step"], 2)
-        self.assertEqual(result["final_answer"]["source"], "ai_verified")
+        self.assertEqual(result["final_answer"]["source"], "ai_paraphrase")
 
     def test_unavailable_or_disallowed_tools_ignored(self):
         result, _ = _run([
@@ -118,34 +132,34 @@ class PlannerLoopTest(unittest.TestCase):
         self.assertEqual(len(result["what_if_results"]), planner_loop.MAX_WHAT_IF)
 
     def test_fabricated_score_rejected_then_corrected(self):
-        result, m = _run([
-            PLAN,
-            {"action": "answer", "answer": f"{self.top['region_name']}가 99.9점으로 1위입니다."},
-            {"action": "answer", "answer": self._good_answer()},
-        ])
-        self.assertEqual(m.call_count, 3)
-        self.assertEqual(result["final_answer"]["source"], "ai_verified")
-        self.assertIn("검증 실패", result["agent_steps"][0]["note"])
+        """다듬은 문장에 없는 숫자가 있으면 재시도 없이 기본 설명을 쓴다."""
+        bad = {"answer": self._base_text().replace(f"{self.top['total_score']}점", "99.9점")}
+        result, m = _run([PLAN, {"action": "answer", "answer": ""}, bad])
+        self.assertEqual(m.call_count, 3)  # 다듬기 1회뿐
+        self.assertEqual(result["final_answer"]["source"], "deterministic")
+        self.assertEqual(result["final_answer"]["text"], self._base_text())
+        self.assertIn("99.9", result["final_answer"]["rejected_reason"])
 
     def test_persistent_bad_answer_uses_python_summary(self):
-        bad = {"action": "answer", "answer": "1위는 2위보다 2배 좋습니다."}
-        result, _ = _run([PLAN, bad, bad, bad])
-        self.assertEqual(result["final_answer"]["source"], "python_summary")
+        bad = {"answer": "1위는 2위보다 2배 좋습니다."}
+        result, m = _run([PLAN, {"action": "answer", "answer": ""}, bad])
+        self.assertEqual(m.call_count, 3)
+        self.assertEqual(result["final_answer"]["source"], "deterministic")
         self.assertIn(self.top["region_name"], result["final_answer"]["text"])
         self.assertIn("상대 비교", result["final_answer"]["text"])
 
     def test_reviewer_failure(self):
         self.assertIsNotNone(self.base["review_error"])
-        self.assertEqual(self.base["final_answer"]["source"], "python_summary")
+        self.assertEqual(self.base["final_answer"]["source"], "deterministic")
         self.assertEqual(self.base["mode"], "ai_planned")
 
     def test_fallback_mode_skips_review(self):
-        result, m = _run([ConnectionError("down")])
-        self.assertEqual(m.call_count, 1)
+        """AI 계획이 실패해 결과 검토를 건너뛰어도 같은 경로로 기본 설명을 만든다(AI 다듬기도 실패 -> 기본 설명)."""
+        result, m = _run([ConnectionError("down"), ConnectionError("down")])
+        self.assertEqual(m.call_count, 2)
         self.assertEqual(result["mode"], "fallback_default")
-        self.assertIsNone(result["final_answer"])
-        self.assertEqual(result["agent_steps"], [])
-
+        self.assertEqual(result["final_answer"]["source"], "deterministic")
+        self.assertEqual([s["action"] for s in result["agent_steps"]], ["deterministic", "error"])
 
 class PlannerVerifyTest(unittest.TestCase):
     OBS = {

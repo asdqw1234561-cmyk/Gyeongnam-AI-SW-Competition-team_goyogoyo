@@ -18,6 +18,10 @@
 | F4 | 위치 기반 주변 시설 탐색(300m/500m/1km 직선거리, 버스정류장·편의점, 지도 클릭 승인) | `pages/user.py`, `services/bus_stops.py`, `services/convenience.py` | 동작 |
 | F5 | 위치 AI Agent: MCP 반복형(claude_cli) / 계획형+검토 루프(ollama) / 기본 절차 폴백, 답변 숫자 검증, 같은 위치 대화 기억 | `agent/location_agent.py`, `agent/location_mcp_server.py`, `agent/agent_loop.py`, `agent/agent_state.py` | 동작 |
 | F7 | 정착 후보군 + Critic: 최적·균형·대안(가성비는 주거비 미확보로 산출 불가), 6개 평가축 상태, Critic 점검·지배된 대안 수정 — 최초·피드백 결과 모두 | `analysis/candidates.py`, `agent/planner.py`(`candidate_review`), `app.py` `_render_candidate_set` | 동작(단위·AppTest), 실제 Ollama·브라우저 미확인 |
+| F8 | 방향성 피드백("의료를 더 중요하게") → LLM은 축·방향·강도 표현만 추출 → Python 규칙(×1.5/×1.25/×2.0 후 재정규화)으로 변경안 계산 → 승인 → 단일 재평가 경로(점수 → 후보·Critic) → `feedback_history`(Memory) 기록. 슬라이더·숫자 자연어·되돌리기도 같은 경로 | `analysis/feedback.py`, `agent/ollama_agent.py`, `app.py` `_apply_feedback` | 동작(단위·AppTest·실제 Ollama 8문장), 브라우저 미확인, **미커밋** |
+| F9 | 후보군·Critic을 AI 설명에 연결: 관찰 내용에 확정된 후보 역할·Critic 교체·한 축 의존·평가축 수·미확보 축·반영 못 한 조건·판단 한계 추가, 판단 범위 표시·과장·미확보 축 단정·역할 불일치를 결정적으로 거부, 피드백 재평가 뒤에도 같은 검증으로 설명(`explain_candidates`) | `agent/planner_loop.py`, `agent/planner.py`, `app.py` `_render_final_answer`, `analysis/candidates.py`(Critic `facts` 추가만) | 동작(단위·AppTest·실제 Ollama 최초·피드백 각 1회 ai_verified), **미커밋** |
+| F10 | AI 설명은 Python이 확정한 explanation_facts(구별 축 점수·순위·강점/약점/중립, 역할 구 비교 순서, 지배 관계, 6개 중 확보 3개)만 옮기고, 같은 사실로 결정적 검증(강약 뒤집기·최상/최하 표현·두 구 비교·지배 방향·숫자 귀속·역할 구문·미확보 축 강약 표현·N개 중 M개·계산 안 한 가정) | `analysis/explanation_facts.py`, `agent/planner_loop.py` | 동작(단위 456개·실제 Ollama), **미커밋** |
+| F11 | 설명 경로 통일: explanation_facts → Python 기본 설명(항상 사실) → AI 다듬기 1회 → 검증 → 실패 시 기본 설명. 최초 추천(AI 계획 실패 포함)·피드백 재평가 공용 | `agent/planner_loop.py` `explain_from_facts`, `analysis/explanation_facts.py` `render_explanation` | 동작(단위 468개·AppTest·실제 Ollama 4/4), **미커밋** |
 | F6 | 정부용 구별 시설 현황·가상 증감 시뮬레이션 | `pages/government.py`, `analysis/simulation.py` | 동작 (주제 연결은 OPEN-3) |
 
 공통: `agent/llm.py`(백엔드 선택·호출 수·입력 길이 제한), `agent/llm_json.py`(JSON 추출).
@@ -32,7 +36,8 @@
 
 ## 테스트
 
-- 단위 테스트: `python -m unittest discover -s tests` → **377개 통과, skip 1** (2026-10-02 R1 반영 후 확인, 실제 AI 호출 없음)
+- 단위 테스트: `python -m unittest discover -s tests` → **468개 통과, skip 1** (2026-10-03 R6 반영 후 확인, 실제 AI 호출 없음)
+- 실제 Ollama(qwen3.5:4b) 피드백 해석 8문장 확인: 방향 4종·주거비·날씨·원래대로·숫자 비율 모두 기대 type (2026-10-02)
 - AppTest 스모크: 3개 화면 첫 렌더링 + 일부 흐름
 - 브라우저 E2E 자동 확인: 없음 (backlog N4)
 - 제출용 대표 Test Case 5건 기록: 없음
@@ -63,7 +68,84 @@
 선택(STEP 6): G1+G2를 하나의 결정적 모듈로 묶어 먼저 구현한다 — 새 점수식 없이 기존 `score_result`의 축별 정규화 점수만으로 후보 역할 부여와 Critic 점검을 수행한다. G3는 다음 후보.
 
 **진행 (2026-10-02, backlog R1):** G1·G2 구현 완료(F7, 커밋 219a4f2). 흐름은 이제 Goal → Planning → Tool Use → 평가(scoring) → **후보 생성 → Critic(점검·대안 수정)** → 결과 → Feedback(재평가 시 후보·Critic 다시 계산)까지 이어진다.
-남은 것: **G3**(방향성 피드백·피드백 이력 Memory), Critic 결과가 아직 AI 설명(planner_loop 관찰)에는 들어가지 않음, "같은 생활권 쏠림"은 행정동 단위 데이터가 없어 판단 불가로 표시만 함.
+**진행 (2026-10-02, backlog R2):** G3 구현 완료(F8, 미커밋). 방향성 자연어 피드백이 규칙 기반 가중치 제안 → 승인 → 후보 재평가 → `feedback_history`로 이어진다. "다시 비교하기"·숫자 자연어·방향성 자연어·되돌리기가 모두 `app.py` `_apply_feedback` → `analysis.feedback.reevaluate` 한 경로를 쓴다. 기록 항목: 대상 축·방향·강도, 이전·변경 가중치, 승인 여부, 1위 변화, 후보 역할(최적·균형·가성비·대안) 변화.
+**진행 (2026-10-03, backlog R4):** Critic·후보 역할이 AI 설명 단계로 이어진다(F9). 최초 추천과 피드백 재평가 모두 "현재 확보된 … 기준" 범위로 후보 역할을 설명하고, 검증을 통과하지 못하면 후보·Critic·한계를 담은 Python 요약을 쓴다.
+- 함께 고친 기존 결함: `planner_loop.call_reviewer`에 `think=False`가 없어 실제 Ollama(qwen3.5)에서 응답이 비어 **최초 추천 AI 설명이 항상 Python 요약으로 빠지고 있었다**(DEC-09 위반). 추가 후 실제 Ollama 최초·피드백 설명 모두 ai_verified.
+- 관찰 내용이 `LLM_MAX_INPUT_CHARS`(4000)를 넘던 문제: 공백 없는 JSON, 중복 필드 제거, 후보군이 있을 때 순위표를 요청 후보 + 역할 구로 제한 → 최악(3축·후보 5개·가정 2회·재작성 사유) 3,942자. 회귀 테스트로 고정.
+- 남은 한계: 결정적 검사는 숫자·역할·범위·미확보 축만 본다. 실제 Ollama 설명에서 "18.7점으로 다른 구보다 근소하게 앞서는"(실제로는 약점), "총 3개 중 6개"(순서 뒤바뀜) 같은 **의미 오류는 숫자 자체가 관찰 내용에 있어 통과**했다 → 강점/약점 방향·"N개 중 M개" 관계 검사가 후속 후보.
+
+**진행 (2026-10-03, backlog R5):** LLM이 강점·약점·대소관계를 추론하지 않고 explanation_facts만 옮기도록 바꿨다(F10, DEC-15).
+- 실제 Ollama(qwen3.5:4b) 결과: **피드백 재평가 설명 2/2 ai_verified**(내용 오류 없음 확인). **최초 추천 설명은 최종 2/2 Python 요약** - 세 번의 시도마다 서로 다른 의미 오류(강점→약점, 교통 3위로 잘못 귀속, 성산구를 "균형과 대안 역할"로 설명)를 내 모두 거부됐다. 즉 잘못된 설명은 화면에 나가지 않지만, 4B 모델로는 최초 추천의 AI 문장을 거의 얻지 못한다.
+- 같은 테스트 중 확인: `LLM_BACKEND=claude_cli` 호출이 `401 API key is invalid`로 실패 - `.env`의 `ANTHROPIC_API_KEY` 값이 CLI 로그인보다 우선 적용되는 것으로 보임(UNKNOWN, 미확인). **위치 Agent MCP 경로도 같은 이유로 실패할 수 있어** 별도 확인 필요.
+
+**진행 (2026-10-03, backlog R6):** 설명을 "Python 기본 설명 + 선택적 AI 다듬기"로 통일(F11, DEC-16). AI가 틀리거나 시간 초과·빈 응답이면 기본 설명이 그대로 나가므로 qwen3.5:4b 실패가 설명 품질을 떨어뜨리지 않는다.
+- 실제 Ollama(qwen3.5:4b): 최초 2회·피드백 2회 모두 ai_paraphrase 통과, 7~18초(R5 자유 작성 방식은 재시도 포함 수 분). 내용(역할·강약·Critic 교체·미확보 축·한계)은 사실과 일치.
+- 남은 품질 문제: 다듬은 문장에 오탈자("생활편이"), 숫자·단위 띄어쓰기("72.9 점", "1 위"), 어색한 존칭("선정하신")이 생긴다. 검증은 의미만 보므로 통과한다. 기본 설명과 거의 같은 문장이라 다듬기의 이득이 작다 → 기본 설명만 쓸지(use_llm=False) 사용자 결정 필요(OPEN-7).
+
+남은 것: `feedback_history`는 세션 안에서만 유지(앱 재시작 시 사라짐), "같은 생활권 쏠림"은 행정동 단위 데이터가 없어 판단 불가로 표시만 함.
+
+### G4 (신규 공백, 2026-10-02) — 핵심 현실 제약 축 미확보
+
+정착 판단의 핵심 현실 제약인 **주거비·교육·직장 접근성**이 실제 평가축으로 확보되지 않았다(`data/region_indicators.csv`의 `monthly_rent_avg`·`jeonse_avg`·`transit_avg_time_to_citycenter_min`은 "미확보", 교육 지표는 행 자체가 없음).
+- 주거비 미확보 때문에 **가성비 후보를 산출할 수 없다**(F7에서 "산출 불가"로만 표시).
+- 비용 축이 없으니 평가가 생활 인프라(시설 수)만으로 이뤄져, **인프라가 많은 구(성산·의창)로 추천이 집중되는 구조적 원인**이 남아 있다. Critic은 이를 경고할 수 있을 뿐 해소하지 못한다.
+- 다음 개발 우선순위(DEC-13): Critic 문장 개선보다 **G4 주거비 데이터 확보 가능성 조사**를 먼저 한다 — 공공데이터(예: 국토교통부 실거래가) 제공 범위·구 단위 집계 가능성·기준일·이용조건을 확인하고, 확보 전에는 추정값을 쓰지 않는다. 새 외부 데이터 도입이므로 구현 전 사용자 승인 대상(CHARTER §8).
+
+### G4 feasibility — 주거비 평가축 조사·설계 (2026-10-02, 코드 변경 없음)
+
+대상: 국토교통부_아파트 전월세 실거래가 자료 OpenAPI (data.go.kr 15126474). 서비스 연결 없이 조사만 했다.
+근거 표기: **FACT-공식**(data.go.kr 공식 페이지) · **FACT-저장소**(이 저장소 데이터) · **2차**(블로그·기사 - 공식 기술문서로 재확인 필요) · **UNKNOWN**
+
+**실제 샘플 검증 상태: 미실행.** 저장소 `.env`의 data.go.kr 키(HIRA_SERVICE_KEY)로 1회 호출(의창구 48121, 2026-08)했으나 `resultCode 30 등록되지 않은 서비스키`(HTTP 403) — 이 API에 활용신청이 안 된 키다. 응답 필드·표본 수·중앙값/평균 비교는 활용신청 후 확인해야 한다(DECISIONS OPEN-5).
+
+| # | 확인 항목 | 결과 | 근거 |
+|---|---|---|---|
+| 1 | 창원시 5개 구 각각 조회 | **가능(파라미터 기준)**. 요청 파라미터 `LAWD_CD`(법정동코드 앞 5자리) + `DEAL_YMD`(계약년월 6자리), 구×월 단위 호출. 12개월×5개 구 = 60회(+페이지)로 개발계정 한도 10,000회/일 대비 여유 | FACT-공식, 실제 응답은 UNKNOWN |
+| 2 | 지역 코드 매핑 | **1:1 매핑**. 의창구 48121 · 성산구 48123 · 마산합포구 48125 · 마산회원구 48127 · 진해구 48129 = 현재 `region_id` 5개와 그대로 대응. 응답의 법정동(`umdNm`)은 **법정동**이라 SGIS 행정동 경계와 다르다 → 구 단위 비교에는 문제없고, 동 단위로 내려가려면 법정동↔행정동 매핑이 따로 필요(지금은 하지 않음) | FACT-저장소 `data/raw/bjd_code.csv`(창원 법정동 323개 "존재") |
+| 3 | 사용할 수 있는 필드 | 계약년월일 `dealYear`/`dealMonth`/`dealDay`, 법정동 `umdNm`, 보증금 `deposit`(만원), 월세 `monthlyRent`(만원), 전용면적 `excluUseAr`(㎡, 2차 자료마다 표기가 `exclUseAr`로도 나옴), 건축년도 `buildYear`, 단지 식별 `aptNm`+`jibun`(+`aptSeq`는 UNKNOWN), 그 밖에 `floor`, `contractTerm`, `contractType`, `useRRRight`(갱신요구권), `preDeposit`/`preMonthlyRent`(종전 계약). **동·호는 개인정보 보호로 제외**. `contractType`은 전세/월세 구분이 아니라 신규/갱신 구분일 가능성이 있어(UNKNOWN), 전세·월세는 `monthlyRent == 0` 여부로 판정하도록 설계한다 | 동·호 제외·XML·REST: FACT-공식 / 필드명·단위: 2차(공식 기술문서 "아파트 전월세 실거래가 자료 기술문서.hwp"로 재확인 필요) |
+| 4 | 비교 기간 | **권장: 최근 12개월(기본) + 6개월(민감도 확인용 표시)**, 둘 다 "직전 2개월 제외" 끝점. 이유: ① 신고는 계약 후 30일 이내라 최근 1~2개월은 덜 쌓인 상태(신고 지연), ② 3개월은 이사철 계절성에 흔들림, ③ 12개월이 표본이 가장 많고 계절을 한 바퀴 포함. 최종 선택 규칙(결정적): 5개 구 모두가 아래 최소 표본을 넘는 **가장 짧은 기간**, 단 기간 전반·후반 중앙값 차이가 크면(예: 10% 초과) 더 긴 기간 | INFERENCE - 샘플로 확정 필요 |
+| 5 | 거래 없음·표본 부족 | 구×계약유형×면적구간 칸마다 표본 수 n을 함께 저장. n = 0 → "거래 없음", n < 30(초기값) → "표본 부족" — **둘 다 점수 미산출**(값을 보간·추정하지 않음). 한 구라도 미산출이면 그 지표는 기존 규칙("5개 구 전부 확보된 지표만 점수에 사용")에 따라 점수에서 빠진다 | 기존 `scoring._collect_confirmed_indicator` 규칙 재사용 |
+| 6 | 전세·월세 비교 | **하나의 금액으로 합치지 않는다**(전월세전환율 환산은 정책 가정이 들어가므로 쓰지 않음). 별도 지표: ① 전세 보증금 중앙값(`monthlyRent == 0`), ② 월세 계약의 월세 중앙값 + 같은 계약들의 보증금 중앙값을 함께 표시(`monthlyRent > 0`, 반전세 포함). 면적 구간(전용 60㎡ 이하 / 60~85㎡)을 고정해 단지 크기 차이를 섞지 않는다. 어느 지표를 평가축에 쓸지는 사용자의 "주거비 예산" 선택(월세 구간 → ②, 전세 희망 → ①)이 정하고, "매매 희망"은 이 API 범위 밖이라 "미확보" 유지 | 설계 |
+| 7 | 평균 vs 중앙값 | **중앙값을 기본으로 설계**(신축·대형 고가 단지 몇 건이 평균을 끌어올리는 오른쪽 꼬리 분포가 예상됨). 단 **실제 샘플 검증은 미실행**. A단계 완료 조건으로 구별 평균·중앙값·10% 절사평균·왜도를 계산하고 "평균을 쓰면 5개 구 순위가 바뀌는가"를 기록한다. 기존 지표 코드 `monthly_rent_avg`/`jeonse_avg`는 이름이 "평균"이라 중앙값 지표와 맞지 않음 → 새 코드(예: `apt_jeonse_deposit_median`, `apt_monthly_rent_median`) 제안 | INFERENCE, 검증 대기 |
+| 8 | API 장애 대비 | **앱 실행 중에는 API를 호출하지 않는다.** 기존 버스·편의점과 같은 방식: 수집 스크립트(수동 실행, 네트워크) → 원본 행 스냅샷 CSV + 구별 집계를 `data/region_indicators.csv`에 반영(출처·기준일·표본 수 포함) → 앱·Agent는 로컬 CSV만 읽음. 수집 중 일부 구·월 실패 시 그 구는 "미확보"로 남기고 진행(편의점 수집 스크립트와 같은 패턴). 스냅샷이 오래되면(예: 기준 종료월이 6개월 넘게 지남) 화면에 경고. 테스트는 커밋된 고정 픽스처만 사용 → 기존 400개 테스트는 네트워크와 무관하게 유지 | 설계(기존 패턴 재사용) |
+| 9 | API 키 | `.env`(gitignore)의 별도 변수(예: `MOLIT_SERVICE_KEY`) + `.env.example`에 빈 항목. 수집 스크립트에서만 읽고 앱은 읽지 않는다. **오류 메시지·로그에 요청 URL을 그대로 찍으면 `serviceKey`가 노출**되므로 URL을 출력할 때 키를 가리는 처리 필수. 기존 `.claude/settings.json`의 `.env` 읽기·`git add .env` 차단 유지 | 설계 |
+| 10 | 출처·기준 시점 표시 | 지표 행의 `source`="국토교통부 아파트 전월세 실거래가(data.go.kr 15126474)", `reference_date`="계약 2025-07~2026-06(12개월, 신고 지연 고려 최근 2개월 제외)" 형식, `note`에 구별 표본 수·면적 구간·계약유형·한계. 기존 화면의 "출처 및 기준일 보기"가 그대로 표시하고, 가성비 후보 설명·Critic·AI 관찰(observation)에 표본 수와 기간을 넣어 AI 설명 속 숫자도 기존 숫자 검증을 통과해야만 표시 | 설계(기존 표시 경로 재사용) |
+
+**데이터 대표성 한계 (반드시 화면·설명에 표시)**
+- **아파트만** 포함 — 이주 초기 1~2인 가구가 많이 찾는 원룸·오피스텔·연립다세대는 빠진다. 같은 국토교통부 실거래가 계열의 오피스텔·연립다세대 전월세 API가 있는 것으로 알려져 있으나 이번에 확인하지 않음(UNKNOWN, 후속 조사 후보).
+- **주택임대차 신고제**(2021-06 시행)의 신고 대상은 보증금 6천만 원 초과 **또는** 월차임 30만 원 초과 계약이고, 경남 같은 도 지역은 시 지역(창원 포함)에 적용된다(2차: 서울시 미디어허브 등). 이 API가 신고 대상 밖 계약(예: 보증금 6천만 원 이하·월 30만 원 이하)을 얼마나 포함하는지는 UNKNOWN → **"월세 30만원 미만" 예산 구간은 표본이 체계적으로 부족할 수 있다**.
+- 실거래 "계약" 기록이지 현재 매물 시세가 아니다.
+
+**구현 후보 (다음 steward에서 결정, 모두 승인 필요)**
+
+| 단계 | 내용 | 산출물 | 완료 조건 | 승인이 필요한 이유 |
+|---|---|---|---|---|
+| **A. 데이터 수집·정규화** | 수동 실행 수집 스크립트(재시도·부분 실패 시 미확보·키 가림) → 원본 행 스냅샷 CSV(동·호 없음) → 정규화(`monthlyRent==0` 전세 판정, 면적 구간, 만원 단위 정수화, 기간 필터, 중복 계약 제거 규칙) → 구×계약유형×면적구간별 n·중앙값·평균·절사평균 집계 표. **scoring에는 아직 연결하지 않음** | 예: `scripts/collect_apt_rent.py`, `data/housing/…csv`, `docs/housing_data.md`, 픽스처 기반 테스트 | 5개 구 실제 표본 수 확인, 기간(3/6/12개월)별 n 표, 평균 vs 중앙값 순위 비교 결과 기록 | 새 외부 데이터 도입(CHARTER §8), API 활용신청(사용자 계정) 필요 |
+| **B. 주거비 평가축** | A 집계를 `region_indicators.csv`에 새 지표 코드로 추가(n<30이면 미확보) → "값이 낮을수록 좋음" 정규화 `(최대-값)/(최대-최소)×100`을 **지표별 방향 플래그**로 추가(기존 3축은 기본값 "높을수록 좋음"이라 결과 불변 - 기존 테스트로 회귀 확인) → 예산 선택에 맞는 지표 1개만 평가축으로 사용 → candidates의 주거비 축 상태를 "평가 사용"으로 | `analysis/scoring.py`(방향 플래그), `services/housing.py`, `region_indicators.csv` | 기존 400개 테스트 + 기존 3축 점수 완전 동일 확인, 주거비 축 단위 테스트 | `scoring.py` 계산식 변경(CLAUDE.md §4 사전 보고), 원본 CSV 변경 |
+| **C. 가성비 역할 활성화** | `analysis/candidates.py`의 가성비를 결정적 규칙으로: 주거비 지표가 확보·사용 중일 때, 주거비가 5개 구 중앙값 이하(저렴한 쪽)인 구들 가운데 **주거비를 뺀 생활 인프라 축 종합점수**가 가장 높은 구. 비율(점수÷비용) 방식은 분모가 0 근처에서 불안정해 쓰지 않음. 주거비 미확보·표본 부족이면 지금처럼 "산출 불가" 유지. Critic에 "주거비 표본 수·기간·대표성 한계" 점검 추가 | `analysis/candidates.py`, 테스트 | 주거비 미확보 시 기존 동작·테스트 그대로, 확보 시 가성비 후보가 최적 후보와 다른 경우를 픽스처로 확인 | 후보 역할 의미 추가(기존 기능 의미 변경) |
+
+#### G4-A 진행 (2026-10-02) — 도구 완성, 실제 수집은 막힘
+
+**공식 기술문서로 확정한 사실 (FACT-공식, data.go.kr 각 데이터의 "…기술문서.hwp" 직접 내려받아 확인)**
+| 유형 | 데이터 | 오퍼레이션 | 면적 필드 | 단지·건물 식별 |
+|---|---|---|---|---|
+| 아파트 | 15126474 | RTMSDataSvcAptRent/getRTMSDataSvcAptRent | `excluUseAr` 전용면적 | `aptNm`, `aptSeq`(단지 일련번호), `jibun` |
+| 오피스텔 | 15126475 | RTMSDataSvcOffiRent/getRTMSDataSvcOffiRent (문서 본문 URL은 `gget…` 오타) | `excluUseAr` | `offiNm`, `jibun`, `sggNm` |
+| 연립다세대 | 15126473 | RTMSDataSvcRHRent/getRTMSDataSvcRHRent | `excluUseAr` | `mhouseNm`, `houseType`(연립/다세대), `jibun` |
+| 단독/다가구 | 15126472 | RTMSDataSvcSHRent/getRTMSDataSvcSHRent | **전용면적 없음** — `totalFloorAr`(연면적, 건물 전체) | `houseType`(단독/다가구), 지번 없음 |
+- 공통: `deposit`·`monthlyRent` 단위 만원, 쉼표 포함("50,000"), 정상 결과코드 `000`, 데이터 갱신 일 1회, `contractType`은 "계약구분"이라고만 되어 있고 값 정의 없음(2차 자료의 "전세/월세 구분" 설명은 확인 안 됨), 문서 응답 예시의 전세 거래는 `monthlyRent=0`.
+- → 전세/월세 판정은 **`monthlyRent == 0` → 전세, > 0 → 월세(반전세 포함)** 로 구현했고, 실제 응답의 `contractType` 값 분포를 수집 manifest에 남겨 확정 전에 사람이 확인하게 했다(실제 응답 미확인).
+- → 단독/다가구는 전용면적이 없어 면적 기준 비교에서 다른 유형과 같은 방식으로 다룰 수 없다.
+
+**구현한 것 (앱 미연결, 미커밋)**
+- `scripts/collect_rent_transactions.py`: 4개 유형 × 5개 구 × 월 수집(페이지·totalCount 일치 확인, 재시도, 일시 오류는 해당 칸만 "미확보", 키·승인 오류는 즉시 중단), 정규화 열 `region_id, legal_dong, contract_ym, contract_date, housing_type, housing_subtype, rent_type, deposit_manwon, monthly_rent_manwon, exclusive_area_m2, total_floor_area_m2, building_year, complex_key, contract_type_raw, renewal_right_used, source`, 동·호 미저장, 키와 키 포함 URL 미출력. `inspect` / `collect` / `collect --save`.
+- `scripts/analyze_rent_transactions.py`: 스냅샷 CSV만 읽음. 주택유형 × (전세 보증금 / 월세 금액 / 월세 보증금) × 구별 n·평균·중앙값·P25·P75·최소·최대·극단값(Tukey 3·IQR), 6/12개월 × 신고 지연 2개월 제외 여부 4가지 기간의 비교 가능 여부, 평균 vs 중앙값 순위 변화, 저가 월세(30만원 미만·신고 기준 미만) 비중, 아파트 vs 비아파트 시 전체 분포. `MIN_SAMPLE_SIZE`는 `--min-sample` 설정값(기본 30, 미확정).
+- `tests/test_rent_transactions.py` 18개(공식 문서 응답 예시 픽스처, 네트워크 모킹) · `.env.example`에 `MOLIT_SERVICE_KEY` 항목 · 전체 418개 통과(skip 1).
+
+**막힌 것 (실제 데이터 없음)**: `.env`의 키(HIRA_SERVICE_KEY)로 4개 API 모두 `resultCode 30 등록되지 않은 서비스키`(HTTP 403). 같은 키로 HIRA API는 `00 NORMAL SERVICE` — **키는 유효하고, 이 키의 계정에 전월세 API 활용승인이 반영되지 않은 상태**다. 승인을 다른 계정으로 받았거나 승인 직후 동기화 대기일 수 있다(기술문서: 승인 후부터 사용 가능). 표본 수·기간 판정·평균/중앙값·저가 월세·극단값 결과는 **전부 미산출**.
+**G4-B 진행 판단: 불가** — 실제 표본을 보기 전에는 기간·MIN_SAMPLE_SIZE·지표(유형·면적 구간)를 정할 근거가 없다.
+
+R3 조사 단계에서 바뀐 코드: 없음(G4-A 도구는 위 참고, 앱 미연결). `가성비 산출 불가` 동작, `scoring.py` 3축 계산, 400개 테스트(네트워크 무관) 그대로.
 
 ## 알려진 문제 / 공백
 
