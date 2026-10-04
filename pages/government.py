@@ -6,7 +6,7 @@
 저해요인 확정"이나 "인프라 부족 지역 확정"으로 판정하는 것이 아니다. 데이터 조회는
 전부 services/region_data.py의 get_all_regions()를 통해서만 하며(원본 CSV를
 직접 읽거나 수치를 하드코딩하지 않는다), 이 페이지는 조회만 할 뿐 어떤 경로로도
-CSV를 수정하지 않는다 - 조회 대상 구를 바꿔도 원본 데이터는 그대로다.
+CSV를 수정하지 않는다 - 조회 대상 지역을 바꿔도 원본 데이터는 그대로다.
 
 이주자용 화면(app.py)의 analysis/scoring.py 기반 "상대 비교 점수"와는 분리된 화면이다.
 여기서는 점수를 계산하지 않고 실제 확보된 지표값 자체와 그 차이만 보여준다.
@@ -128,7 +128,7 @@ for category in CATEGORIES:
                 continue
             rows.append(
                 {
-                    "구": region["region_name"],
+                    "지역": region["region_name"],
                     "값": indicator["value"] if indicator["value"] is not None else "미확보",
                     "단위": indicator["unit"] or "-",
                     "상태": indicator["data_status"],
@@ -145,28 +145,28 @@ for category in CATEGORIES:
         confirmed_rows = [row for row in rows if row["상태"] == "확보"]
 
         if not confirmed_rows:
-            # 5개 구 전체 미확보 - 긴 표 대신 한 줄 + 접기 영역. 0으로 표시하지 않는다.
+            # 비교 지역 전체 미확보 - 긴 표 대신 한 줄 + 접기 영역. 0으로 표시하지 않는다.
             st.markdown(f"**{indicator_name}** — 미확보")
-            with st.expander("구별 상태 보기"):
-                st.dataframe(rows_df[["구", "상태"]], hide_index=True, width="stretch")
+            with st.expander("지역별 상태 보기"):
+                st.dataframe(rows_df[["지역", "상태"]], hide_index=True, width="stretch")
             continue
 
         st.markdown(f"**{indicator_name}**")
-        st.dataframe(rows_df[["구", "값", "단위", "상태"]], hide_index=True, width="stretch")
+        st.dataframe(rows_df[["지역", "값", "단위", "상태"]], hide_index=True, width="stretch")
 
         limitation = INDICATOR_LIMITATIONS.get(code)
         if limitation:
             st.caption(f"ℹ️ {limitation}")
 
         with st.expander("출처 및 기준일 보기"):
-            st.dataframe(rows_df[["구", "출처", "기준일"]], hide_index=True, width="stretch")
+            st.dataframe(rows_df[["지역", "출처", "기준일"]], hide_index=True, width="stretch")
 
         chart_df = pd.DataFrame(
-            [{"구": row["구"], "값": float(row["값"])} for row in confirmed_rows]
-        ).set_index("구")
+            [{"지역": row["지역"], "값": float(row["값"])} for row in confirmed_rows]
+        ).set_index("지역")
         st.bar_chart(chart_df, color=CHART_ACCENT_COLOR)
 
-        missing_regions = [row["구"] for row in rows if row["상태"] != "확보"]
+        missing_regions = [row["지역"] for row in rows if row["상태"] != "확보"]
         if missing_regions:
             st.caption(
                 f"미확보 구: {', '.join(missing_regions)} "
@@ -206,9 +206,9 @@ st.caption(
 )
 
 # ---------------------------------------------------------------------------
-# 4. 구별 시설 수 차이 비교
+# 4. 지역별 시설 수 차이 비교
 # ---------------------------------------------------------------------------
-st.header("4. 구별 시설 수 차이 비교")
+st.header("4. 지역별 시설 수 차이 비교")
 st.caption("비교 지역 사이의 수치 분포(최댓값·최솟값·차이)를 그대로 보여줍니다. 많고 적음이 곧 우열을 뜻하지 않습니다.")
 
 diff_rows = []
@@ -255,7 +255,7 @@ st.caption(
 if "gov_sim_result" not in st.session_state:
     st.session_state.gov_sim_result = None
 
-# 5개 구 전부 확보된 지표만 시뮬레이션 대상으로 노출한다(미확보 지표 제외).
+# 비교 지역 전부 확보된 지표만 시뮬레이션 대상으로 노출한다(미확보 지표 제외).
 simulatable_codes = [
     code
     for code in simulation.SIMULATABLE_INDICATOR_CODES
@@ -344,7 +344,7 @@ else:
         st.markdown("**⑦ 비교 범위 전체 변경 전후 비교**")
         compare_rows = [
             {
-                "구": sim_result["score_change"][region["region_id"]]["region_name"],
+                "지역": sim_result["score_change"][region["region_id"]]["region_name"],
                 "실제 시설 수": f"{sim_result['facility_counts_before'][region['region_id']]:g}",
                 "가상 시설 수": f"{sim_result['facility_counts_after'][region['region_id']]:g}",
                 "변경 전 점수": round(sim_result["score_change"][region["region_id"]]["score_before"], 1),
@@ -359,7 +359,7 @@ else:
         st.dataframe(compare_df, hide_index=True, width="stretch")
 
         st.markdown("**⑧ 변경 전후 그래프**")
-        chart_df = compare_df[["구", "변경 전 점수", "변경 후 점수"]].set_index("구")
+        chart_df = compare_df[["지역", "변경 전 점수", "변경 후 점수"]].set_index("지역")
         st.bar_chart(chart_df, color=[CHART_ACCENT_COLOR, "#e07b39"])
 
         st.caption(

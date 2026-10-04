@@ -1,7 +1,7 @@
 # 개선 시뮬레이션
 """
-창원시 5개 구 중 한 곳의 시설 수를 "가상으로" 증감시켰을 때, 시설 수 기준 상대
-비교 점수(analysis/scoring.py)와 5개 구 사이의 수치 차이가 어떻게 달라지는지
+경남 비교 지역 중 한 곳의 시설 수를 "가상으로" 증감시켰을 때, 인구 1만 명당 기준 상대
+비교 점수(analysis/scoring.py)와 같은 유형 지역 사이의 수치 차이가 어떻게 달라지는지
 보여주는 가정 기반 시뮬레이션이다.
 
 이것은 실제 정책 효과 예측이 아니다 - 실제 통근시간, 의료 접근성, 정주율, 인구
@@ -18,7 +18,7 @@
 [점수 계산 재사용]
     min-max 정규화·가중합·정렬은 전부 analysis.scoring.compute_region_scores_from_weights()
     (새로 추가된 regions 매개변수로 원본/가상 데이터를 각각 주입)를 그대로 쓴다.
-    새로운 정규화·집계 계산식을 따로 구현하지 않는다. 정규화는 매번 "5개 구 전체"를
+    새로운 정규화·집계 계산식을 따로 구현하지 않는다. 정규화는 매번 "같은 유형 비교 지역 전체"를
     기준으로 다시 계산되므로, 한 구의 값만 바꿔도 다른 구의 정규화 점수가 바뀔 수
     있다 - 선택한 구의 점수만 따로 증감시키지 않는다.
 """
@@ -59,7 +59,7 @@ def _find_indicator(region: dict, category: str, indicator_code: str) -> dict | 
 
 def default_equal_weights(regions: list[dict]) -> dict[str, float]:
     """
-    comparison_weights를 지정하지 않았을 때 쓰는 기본값: 지금 실제로 5개 구 전부
+    comparison_weights를 지정하지 않았을 때 쓰는 기본값: 지금 실제로 비교 지역 전부
     확보된 지표끼리 동일 가중치(요구사항: "확보된 3개 지표를 동일하게 적용하는
     방식으로 시작"). 지표가 아직 다 확보되지 않은 미래 상황도 깨지지 않도록
     고정된 "3개"가 아니라 매번 실제로 확인해서 정한다.
@@ -81,14 +81,14 @@ def simulate_facility_change(
     comparison_weights: dict[str, float] | None = None,
 ) -> dict:
     """
-    창원시 5개 구 중 region_id 한 곳의 indicator_code 시설 수를 delta만큼(정수,
-    음수 가능) 가상으로 바꿨을 때, 5개 구 전체를 다시 정규화·채점한 전후 결과를
+    경남 22개 지역 중 region_id 한 곳의 indicator_code 시설 수를 delta만큼(정수,
+    음수 가능) 가상으로 바꿨을 때, 같은 유형 비교 지역 전체를 다시 정규화·채점한 전후 결과를
     돌려준다. 원본 데이터(data/region_indicators.csv)는 전혀 수정하지 않는다.
 
     Args:
-        region_id: 창원시 5개 구 중 하나(예: "CW-JINHAE"). 그 외 값이면 오류.
+        region_id: 경남 22개 지역 중 하나(예: "CW-JINHAE", "GN-GIMHAE"). 그 외 값이면 오류.
         indicator_code: SIMULATABLE_INDICATOR_CODES(bus_stop_count/hospital_count/
-            convenience_store_count) 중 하나. 그 외 값이거나, 해당 지표가 5개 구
+            convenience_store_count) 중 하나. 그 외 값이거나, 해당 지표가 비교 지역
             전부 확보되지 않았으면 오류(미확보 지표는 시뮬레이션 대상에서 제외).
         delta: 가상 증감량(정수, 예: +20, -15, 0). 적용 후 시설 수가 음수가 되면 오류.
         comparison_weights: {indicator_code: 0~100 상대 가중치}. 생략하면(None)
@@ -109,8 +109,8 @@ def simulate_facility_change(
                 "delta": int,
                 "source": str | None, "reference_date": str | None,  # 원본 데이터 출처/기준일
                 "comparison_weights": {indicator_code: 0~100, ...},  # 입력받은(또는 자동 설정된) 가중치
-                "facility_counts_before": {region_id: value, ...},   # 5개 구 전체, 변경 전
-                "facility_counts_after": {region_id: value, ...},    # 5개 구 전체, 변경 후(선택 구만 다름)
+                "facility_counts_before": {region_id: value, ...},   # 같은 유형 비교 지역 전체, 변경 전
+                "facility_counts_after": {region_id: value, ...},    # 같은 유형 비교 지역 전체, 변경 후(선택 지역만 다름)
                 "baseline_scores": compute_region_scores_from_weights() 결과 전체(원본 데이터 기준),
                 "simulated_scores": compute_region_scores_from_weights() 결과 전체(가상 데이터 기준),
                 "score_change": {
@@ -156,14 +156,14 @@ def simulate_facility_change(
             "message": f"'{indicator_code}' 지표는 아직 확보되지 않아 시뮬레이션할 수 없습니다.",
         }
 
-    # 5개 구 전부 확보돼야 compute_region_scores_from_weights()가 이 지표를 쓸 수
+    # 비교 지역 전부 확보돼야 compute_region_scores_from_weights()가 이 지표를 쓸 수
     # 있다(scoring.py의 기존 규칙 그대로) - 미리 확인해서 더 명확한 오류를 준다.
     for region in baseline_regions:
         indicator = _find_indicator(region, category, indicator_code)
         if indicator is None or indicator["data_status"] != "확보" or indicator["value"] is None:
             return {
                 "status": "error",
-                "message": f"'{indicator_code}' 지표가 창원시 5개 구 전부 확보되지 않아 "
+                "message": f"'{indicator_code}' 지표가 비교 지역 전부 확보되지 않아 "
                 f"시뮬레이션할 수 없습니다({region['region_name']} 미확보).",
             }
 

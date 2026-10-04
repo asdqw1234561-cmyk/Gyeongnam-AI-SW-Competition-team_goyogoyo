@@ -61,7 +61,7 @@ TOOL_LABELS: dict[str, str] = {
 
 
 def tool_get_available_indicators(regions: list[dict]) -> dict[str, bool]:
-    """VALID_SCORABLE_INDICATOR_CODES(교통/의료/생활편의) 각각이 창원시 5개 구
+    """VALID_SCORABLE_INDICATOR_CODES(교통/의료/생활편의) 각각이 비교 지역
     전부 data_status=='확보'인지. 새 판정 로직 없이 기존 collect_confirmed_indicator
     를 그대로 재사용한다."""
     return {
@@ -123,7 +123,7 @@ PLANNER_SYSTEM_PROMPT = """당신은 경남 이주자 생활권 탐색 서비스
 - 추론 과정을 출력하지 마세요. 각 도구 호출의 reason은 한 문장으로 간단히만 적으세요.
 - 반드시 아래 JSON 형식으로만 응답하세요. 다른 설명이나 markdown은 포함하지 마세요.
 
-{"goals": ["교통 분석", "의료 분석"], "tool_calls": [{"tool": "get_available_indicators", "reason": "확보된 지표 확인"}, {"tool": "get_region_indicators", "indicator_codes": ["bus_stop_count", "hospital_count"], "reason": "교통·의료 실제 수치 조회"}, {"tool": "calculate_region_scores", "weights": {"bus_stop_count": 70, "hospital_count": 30}, "reason": "승인된 가중치로 5개 구 비교"}], "unsupported_requests": [{"request": "주거비", "reason": "지원 지표가 아님"}]}
+{"goals": ["교통 분석", "의료 분석"], "tool_calls": [{"tool": "get_available_indicators", "reason": "확보된 지표 확인"}, {"tool": "get_region_indicators", "indicator_codes": ["bus_stop_count", "hospital_count"], "reason": "교통·의료 실제 수치 조회"}, {"tool": "calculate_region_scores", "weights": {"bus_stop_count": 70, "hospital_count": 30}, "reason": "승인된 가중치로 비교 지역 점수 계산"}], "unsupported_requests": [{"request": "주거비", "reason": "지원 지표가 아님"}]}
 """
 
 

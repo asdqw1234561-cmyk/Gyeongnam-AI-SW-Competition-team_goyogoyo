@@ -13,7 +13,7 @@
 | # | 핵심기능 | 위치 | 상태 |
 |---|---|---|---|
 | F1 | 이주 조건 입력 → AI 추가질문 → 가중치 해석·승인 | `app.py`, `agent/ollama_agent.py` | 동작(모킹 테스트·AppTest 일부), 브라우저 클릭 흐름 수동 확인 필요 |
-| F2 | Agent Planner: AI 계획 → Python 검증 → 도구 실행 → 5개 구 상대 비교 점수 | `agent/planner.py`, `analysis/scoring.py` | 동작 |
+| F2 | Agent Planner: AI 계획 → Python 검증 → 도구 실행 → 비교 범위(같은 유형) 인구 1만 명당 상대 비교 점수 | `agent/planner.py`, `analysis/scoring.py` | 동작 |
 | F3 | 결과 검토 루프: AI 설명 → 숫자 검증 → 실패 시 재작성/Python 요약, 자연어·슬라이더 피드백 재계산 | `agent/planner_loop.py`, `app.py` | 동작 |
 | F4 | 위치 기반 주변 시설 탐색(300m/500m/1km 직선거리, 버스정류장·편의점, 지도 클릭 승인) | `pages/user.py`, `services/bus_stops.py`, `services/convenience.py` | 동작 |
 | F5 | 위치 AI Agent: MCP 반복형(claude_cli) / 계획형+검토 루프(ollama) / 기본 절차 폴백, 답변 숫자 검증, 같은 위치 대화 기억 | `agent/location_agent.py`, `agent/location_mcp_server.py`, `agent/agent_loop.py`, `agent/agent_state.py` | 동작 |
