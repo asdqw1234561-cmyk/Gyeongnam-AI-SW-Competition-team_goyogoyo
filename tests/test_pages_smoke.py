@@ -299,7 +299,7 @@ class PagesFirstRenderTest(unittest.TestCase):
         # 원본 지표 표와 가상 시뮬레이션 섹션이 모두 그려졌는지
         self.assertTrue(any("가상 시설 증감 시뮬레이션" in h.value for h in at.header))
 
-    # ---- 익명 수요 기록(동의 시에만) → 지자체 화면 수요 한눈에 보기 -------------------
+    # ---- 비식별 선택 통계(동의 시에만) → 지자체 화면 수요 한눈에 보기 -------------------
     def test_demand_consent_records_only_after_opt_in_and_government_overview(self):
         import json
         import tempfile
@@ -319,6 +319,10 @@ class PagesFirstRenderTest(unittest.TestCase):
                     at.button[0].click().run()
                 self.assertEqual(at.session_state["stage"], "done")
                 self.assertFalse(os.path.exists(log), "동의 전에는 아무것도 저장하지 않는다")
+                consent = at.checkbox(key="demand_consent")
+                self.assertFalse(consent.value)  # 기본 꺼짐
+                self.assertIn("비식별 선택 통계 제공에 동의", consent.label)
+                self.assertNotIn("익명", consent.label)  # 실제 구현(세션 번호+선택값)보다 과장하지 않는다
 
                 at.checkbox(key="demand_consent").check().run()
                 self.assertEqual([e.value for e in at.exception], [])

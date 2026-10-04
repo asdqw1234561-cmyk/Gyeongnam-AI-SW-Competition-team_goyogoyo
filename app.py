@@ -14,7 +14,7 @@ from analysis import feedback, scoring
 from analysis.candidates import build_candidate_set, strength_max_rank, weakness_min_rank
 from services.region_data import REGION_SCOPES, get_all_regions, is_supported_region, region_type_for
 from services import demand_log
-from services.region_map import BOUNDARY_SOURCE, boundary_base_date, build_candidate_map_regions
+from services.region_map import BOUNDARY_SOURCE, boundary_base_date, build_candidate_map_regions, map_component_key
 from services.schools import SCHOOL_REFERENCE_LIMITATIONS, SCHOOL_REFERENCE_TITLE, load_school_reference
 
 MAX_CANDIDATE_COUNT = 5  # 가장 작은 비교 범위(창원시 5개 구) 수와 같게 맞춤
@@ -455,7 +455,8 @@ def _render_candidate_map(result: dict, candidate_set: dict) -> None:
             _build_candidate_map(map_data, focus),
             height=440,
             use_container_width=True,
-            key=f"candidate_map_{region_type_for(st.session_state.initial_input.get('희망지역', ''))}",
+            key=map_component_key(map_data, focus,
+                                  region_type_for(st.session_state.initial_input.get("희망지역", ""))),
             returned_objects=[],
         )
     except Exception as exc:  # 지도 컴포넌트 오류가 결과 화면 전체를 막지 않게 한다
@@ -626,18 +627,20 @@ def render_result_view() -> None:
 
 
 DEMAND_CONSENT_HELP = (
-    "체크하면 이번 검색의 선택값만 익명으로 저장해 지자체 화면의 '이주 희망자 수요' 통계에 씁니다: "
-    "비교 범위, 고른 생활조건, 적용 비율, 점수에 반영하지 못한 조건(주거비 예산 구간·직장/학교 구 등), "
-    "조건을 바꾼 방향, 후보로 나온 지역. 추가 요청사항 같은 자유 문장, 지도 좌표, 위치 질문은 저장하지 않습니다. "
-    "체크를 풀면 그 뒤로는 저장하지 않습니다."
+    "체크하면 이번 검색의 선택값을 이 서버의 로컬 파일(data/demand/requests.jsonl)에 저장해 정부용 화면의 "
+    "'이주 희망자 수요' 통계에 씁니다. 저장하는 값: 임의로 만든 세션 번호, 날짜, 비교 범위, 고른 생활조건, "
+    "적용 비율, 주거비 예산 구간, 직장/학교 지역(선택지), 자가용 여부, 승인한 조건 변경 방향, 후보로 나온 지역. "
+    "저장하지 않는 값: 추가 요청사항 같은 자유 문장, 이름·연락처, 지도 좌표, 위치 질문 문장. "
+    "체크하지 않으면 아무것도 저장하지 않고, 체크를 풀면 그 뒤로는 저장하지 않습니다."
 )
 
 
 def _render_demand_consent(result: dict, candidate_set: dict | None) -> None:
-    """익명 통계 제공 동의(기본 꺼짐). 동의했을 때만, 내용이 바뀔 때마다 한 줄을 남긴다(services.demand_log)."""
-    consent = st.checkbox("📊 익명 통계 제공에 동의 (선택)", key="demand_consent", help=DEMAND_CONSENT_HELP)
-    st.caption("지자체가 이주 희망자들이 어떤 조건을 찾는지 볼 수 있도록 선택값만 익명으로 모읍니다. "
-               "자유 문장·좌표·개인정보는 저장하지 않습니다.")
+    """비식별 선택 통계 제공 동의(기본 꺼짐). 동의했을 때만, 내용이 바뀔 때마다 한 줄을 남긴다(services.demand_log)."""
+    consent = st.checkbox("📊 비식별 선택 통계 제공에 동의 (선택)", key="demand_consent", value=False,
+                          help=DEMAND_CONSENT_HELP)
+    st.caption("지자체가 이주 희망자들이 어떤 조건을 찾는지 볼 수 있도록 선택값만 모읍니다(기본 꺼짐). "
+               "자유 문장·연락처·좌표·위치 질문은 저장하지 않습니다. 저장 항목은 ⓘ에서 확인하세요.")
     if not consent:
         return
     session_id = st.session_state.setdefault("demand_session_id", uuid.uuid4().hex[:12])
@@ -651,7 +654,7 @@ def _render_demand_consent(result: dict, candidate_set: dict | None) -> None:
     try:
         demand_log.append_record(record)
     except OSError as exc:  # 저장 실패가 결과 화면을 막지 않게 한다
-        st.caption(f"⚠️ 익명 통계를 저장하지 못했습니다: {exc.__class__.__name__}")
+        st.caption(f"⚠️ 선택 통계를 저장하지 못했습니다: {exc.__class__.__name__}")
         return
     st.session_state["demand_saved_signature"] = signature
 
@@ -1235,7 +1238,7 @@ if "agent_execution_log" not in st.session_state:
 
 def reset_all():
     st.session_state.stage = "input"
-    # 새 검색은 새 익명 세션으로 센다(동의도 다시 받는다).
+    # 새 검색은 새 세션 번호로 센다(동의도 다시 받는다).
     for key in ("demand_session_id", "demand_saved_signature", "demand_consent"):
         st.session_state.pop(key, None)
     st.session_state.initial_input = {}

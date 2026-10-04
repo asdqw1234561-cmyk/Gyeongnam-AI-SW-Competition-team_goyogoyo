@@ -2,12 +2,12 @@
   "steward_branch": "jhy-next",
   "submission_deadline": "2026-10-06T12:00",
   "last_synced_commit": "cabc379",
-  "last_synced_at": "2026-10-04",
+  "last_synced_at": "2026-10-05",
   "last_test_result": "506 passed, 1 skipped (2026-10-04, cabc379)",
   "last_loop": {
-    "date": "2026-10-04",
-    "task": "제출 전 안정화 - 상태 동기화 + 브라우저 E2E 체크리스트",
-    "result": "CURRENT_STATE·state.json을 cabc379 기준으로 동기화, docs/e2e_browser_checklist.md 작성, 코드 변경 없음"
+    "date": "2026-10-05",
+    "task": "hwang 4de6f39 통합(지도·동의 기반 선택 통계)",
+    "result": "cherry-pick + 보완, 전체 테스트 통과, 최소 브라우저 회귀 항목 정리"
   },
   "next_candidates": [
     "브라우저 E2E 체크리스트 수동 실행(사용자)",

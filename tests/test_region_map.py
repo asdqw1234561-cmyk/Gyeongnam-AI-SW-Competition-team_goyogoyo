@@ -90,5 +90,28 @@ class CandidateMapRegionsTest(unittest.TestCase):
         self.assertRegex(region_map.boundary_base_date() or "", r"^\d{8}$")
 
 
+class MapRefreshKeyTest(unittest.TestCase):
+    """피드백으로 후보가 바뀌거나 관심 지역을 바꾸면 지도 키가 달라져 이전 지도가 남지 않는다."""
+
+    def _map(self, weights):
+        from analysis import scoring
+        from analysis.candidates import build_candidate_set
+        from services.region_data import get_all_regions
+        result = scoring.compute_region_scores_from_weights(weights, 3, regions=get_all_regions(region_type="구"))
+        return region_map.build_candidate_map_regions(result, build_candidate_set(result, []))
+
+    def test_key_changes_with_candidates_and_focus_but_is_stable_otherwise(self):
+        equal = self._map({"bus_stop_count": 1, "hospital_count": 1, "convenience_store_count": 1})
+        medical = self._map({"bus_stop_count": 28.57, "hospital_count": 42.86, "convenience_store_count": 28.57})
+        best = lambda m: next(r["region_name"] for r in m["regions"] if r["primary_role"] == "best")  # noqa: E731
+        self.assertEqual((best(equal), best(medical)), ("마산합포구", "성산구"))  # 피드백으로 최적이 바뀌는 경우
+        key = region_map.map_component_key
+        self.assertNotEqual(key(equal, None, "구"), key(medical, None, "구"))
+        self.assertNotEqual(key(equal, None, "구"), key(equal, "진해구", "구"))
+        self.assertNotEqual(key(equal, None, "구"), key(equal, None, "시"))
+        self.assertEqual(key(equal, None, "구"), key(self._map({"bus_stop_count": 1, "hospital_count": 1,
+                                                               "convenience_store_count": 1}), None, "구"))
+
+
 if __name__ == "__main__":
     unittest.main()

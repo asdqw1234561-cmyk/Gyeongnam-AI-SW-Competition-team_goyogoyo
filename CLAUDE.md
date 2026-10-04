@@ -26,7 +26,8 @@
 | 설명용 확정 사실 | `analysis/explanation_facts.py` | AI 설명에 넘길 사실(구별 축 점수·순위·강점/약점/중립, 역할 구 비교 순서, 지배 관계, 확보/전체 평가축 수)을 결정적으로 생성. LLM은 판정·대소관계를 추론하지 않고 이것만 옮기며 검증도 이 기준 |
 | 피드백 재평가 | `analysis/feedback.py` | 방향성 피드백 배율 규칙(×1.5/×1.25/×2.0 후 재정규화), 모든 피드백이 쓰는 단일 재평가 경로(점수 → 후보·Critic), `feedback_history` 기록 |
 | 시뮬레이션 | `analysis/simulation.py` | deepcopy 사본에 가상값 → `compute_region_scores_from_weights()` 재사용 |
-| 데이터 조회 | `services/region_data.py`, `services/bus_stops.py`, `services/convenience.py`, `services/map_markers.py`, `services/schools.py`(구별 학교 수 참고 정보 - 점수 미사용) | CSV 읽기 전용 |
+| 데이터 조회 | `services/region_data.py`, `services/bus_stops.py`, `services/convenience.py`, `services/map_markers.py`, `services/schools.py`(구별 학교 수 참고 정보 - 점수 미사용), `services/region_map.py`(후보 지역 지도 - 표시 전용, 새 계산 없음) | CSV 읽기 전용 |
+| 동의 기반 선택 통계 | `services/demand_log.py` | 결과 화면에서 사용자가 동의(기본 꺼짐)했을 때만 구조화된 선택값을 `data/demand/requests.jsonl`(git 제외)에 기록, 정부용 화면에서 집계. 자유 문장·연락처·좌표·위치 질문은 저장하지 않는다. "완전 익명"·"사용자 수"로 표현하지 않는다(기록된 검색 수) |
 | 수집·집계 | `scripts/` | 공공데이터 수집, 버스정류장 공간판정·집계. 경남 22개 지역은 `scripts/gyeongnam_regions.py`(마스터) → `ingest_gyeongnam_*.py`(data/gyeongnam/) → `build_gyeongnam_indicators.py`(운영 CSV) |
 
 **AI Agent**

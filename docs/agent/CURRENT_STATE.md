@@ -5,7 +5,7 @@
 > 상세 구조·규칙은 `CLAUDE.md`, 작업 이력은 `docs/backlog.md`.
 
 - 최종 확인: 2026-10-04
-- 브랜치: `jhy-next` · 기준 커밋: `cabc379` ([GN-F] 경남 확장 마무리 점검) — 원격 `origin/jhy-next`와 같음
+- 브랜치: `jhy-next` · 기준: hwang `4de6f39` 통합(cherry-pick `01244da`) + 보완 커밋 — 2026-10-05
 - 제출 마감: 2026-10-06 12:00 (R-SCH-2, [규정] 제23조로 확정) — 확인일 기준 D-2
 - **개발 상태: 기능 동결(2026-10-04 사용자 지시).** 제출 전 안정화만 한다. 새 기능·새 평가축·새 Agent 기능·OPEN-7은 진행하지 않고, 코드 변경은 브라우저 E2E를 막는 명확한 버그일 때만 최소로 한다.
 - 비교 범위: **경상남도 22개 지역**(창원시 5개 구 + 시 7곳 + 군 10곳), 같은 유형끼리 인구 1만 명당 비교(DEC-20·21)
@@ -27,6 +27,8 @@
 | F13 | 추천 결과 화면: 결론(후보 요약) → Critic 확인할 점 → AI 설명 → 비교표 → 조건 바꾸기 → 접힌 상세. 피드백 승인 시 맨 위 결과 교체 | `app.py` `render_result_view`·`render_feedback_section`·`render_detail_sections` | 동작(AppTest), 브라우저 미확인 |
 | F14 | 경남 22개 지역 비교(같은 유형끼리, 인구 1만 명당) | `services/region_data.py` `REGION_SCOPES`, `analysis/scoring.py` `population_by_region`, `data/gyeongnam/` | 동작(단위·AppTest·실제 Ollama) |
 | F15 | 경남 22개 지역 참고 표(점수·순위 없음) · 관심 지역 강조(표시 전용) | `app.py` `_render_all_regions_reference`·`_render_focus_summary` | 동작(AppTest) |
+| F16 | 후보 지역 지도(hwang): 비교 지역 SGIS 경계에 확정된 후보 역할 색(최적>균형>대안), 관심 지역 점선, 시·군·구 전체 단위 안내. 표시 전용. 후보·관심 지역·범위가 바뀌면 지도 키가 바뀌어 새로 그림 | `services/region_map.py`, `app.py` `_render_candidate_map` | 동작(단위·AppTest), 브라우저 미확인 |
+| F17 | 동의 기반 비식별 선택 통계(hwang): 결과 화면 동의(기본 꺼짐) 시에만 선택값을 `data/demand/requests.jsonl`(git 제외)에 기록, 정부용 화면 '이주 희망자 수요 한눈에 보기' 집계(기록된 검색 수, 대표성 없음·로컬 프로토타입 명시) | `services/demand_log.py`, `app.py` `_render_demand_consent`, `pages/government.py` | 동작(단위·AppTest), 브라우저 미확인 |
 
 공통: `agent/llm.py`(백엔드 선택·호출 수·입력 길이 제한), `agent/llm_json.py`(JSON 추출), `scripts/secret_mask.py`(수집 스크립트 키 가림).
 
@@ -44,7 +46,7 @@
 
 ## 테스트
 
-- 단위 테스트: `python -m unittest discover -s tests` → **506개 통과, skip 1** (2026-10-04, `cabc379`, 실제 AI 호출 없음)
+- 단위 테스트: `python -m unittest discover -s tests` → **525개 통과, skip 1** (2026-10-05, hwang 통합 후, 실제 AI 호출 없음)
 - 실제 Ollama(qwen3.5:4b): 제출용 Test Case 5건(`docs/test_cases.md`, `b352c85`, 세 비교 범위) 기대와 일치 / 위치 AI Agent 김해시청 500m ai_verified (2026-10-04)
 - AppTest: 3개 화면 첫 렌더링, 최초 추천·피드백 승인·관심 지역 강조·참고 표·시 지역 7곳 비교·정부용 군 지역 시뮬레이션·위치 탐색 김해 예시 위치
 - **브라우저 E2E: 미실시** — 수동 확인 체크리스트 `docs/e2e_browser_checklist.md`

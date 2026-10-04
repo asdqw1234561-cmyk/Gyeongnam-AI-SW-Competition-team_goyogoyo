@@ -13,6 +13,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 from functools import lru_cache
 from pathlib import Path
@@ -140,6 +141,14 @@ def build_candidate_map_regions(result: dict, candidate_set: dict | None) -> dic
     # 후보 지역을 나중에 그려 테두리가 다른 지역에 가려지지 않게 한다.
     regions.sort(key=lambda r: (r["primary_role"] is not None, -r["rank"]))
     return {"regions": regions, "missing": missing, "bounds": _bounds(regions)}
+
+
+def map_component_key(map_data: dict, focus: str | None, scope_type: str) -> str:
+    """화면 지도 컴포넌트 키. 비교 범위·관심 지역·후보 역할(지역별 대표 역할)이 바뀌면 키가 바뀌어
+    지도를 새로 그린다 - 피드백으로 후보가 바뀐 뒤 이전 후보 색이 남지 않게 한다. 같은 상태면 같은 키."""
+    signature = "|".join([scope_type or "-", focus or "-"] + sorted(
+        f"{r['region_id']}:{r['primary_role']}" for r in map_data.get("regions", []) if r.get("primary_role")))
+    return "candidate_map_" + hashlib.sha1(signature.encode("utf-8")).hexdigest()[:12]
 
 
 def _bounds(regions: list[dict]) -> list[list[float]] | None:

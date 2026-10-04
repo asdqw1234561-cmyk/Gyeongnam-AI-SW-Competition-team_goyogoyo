@@ -1,5 +1,5 @@
 """
-services/demand_log.py - 익명 수요 기록·집계 테스트.
+services/demand_log.py - 동의 기반 비식별 선택 통계(수요 기록)·집계 테스트.
 
     python -m unittest tests.test_demand_log -v
 """

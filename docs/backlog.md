@@ -273,6 +273,11 @@
 - [x] 상태 (코드 변경 없음)
 - 결과: 원인 = `agent/llm.py` 세션당 AI 호출 한도(`LLM_MAX_CALLS_PER_SESSION`, 기본 30, Streamlit 세션 = 모든 페이지 공유)를 체크리스트 1~8 단계에서 소진 → 위치 planner의 `llm.chat`이 `LLMLimitError` → 설계된 기본 절차(`compare_nearby_facilities`). Ollama·thinking·JSON 추출 문제 아님(`think=False` 위치 planner·결과 검토 모두 적용). 재현: AppTest 실제 Ollama, 김해시청 · 호출 0회 시작 → ai_planned, 도구 2개, ai_verified / 30회 시작 → fallback_default + 한도 메시지. 조치: E2E 체크리스트 준비 단계·CURRENT_STATE에 한도 설정 안내 추가
 
+## I1. hwang `4de6f39` 통합 - 후보 지역 지도 + 동의 기반 선택 통계 (2026-10-05)
+- [x] 상태
+- 승인: 완료 (사용자: 제출 전 최종 통합, 단순 merge 금지)
+- 결과: `git merge hwang` 대신 `4de6f39`만 cherry-pick(`01244da`, 작성자 보존, 충돌 없음, 524개 통과 = hwang과 같음) → 보완: ① 지도 컴포넌트 키를 범위·관심 지역·후보 역할로 정해(`region_map.map_component_key`) 피드백·강조 변경 시 이전 지도가 남지 않게 ② "익명 통계" → "비식별 선택 통계 제공에 동의 (선택)", 기본 꺼짐 명시, 저장/미저장 항목을 도움말에 그대로 ③ 정부용 화면에 '기록된 검색(세션) 수'·대표성 없음·로컬 JSONL 프로토타입 문구 ④ security_review 항목 5·EVAL_MATRIX·CLAUDE.md·CURRENT_STATE 갱신. scoring·candidates·feedback·위치 Agent·G4·교육·비교 기준 변경 없음. e513a6a 문서 보존
+
 ---
 
 ## 발견된 작업

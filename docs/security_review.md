@@ -3,6 +3,7 @@
 > 범위: 비밀정보·사용자 정보가 노출·저장될 가능성. 새 기능·로그인·암호화는 범위 밖.
 > 실제 Secret 값은 읽거나 출력하지 않았다(`.env`는 열지 않음). 존재 여부·경로만 기록한다.
 > 결과: **HIGH 0 · MEDIUM 1 · LOW 7** → 점검 시 코드 변경 없음, 권고만 기록(backlog S1).
+> 2026-10-05 갱신: 동의 기반 선택 통계 기록(hwang `4de6f39`) 통합으로 항목 5(사용자 입력 저장)가 바뀌었다 - 아래 표 참고.
 > 2026-10-04 후속: 저장소가 public이라 사용자 승인으로 **S-M1·S-L1·S-L2 수정 완료**. S-L3~S-L7은 미수정 - 사용자 지시로 보안 작업은 현재 수준에서 종료하고 권고로만 유지.
 
 ## 위험 항목
@@ -26,7 +27,7 @@
 | 2. Git history 비밀키 | 전체 78개 커밋에서 `.env` 커밋 0회. 추가된 줄의 `*KEY/TOKEN/SECRET/PASSWORD=값` 패턴은 `.env.example`의 자리표시자 1건(길이 10, `sk-ant-...`). 64자리 hex·80자 이상 base64 문자열 3건은 모두 `.agent_state/reference_index.json`의 참고자료 SHA-256 해시 |
 | 3. URL·serviceKey 출력 | serviceKey는 `scripts/` 수집 스크립트에서만 사용(앱 코드는 사용 안 함). `collect_rent_transactions.py`는 예외 유형만 출력, `ingest_hira_hospital_data.py`는 마스킹(S-L1 한계) — 예외는 S-M1 |
 | 4. 화면의 키·환경변수 표시 | `app.py`·`pages/`에서 `os.environ`·키 값을 `st.*`로 출력하는 곳 없음. `claude_cli.check_status()`는 `loggedIn`·`authMethod`만 추출(계정 이메일 미추출)하고 화면에서 쓰지 않음 |
-| 5. 사용자 입력 영구 저장 | 사용자 입력·지도 좌표·직장/학교·자연어 질문을 파일·DB·로그에 쓰는 코드 없음. `database/db.py`는 미사용 자리표시자. Claude CLI 시스템 프롬프트·MCP 설정·도구 로그는 `tempfile.TemporaryDirectory` 안에서 생성·자동 삭제. Claude CLI는 `--no-session-persistence`. `CLAUDE_CLI_DEBUG_FILE`은 환경변수를 직접 설정한 경우에만 로그 파일 생성(개발용) |
+| 5. 사용자 입력 영구 저장 | **2026-10-05 변경(hwang `4de6f39` 통합)**: 결과 화면의 "비식별 선택 통계 제공에 동의 (선택)"을 사용자가 체크한 경우에만(기본 꺼짐) 구조화된 선택값 일부를 서버 로컬 파일 `data/demand/requests.jsonl`에 한 줄씩 저장한다 - 임의 세션 번호(uuid 12자리), 날짜(일), 비교 범위, 고른 생활조건, 승인된 가중치, 주거비 예산 구간, 직장/학교 지역(선택지 값), 자가용 여부, 승인한 피드백 방향, 후보 역할·지역(`services/demand_log.py`). 동의 전에는 파일을 만들지 않고, 같은 상태 재렌더링은 중복 저장하지 않는다. **추가 요청사항 등 자유 문장, 이름·연락처, 지도 좌표, 위치 Agent 질문 문장은 저장하지 않는다**(`tests/test_demand_log.py`, `tests/test_pages_smoke.py`가 확인). `data/demand/`는 `.gitignore` 대상이라 Git·GitHub에 올라가지 않는다. "완전 익명"이라고 표현하지 않는다(선택값 조합이 드물면 추정 가능성을 0으로 단정할 수 없음). 로컬 JSONL 프로토타입이라 보존 기간·삭제 요청·접근 통제 기능은 없다. 그 밖의 사용자 입력·지도 좌표·자연어 질문을 파일·DB·로그에 쓰는 코드는 여전히 없다. `database/db.py`는 미사용 자리표시자. Claude CLI 관련 파일은 `tempfile.TemporaryDirectory`에서 생성·자동 삭제, `--no-session-persistence`. `CLAUDE_CLI_DEBUG_FILE`은 환경변수를 직접 설정한 경우에만 로그 생성(개발용) |
 | 6. feedback_history·ConversationMemory | 둘 다 `st.session_state`(브라우저 세션 메모리)에만 있고 세션이 끝나면 사라짐. 서버 파일·DB 저장 없음(상한은 S-L7) |
 | 7. 프롬프트 Secret | 프롬프트에 환경변수·키를 넣는 코드 없음. 좌표는 프롬프트에 없음(S-L6) |
 | 8. 오류 화면 노출 | 앱 코드에서 `st.exception`·traceback 출력 없음. AI 오류 문구 노출은 S-L4, Streamlit 기본 traceback은 S-L3 |
