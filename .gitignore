@@ -2,6 +2,11 @@ __pycache__/
 *.pyc
 .venv/
 .env
+.env.*
+!.env.example
+# 개인 로컬 설정(CLAUDE.md §8 - 커밋 금지). 전역 git 설정에 의존하지 않고 저장소에서 제외한다.
+CLAUDE.local.md
+.claude/settings.local.json
 database/app.db
 .streamlit/secrets.toml
 

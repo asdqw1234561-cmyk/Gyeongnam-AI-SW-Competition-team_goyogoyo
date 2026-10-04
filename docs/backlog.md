@@ -227,6 +227,7 @@
 - 승인: 필요 (HIGH 없음 - 사용자 지시로 MEDIUM·LOW는 보고만)
 - 범위: S-M1 `collect_convenience_stores.py` 예외 문자열에서 URL(serviceKey) 제거(1~2줄) / S-L2 `.gitignore`에 `CLAUDE.local.md`·`.env.*` 등 추가 / S-L3 배포 시 `showErrorDetails` / S-L5 하위 프로세스 환경에서 수집용 키 제외 / S-L6 자유 입력 개인정보 안내 한 줄
 - 결과: 2026-10-04 점검 완료(코드 변경 없음, 전체 테스트 479개 통과)
+- 결과(후속): 2026-10-04 · S-M1·S-L1·S-L2 수정(`scripts/secret_mask.py` 신규, 편의점·의료 수집 스크립트, `.gitignore`) · `tests/test_secret_masking.py` 10개(수정 전 코드에서 7개 실패 확인) · 전체 489개 통과(skip 1) · S-L3~S-L7 미수정
 
 ---
 

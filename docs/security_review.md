@@ -2,15 +2,16 @@
 
 > 범위: 비밀정보·사용자 정보가 노출·저장될 가능성. 새 기능·로그인·암호화는 범위 밖.
 > 실제 Secret 값은 읽거나 출력하지 않았다(`.env`는 열지 않음). 존재 여부·경로만 기록한다.
-> 결과: **HIGH 0 · MEDIUM 1 · LOW 7** → 코드 변경 없음, 권고만 기록(backlog S1).
+> 결과: **HIGH 0 · MEDIUM 1 · LOW 7** → 점검 시 코드 변경 없음, 권고만 기록(backlog S1).
+> 2026-10-04 후속: 저장소가 public이라 사용자 승인으로 **S-M1·S-L1·S-L2 수정 완료**. S-L3~S-L7은 미수정(권고 유지).
 
 ## 위험 항목
 
-| ID | 등급 | 위치 | 내용 | 최소 수정안 (미적용) |
+| ID | 등급 | 위치 | 내용 | 최소 수정안 / 상태 |
 |---|---|---|---|---|
-| S-M1 | MEDIUM | `scripts/collect_convenience_stores.py` `_call_with_retry` → `fetch_district` → `cmd_collect` | 네트워크 오류 시 `requests` 예외 문자열을 그대로 `reason`에 넣는다. `requests` 예외 메시지에는 **serviceKey가 든 요청 URL이 포함**된다(가짜 키로 `ConnectTimeout` 재현해 확인). 이 `reason`은 콘솔에 출력되고, `--save --allow-partial`이면 git 추적 파일 `data/convenience/changwon_convenience_counts.csv`의 note 열에 저장된다 → 커밋·push 시 키가 GitHub에 올라갈 수 있다. 발생 조건(네트워크 오류 + 두 옵션)이 좁아 MEDIUM. 현재 커밋된 CSV에는 `serviceKey`·`http` 문자열 0건 | `collect_rent_transactions.py:120`과 같게 `requests.RequestException`은 `type(exc).__name__`만 남긴다(1~2줄) |
-| S-L1 | LOW | `scripts/ingest_hira_hospital_data.py` `_mask` | 원문 키만 치환한다. `requests`가 URL에 넣을 때 `+`·`/`·`=`를 `%2B` 등으로 인코딩하면 예외 메시지 속 키가 가려지지 않는다. 콘솔 출력만(파일 저장 없음) | `_mask`에서 `urllib.parse.quote(secret, safe="")` 형태도 함께 치환, 또는 예외 유형만 출력 |
-| S-L2 | LOW | `.gitignore` | `.env`·`.streamlit/secrets.toml`·`database/app.db`는 제외됨. 그러나 **`CLAUDE.local.md`**(CLAUDE.md §8에서 커밋 금지로 정한 파일), `.env.*`(예: `.env.local`), `credentials*.json`·`*.pem`은 제외되지 않는다. `git add -A`로 실수 커밋 가능 | `.gitignore`에 `CLAUDE.local.md`, `.env.*`, `!.env.example`, `*.pem`, `credentials*.json` 추가 |
+| S-M1 | MEDIUM | `scripts/collect_convenience_stores.py` `_call_with_retry` → `fetch_district` → `cmd_collect` | 네트워크 오류 시 `requests` 예외 문자열을 그대로 `reason`에 넣는다. `requests` 예외 메시지에는 **serviceKey가 든 요청 URL이 포함**된다(가짜 키로 `ConnectTimeout` 재현해 확인). 이 `reason`은 콘솔에 출력되고, `--save --allow-partial`이면 git 추적 파일 `data/convenience/changwon_convenience_counts.csv`의 note 열에 저장된다 → 커밋·push 시 키가 GitHub에 올라갈 수 있다. 발생 조건(네트워크 오류 + 두 옵션)이 좁아 MEDIUM. 현재 커밋된 CSV에는 `serviceKey`·`http` 문자열 0건 | **수정 완료(2026-10-04)** - `_call`에서 네트워크 예외를 `timeout`/`connection_error` 등 종류만 담은 `ApiError`로 바꾸고 원래 예외 연결을 끊음(`from None`), HTTP 오류·비JSON 본문·resultMsg는 `scripts/secret_mask.py` `mask_secret`으로 가림. 검증: `tests/test_secret_masking.py`(콘솔·`--save --allow-partial` CSV·`inspect` 종료 메시지에 가짜 키 원문·인코딩형 0건, 수정 전 코드에서는 실패) |
+| S-L1 | LOW | `scripts/ingest_hira_hospital_data.py` `_mask` | 원문 키만 치환한다. `requests`가 URL에 넣을 때 `+`·`/`·`=`를 `%2B` 등으로 인코딩하면 예외 메시지 속 키가 가려지지 않는다. 콘솔 출력만(파일 저장 없음) | **수정 완료(2026-10-04)** - `_mask`를 `mask_secret`(원문·`quote`·`quote_plus`·소문자 %xx 모두 치환)으로 교체, `_fetch`의 네트워크 예외를 종류만 담은 `RequestFailed`로 변환. `ingest`의 페이지 수집 루프는 그동안 네트워크 예외를 잡지 않아 traceback에 키 든 URL이 나올 수 있었음 → 종류만 담은 종료 메시지로 수정. 검증: 같은 테스트 파일 |
+| S-L2 | LOW | `.gitignore` | `.env`·`.streamlit/secrets.toml`·`database/app.db`는 제외됨. 그러나 **`CLAUDE.local.md`**(CLAUDE.md §8에서 커밋 금지로 정한 파일), `.env.*`(예: `.env.local`), `credentials*.json`·`*.pem`은 제외되지 않는다. `git add -A`로 실수 커밋 가능 | **수정 완료(2026-10-04)** - `.env.*`, `!.env.example`, `CLAUDE.local.md`, `.claude/settings.local.json` 추가(마지막 항목은 그동안 작업자 PC의 전역 git ignore에만 있어 팀원 PC에서는 보호되지 않았음). 추적 중인 파일이 새로 무시되는 경우 0건. 검증: 전역 ignore 설정을 끈 `git check-ignore` 테스트. `*.pem`·`credentials*.json`은 이번 범위 밖 |
 | S-L3 | LOW | Streamlit 설정 없음(`.streamlit/config.toml` 부재) | 처리되지 않은 예외가 나면 Streamlit 기본값으로 traceback(파일 경로·코드 줄)이 화면에 보인다. 환경변수 값은 포함되지 않음 | 배포 시 `.streamlit/config.toml`에 `[client] showErrorDetails = "none"` |
 | S-L4 | LOW | `agent/claude_cli.py:258,268` → `app.py:314`, `pages/user.py:417` | Claude CLI가 실패하면 stderr 최대 500자가 오류 문구로 화면 경고에 표시된다(로컬 경로·CLI 내부 메시지 가능, API 키는 CLI 로그인 방식이라 해당 없음) | 화면에는 "AI 호출 실패 - 기본 절차로 진행"만, 상세는 실행 과정 접기 영역 또는 콘솔로 |
 | S-L5 | LOW | `agent/llm.py:37` `load_dotenv()` + `agent/claude_cli.py`·`agent/location_agent.py` 하위 프로세스 | 앱이 `.env` 전체를 `os.environ`에 올리고 `claude` 하위 프로세스(및 MCP 서버)가 이를 상속한다. 수집용 키(`*_SERVICE_KEY`)는 앱에 필요 없지만 하위 프로세스 환경에 존재. 모델은 `--tools ""`(위치 Agent는 지정 MCP 도구 3개만)라 환경변수를 읽을 수 없음. `.env`에 `ANTHROPIC_API_KEY`가 있으면 CLI가 로그인 대신 API 과금으로 동작할 수 있음 | 하위 프로세스에 `env={k: v for k, v in os.environ.items() if not k.endswith("_SERVICE_KEY")}` 전달 |

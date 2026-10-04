@@ -66,12 +66,16 @@ from __future__ import annotations
 import argparse
 import csv
 import os
+import sys
 import time
 import xml.etree.ElementTree as ET
 from datetime import date
 
 import requests
 from dotenv import load_dotenv
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from secret_mask import mask_secret, request_error_kind  # noqa: E402
 
 load_dotenv()
 
@@ -130,10 +134,13 @@ def _get_service_key() -> str:
     return key
 
 
+class RequestFailed(RuntimeError):
+    """네트워크 오류. 메시지는 종류(timeout 등)만 - 요청 URL(serviceKey 포함)은 담지 않는다."""
+
+
 def _mask(text: str, secret: str) -> str:
-    if not secret:
-        return text
-    return text.replace(secret, "****(masked)****")
+    """원문 키와 URL 인코딩된 키(%2B 등)를 모두 가린다."""
+    return mask_secret(text, secret)
 
 
 def _fetch(endpoint: str, service_key: str, page_no: int, num_of_rows: int) -> requests.Response:
@@ -142,7 +149,11 @@ def _fetch(endpoint: str, service_key: str, page_no: int, num_of_rows: int) -> r
         "pageNo": page_no,
         "numOfRows": num_of_rows,
     }
-    return requests.get(endpoint, params=params, timeout=15)
+    try:
+        return requests.get(endpoint, params=params, timeout=15)
+    except requests.RequestException as exc:
+        # 예외 문자열에는 serviceKey가 든 요청 URL이 들어간다 - 종류만 남기고 원래 예외는 잇지 않는다.
+        raise RequestFailed(request_error_kind(exc)) from None
 
 
 def _parse_envelope(xml_text: str) -> dict:
@@ -210,8 +221,8 @@ def cmd_inspect(args: argparse.Namespace) -> None:
         print(f"--- 후보: {endpoint} ---")
         try:
             resp = _fetch(endpoint, service_key, page_no=1, num_of_rows=3)
-        except requests.RequestException as exc:
-            print(f"요청 자체가 실패했습니다: {_mask(str(exc), service_key)}")
+        except RequestFailed as exc:
+            print(f"요청 자체가 실패했습니다: {exc}")
             print()
             continue
 
@@ -262,7 +273,10 @@ def cmd_inspect(args: argparse.Namespace) -> None:
 def _iter_all_items(endpoint: str, service_key: str, num_of_rows: int, max_pages: int):
     page_no = 1
     while page_no <= max_pages:
-        resp = _fetch(endpoint, service_key, page_no, num_of_rows)
+        try:
+            resp = _fetch(endpoint, service_key, page_no, num_of_rows)
+        except RequestFailed as exc:
+            raise SystemExit(f"페이지 {page_no} 요청 실패: {exc}") from None
         envelope = _parse_envelope(resp.text)
 
         if envelope["kind"] != "success":

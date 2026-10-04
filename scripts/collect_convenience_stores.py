@@ -51,6 +51,9 @@ from datetime import date
 import requests
 from dotenv import load_dotenv
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from secret_mask import mask_secret, request_error_kind  # noqa: E402
+
 load_dotenv()
 
 SERVICE_KEY_ENV = "SBIZ_SERVICE_KEY"
@@ -103,19 +106,23 @@ def _call(operation: str, params: dict, service_key: str) -> dict:
     """API를 호출해 JSON(dict)을 반환한다. 인증 오류 등 비정상 응답은 ApiError."""
     url = f"{API_ROOT}/{operation}"
     query = {"serviceKey": service_key, "type": "json", **params}
-    resp = requests.get(url, params=query, timeout=20)
+    try:
+        resp = requests.get(url, params=query, timeout=20)
+    except requests.RequestException as exc:
+        # 예외 문자열에는 serviceKey가 든 요청 URL이 들어간다 - 종류만 남기고 원래 예외는 잇지 않는다.
+        raise ApiError(request_error_kind(exc)) from None
     if resp.status_code != 200:
-        raise ApiError(f"HTTP {resp.status_code}: {resp.text[:300]}")
+        raise ApiError(f"HTTP {resp.status_code}: {mask_secret(resp.text[:300], service_key)}")
     try:
         data = resp.json()
     except ValueError:
         # data.go.kr 게이트웨이 오류(인증키 미등록 등)는 type=json이어도 XML로 온다.
-        raise ApiError(f"JSON이 아닌 응답: {resp.text[:500]}")
+        raise ApiError(f"JSON이 아닌 응답: {mask_secret(resp.text[:500], service_key)}") from None
     data = data.get("response", data)  # 일부 data.go.kr API는 response로 한 번 감싼다
     header = data.get("header") or {}
     code = str(header.get("resultCode", "00"))
     if code not in ("00", "03"):  # 03 = 데이터 없음(NODATA_ERROR)
-        raise ApiError(f"resultCode={code} resultMsg={header.get('resultMsg')}")
+        raise ApiError(mask_secret(f"resultCode={code} resultMsg={header.get('resultMsg')}", service_key))
     return data
 
 
