@@ -19,3 +19,6 @@ data/raw/전국_버스정류장_위치정보_*.csv
 
 # 개발 Agent: references/ 추출 결과(텍스트·페이지 이미지)는 ref_scan.py extract --all 로 재생성 가능
 .agent_state/extracted/
+
+# 익명 수요 기록(services/demand_log.py) - 사용자 선택값이므로 커밋 금지
+data/demand/

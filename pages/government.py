@@ -19,6 +19,7 @@ import streamlit as st
 
 from analysis import simulation
 from analysis.scoring import INDICATOR_CATEGORY
+from services import demand_log
 from services.region_data import REGION_SCOPES, get_all_regions
 
 CHART_ACCENT_COLOR = "#2a78d6"
@@ -80,6 +81,81 @@ st.caption(
 with st.expander("⚠️ 이 화면을 해석할 때 반드시 유의할 점", expanded=True):
     for c in PAGE_CAVEATS:
         st.write(f"- {c}")
+
+# ---------------------------------------------------------------------------
+# 0. 이주 희망자 수요 한눈에 보기 (익명 동의 기록 집계 - services/demand_log.py)
+# ---------------------------------------------------------------------------
+def _share_table(rows: list[dict]) -> None:
+    """항목·건수·비율 표. 비율은 막대로 보여 한눈에 비교할 수 있게 한다(값은 기록된 검색 수 대비)."""
+    st.dataframe(
+        pd.DataFrame(rows),
+        hide_index=True,
+        width="stretch",
+        column_config={"비율(%)": st.column_config.ProgressColumn("비율", format="%.0f%%", min_value=0, max_value=100)},
+    )
+
+
+def _render_demand_overview() -> None:
+    """이주자 화면에서 '익명 통계 제공'에 동의한 검색만 집계해 보여준다. 기록이 없으면 없다고만 말한다(예시 데이터 없음)."""
+    st.header("📊 이주 희망자 수요 한눈에 보기")
+    summary = demand_log.summarize(demand_log.load_records())
+    if summary["total"] == 0:
+        st.info(
+            "아직 모인 기록이 없습니다. 이주자 화면의 추천 결과에서 '익명 통계 제공에 동의'를 체크한 검색만 "
+            "여기에 집계됩니다. 예시·가상 기록은 넣지 않습니다."
+        )
+        return
+    total = summary["total"]
+    unmet_sessions = summary["unmet"][0]["건수"] if summary["unmet"] else 0
+    period = summary["period"]
+    c1, c2, c3 = st.columns(3)
+    c1.metric("기록된 검색", f"{total}건")
+    c2.metric("조건을 바꿔 다시 본 검색", f"{summary['feedback_sessions']}건")
+    c3.metric("데이터가 없어 못 답한 요청 1위", summary["unmet"][0]["항목"] if summary["unmet"] else "없음")
+    if unmet_sessions:
+        c3.caption(f"{total}건 중 {unmet_sessions}건에서 요청")
+    if period:
+        st.caption(f"기간: {period[0]} ~ {period[1]} · 동의한 검색 {total}건 기준")
+
+    left, right = st.columns(2)
+    with left:
+        st.markdown("**이주 희망자가 고른 생활조건**")
+        if summary["conditions"]:
+            _share_table(summary["conditions"])
+        if summary["no_condition"]:
+            st.caption(f"조건을 따로 고르지 않은 검색 {summary['no_condition']}건(확보 항목을 같은 비율로 비교)")
+    with right:
+        st.markdown("**요청했지만 데이터가 없어 점수에 반영하지 못한 조건**")
+        if summary["unmet"]:
+            _share_table(summary["unmet"])
+            st.caption("이 항목들은 서비스가 답하지 못한 수요입니다 - 데이터 개방·연계를 검토할 근거로 볼 수 있습니다.")
+        else:
+            st.caption("없음")
+
+    with st.expander("세부 분포 (비교 범위 · 주거비 예산 · 직장/학교 · 조건 조정 방향 · 후보로 나온 지역)"):
+        cols = st.columns(2)
+        for col, (title, key) in zip(cols * 3, [("비교 범위", "scopes"), ("주거비 예산 구간", "budget"),
+                                                 ("직장/학교 위치", "workplace"), ("더 중요하게 바꾼 항목", "raised"),
+                                                 ("덜 중요하게 바꾼 항목", "lowered")]):
+            with col:
+                st.markdown(f"**{title}**")
+                if summary[key]:
+                    _share_table(summary[key])
+                else:
+                    st.caption("기록 없음")
+        st.markdown("**후보로 나온 지역 (역할별)**")
+        if summary["candidates"]:
+            st.dataframe(pd.DataFrame(summary["candidates"]), hide_index=True, width="stretch")
+        else:
+            st.caption("기록 없음")
+    st.caption(
+        "⚠️ 이 서비스를 쓰고 익명 통계에 동의한 사람의 선택값만 모은 것이라 지역 주민·이주자 전체를 대표하지 않습니다. "
+        "비율은 기록된 검색 수 대비이며 한 검색이 여러 조건을 고를 수 있습니다. 자유 문장·좌표·개인정보는 저장하지 않습니다."
+    )
+
+
+_render_demand_overview()
+st.divider()
 
 # 비교 범위(같은 유형끼리)를 고른 뒤 그 유형 전체를 조회한다(점수 계산 없음, 원본 CSV를 그대로 읽기만 함).
 scope_label = st.selectbox("비교 범위", list(REGION_SCOPES), key="gov_scope")
