@@ -4,9 +4,9 @@
 > `/steward`가 코드 변경 후 스스로 갱신하고, `.agent_state/state.json`의 `last_synced_commit`을 맞춘다.
 > 상세 구조·규칙은 `CLAUDE.md`, 작업 이력은 `docs/backlog.md`.
 
-- 최종 확인: 2026-10-02
-- 브랜치: `jhy-next` · 기준 커밋: `219a4f2` ([R1] 정착 후보군 역할 부여 + Critic 점검)
-- 제출 마감: 2026-10-06 12:00 (R-SCH-2, [규정] 제23조로 확정) — 확인일 기준 D-4
+- 최종 확인: 2026-10-04
+- 브랜치: `jhy-next` · 기준 커밋: `f2bf6c8` ([docs] 공식 운영규정 V1.0 반영). F8~F11·G4-A 도구는 `cae0f59`로 커밋됨
+- 제출 마감: 2026-10-06 12:00 (R-SCH-2, [규정] 제23조로 확정) — 확인일 기준 D-2
 
 ## 구현된 기능 (IMPLEMENTED)
 
@@ -18,10 +18,10 @@
 | F4 | 위치 기반 주변 시설 탐색(300m/500m/1km 직선거리, 버스정류장·편의점, 지도 클릭 승인) | `pages/user.py`, `services/bus_stops.py`, `services/convenience.py` | 동작 |
 | F5 | 위치 AI Agent: MCP 반복형(claude_cli) / 계획형+검토 루프(ollama) / 기본 절차 폴백, 답변 숫자 검증, 같은 위치 대화 기억 | `agent/location_agent.py`, `agent/location_mcp_server.py`, `agent/agent_loop.py`, `agent/agent_state.py` | 동작 |
 | F7 | 정착 후보군 + Critic: 최적·균형·대안(가성비는 주거비 미확보로 산출 불가), 6개 평가축 상태, Critic 점검·지배된 대안 수정 — 최초·피드백 결과 모두 | `analysis/candidates.py`, `agent/planner.py`(`candidate_review`), `app.py` `_render_candidate_set` | 동작(단위·AppTest), 실제 Ollama·브라우저 미확인 |
-| F8 | 방향성 피드백("의료를 더 중요하게") → LLM은 축·방향·강도 표현만 추출 → Python 규칙(×1.5/×1.25/×2.0 후 재정규화)으로 변경안 계산 → 승인 → 단일 재평가 경로(점수 → 후보·Critic) → `feedback_history`(Memory) 기록. 슬라이더·숫자 자연어·되돌리기도 같은 경로 | `analysis/feedback.py`, `agent/ollama_agent.py`, `app.py` `_apply_feedback` | 동작(단위·AppTest·실제 Ollama 8문장), 브라우저 미확인, **미커밋** |
-| F9 | 후보군·Critic을 AI 설명에 연결: 관찰 내용에 확정된 후보 역할·Critic 교체·한 축 의존·평가축 수·미확보 축·반영 못 한 조건·판단 한계 추가, 판단 범위 표시·과장·미확보 축 단정·역할 불일치를 결정적으로 거부, 피드백 재평가 뒤에도 같은 검증으로 설명(`explain_candidates`) | `agent/planner_loop.py`, `agent/planner.py`, `app.py` `_render_final_answer`, `analysis/candidates.py`(Critic `facts` 추가만) | 동작(단위·AppTest·실제 Ollama 최초·피드백 각 1회 ai_verified), **미커밋** |
-| F10 | AI 설명은 Python이 확정한 explanation_facts(구별 축 점수·순위·강점/약점/중립, 역할 구 비교 순서, 지배 관계, 6개 중 확보 3개)만 옮기고, 같은 사실로 결정적 검증(강약 뒤집기·최상/최하 표현·두 구 비교·지배 방향·숫자 귀속·역할 구문·미확보 축 강약 표현·N개 중 M개·계산 안 한 가정) | `analysis/explanation_facts.py`, `agent/planner_loop.py` | 동작(단위 456개·실제 Ollama), **미커밋** |
-| F11 | 설명 경로 통일: explanation_facts → Python 기본 설명(항상 사실) → AI 다듬기 1회 → 검증 → 실패 시 기본 설명. 최초 추천(AI 계획 실패 포함)·피드백 재평가 공용 | `agent/planner_loop.py` `explain_from_facts`, `analysis/explanation_facts.py` `render_explanation` | 동작(단위 468개·AppTest·실제 Ollama 4/4), **미커밋** |
+| F8 | 방향성 피드백("의료를 더 중요하게") → LLM은 축·방향·강도 표현만 추출 → Python 규칙(×1.5/×1.25/×2.0 후 재정규화)으로 변경안 계산 → 승인 → 단일 재평가 경로(점수 → 후보·Critic) → `feedback_history`(Memory) 기록. 슬라이더·숫자 자연어·되돌리기도 같은 경로 | `analysis/feedback.py`, `agent/ollama_agent.py`, `app.py` `_apply_feedback` | 동작(단위·AppTest·실제 Ollama 8문장), 브라우저 미확인 |
+| F9 | 후보군·Critic을 AI 설명에 연결: 관찰 내용에 확정된 후보 역할·Critic 교체·한 축 의존·평가축 수·미확보 축·반영 못 한 조건·판단 한계 추가, 판단 범위 표시·과장·미확보 축 단정·역할 불일치를 결정적으로 거부, 피드백 재평가 뒤에도 같은 검증으로 설명(`explain_candidates`) | `agent/planner_loop.py`, `agent/planner.py`, `app.py` `_render_final_answer`, `analysis/candidates.py`(Critic `facts` 추가만) | 동작(단위·AppTest·실제 Ollama 최초·피드백 각 1회 ai_verified) |
+| F10 | AI 설명은 Python이 확정한 explanation_facts(구별 축 점수·순위·강점/약점/중립, 역할 구 비교 순서, 지배 관계, 6개 중 확보 3개)만 옮기고, 같은 사실로 결정적 검증(강약 뒤집기·최상/최하 표현·두 구 비교·지배 방향·숫자 귀속·역할 구문·미확보 축 강약 표현·N개 중 M개·계산 안 한 가정) | `analysis/explanation_facts.py`, `agent/planner_loop.py` | 동작(단위 456개·실제 Ollama) |
+| F11 | 설명 경로 통일: explanation_facts → Python 기본 설명(항상 사실) → AI 다듬기 1회 → 검증 → 실패 시 기본 설명. 최초 추천(AI 계획 실패 포함)·피드백 재평가 공용 | `agent/planner_loop.py` `explain_from_facts`, `analysis/explanation_facts.py` `render_explanation` | 동작(단위 468개·AppTest·실제 Ollama 4/4) |
 | F6 | 정부용 구별 시설 현황·가상 증감 시뮬레이션 | `pages/government.py`, `analysis/simulation.py` | 동작 (주제 연결은 OPEN-3) |
 
 공통: `agent/llm.py`(백엔드 선택·호출 수·입력 길이 제한), `agent/llm_json.py`(JSON 추출).
@@ -68,7 +68,7 @@
 선택(STEP 6): G1+G2를 하나의 결정적 모듈로 묶어 먼저 구현한다 — 새 점수식 없이 기존 `score_result`의 축별 정규화 점수만으로 후보 역할 부여와 Critic 점검을 수행한다. G3는 다음 후보.
 
 **진행 (2026-10-02, backlog R1):** G1·G2 구현 완료(F7, 커밋 219a4f2). 흐름은 이제 Goal → Planning → Tool Use → 평가(scoring) → **후보 생성 → Critic(점검·대안 수정)** → 결과 → Feedback(재평가 시 후보·Critic 다시 계산)까지 이어진다.
-**진행 (2026-10-02, backlog R2):** G3 구현 완료(F8, 미커밋). 방향성 자연어 피드백이 규칙 기반 가중치 제안 → 승인 → 후보 재평가 → `feedback_history`로 이어진다. "다시 비교하기"·숫자 자연어·방향성 자연어·되돌리기가 모두 `app.py` `_apply_feedback` → `analysis.feedback.reevaluate` 한 경로를 쓴다. 기록 항목: 대상 축·방향·강도, 이전·변경 가중치, 승인 여부, 1위 변화, 후보 역할(최적·균형·가성비·대안) 변화.
+**진행 (2026-10-02, backlog R2):** G3 구현 완료(F8, `cae0f59`). 방향성 자연어 피드백이 규칙 기반 가중치 제안 → 승인 → 후보 재평가 → `feedback_history`로 이어진다. "다시 비교하기"·숫자 자연어·방향성 자연어·되돌리기가 모두 `app.py` `_apply_feedback` → `analysis.feedback.reevaluate` 한 경로를 쓴다. 기록 항목: 대상 축·방향·강도, 이전·변경 가중치, 승인 여부, 1위 변화, 후보 역할(최적·균형·가성비·대안) 변화.
 **진행 (2026-10-03, backlog R4):** Critic·후보 역할이 AI 설명 단계로 이어진다(F9). 최초 추천과 피드백 재평가 모두 "현재 확보된 … 기준" 범위로 후보 역할을 설명하고, 검증을 통과하지 못하면 후보·Critic·한계를 담은 Python 요약을 쓴다.
 - 함께 고친 기존 결함: `planner_loop.call_reviewer`에 `think=False`가 없어 실제 Ollama(qwen3.5)에서 응답이 비어 **최초 추천 AI 설명이 항상 Python 요약으로 빠지고 있었다**(DEC-09 위반). 추가 후 실제 Ollama 최초·피드백 설명 모두 ai_verified.
 - 관찰 내용이 `LLM_MAX_INPUT_CHARS`(4000)를 넘던 문제: 공백 없는 JSON, 중복 필드 제거, 후보군이 있을 때 순위표를 요청 후보 + 역할 구로 제한 → 최악(3축·후보 5개·가정 2회·재작성 사유) 3,942자. 회귀 테스트로 고정.
@@ -137,7 +137,7 @@
 - → 전세/월세 판정은 **`monthlyRent == 0` → 전세, > 0 → 월세(반전세 포함)** 로 구현했고, 실제 응답의 `contractType` 값 분포를 수집 manifest에 남겨 확정 전에 사람이 확인하게 했다(실제 응답 미확인).
 - → 단독/다가구는 전용면적이 없어 면적 기준 비교에서 다른 유형과 같은 방식으로 다룰 수 없다.
 
-**구현한 것 (앱 미연결, 미커밋)**
+**구현한 것 (앱 미연결, `cae0f59`)**
 - `scripts/collect_rent_transactions.py`: 4개 유형 × 5개 구 × 월 수집(페이지·totalCount 일치 확인, 재시도, 일시 오류는 해당 칸만 "미확보", 키·승인 오류는 즉시 중단), 정규화 열 `region_id, legal_dong, contract_ym, contract_date, housing_type, housing_subtype, rent_type, deposit_manwon, monthly_rent_manwon, exclusive_area_m2, total_floor_area_m2, building_year, complex_key, contract_type_raw, renewal_right_used, source`, 동·호 미저장, 키와 키 포함 URL 미출력. `inspect` / `collect` / `collect --save`.
 - `scripts/analyze_rent_transactions.py`: 스냅샷 CSV만 읽음. 주택유형 × (전세 보증금 / 월세 금액 / 월세 보증금) × 구별 n·평균·중앙값·P25·P75·최소·최대·극단값(Tukey 3·IQR), 6/12개월 × 신고 지연 2개월 제외 여부 4가지 기간의 비교 가능 여부, 평균 vs 중앙값 순위 변화, 저가 월세(30만원 미만·신고 기준 미만) 비중, 아파트 vs 비아파트 시 전체 분포. `MIN_SAMPLE_SIZE`는 `--min-sample` 설정값(기본 30, 미확정).
 - `tests/test_rent_transactions.py` 18개(공식 문서 응답 예시 픽스처, 네트워크 모킹) · `.env.example`에 `MOLIT_SERVICE_KEY` 항목 · 전체 418개 통과(skip 1).
@@ -146,6 +146,31 @@
 **G4-B 진행 판단: 불가** — 실제 표본을 보기 전에는 기간·MIN_SAMPLE_SIZE·지표(유형·면적 구간)를 정할 근거가 없다.
 
 R3 조사 단계에서 바뀐 코드: 없음(G4-A 도구는 위 참고, 앱 미연결). `가성비 산출 불가` 동작, `scoring.py` 3축 계산, 400개 테스트(네트워크 무관) 그대로.
+
+## 다음 평가축 조사 — 직장 접근성 vs 교육 (2026-10-04, backlog G5)
+
+최우선 목표: Agent 구조 확장이 아니라 **Agent가 판단할 현실적인 정착 데이터 보강**(DEC-17). G4 주거비는 2026-10-04 `inspect` 재확인 결과 4개 API 모두 resultCode 30 → BLOCKED 유지(코드 수정 없음).
+
+**직장 접근성 — 축으로 구현하지 않음 (FACT·INFERENCE)**
+- 입력: `app.py` `WORKPLACE_OPTIONS`는 "창원시 ○○구 / 창원시 외 경남 / 경남 외 / 재택" **구 단위 선택지**다. 좌표가 없어 후보 구 내부에서 직장까지의 실제 거리를 계산할 수 없다(FACT).
+- 같은 구 여부(0/1)를 지표로 쓰면 min-max에서 100/0으로 벌어져 다른 축을 압도하고, 구 경계를 넘는 짧은 통근(예: 성산↔의창)과 같은 구 안의 먼 통근(의창구 북면·동읍↔시내)을 구분하지 못한다 — 통근 편의로 포장하는 것이 됨(INFERENCE).
+- 대표 좌표(구 경계 중심점) 직선거리: 임의 좌표이고, 진해↔성산처럼 산(안민터널)을 넘는 경로는 직선거리와 실제 이동이 크게 다르다. CLAUDE.md §4 "직선거리 ≠ 이동"과 충돌.
+- 실제 이동시간 데이터: `data/region_indicators.csv`의 `transit_avg_time_to_citycenter_min`은 미확보. 국가교통DB O/D(신청·승인 필요), TAGO 버스 API(노선·도착정보, 구간 소요시간 없음), 민간 길찾기 API(상용 약관·호출당 과금)는 마감(D-2) 전 공식 공공데이터로 확보 불가(UNKNOWN 아님 - 현재 저장소·키로는 없음).
+- 결론: 직장 위치는 지금처럼 "반영하지 않은 조건"으로 정직하게 남긴다.
+
+**교육 — 다음 구현 후보로 선택 (조사 결과)**
+| 항목 | 내용 |
+|---|---|
+| A. 공식 데이터 | ① 교육부 NEIS 교육정보 개방포털 `schoolInfo`(경남교육청 `ATPT_OFCDC_SC_CODE=S10`) — 2026-10-04 키 없이 호출 성공(샘플 5건 제한), 경남 전체 1,017교, 중학교 270교, `LOAD_DTM=20260423`. 필드: 학교명·학교종류(`SCHUL_KND_SC_NM`)·설립구분·도로명주소(`ORG_RDNMA`, 예 "경상남도 창원시 마산회원구 삼호로 110")·관할 교육지원청. ② 공공데이터포털 "전국초중등학교위치표준데이터"(15021148, OpenAPI `tn_pubr_public_elesch_mskul_lc_api`) — 학교급구분·운영상태·소재지도로명주소·**위도·경도**·데이터기준일자. 현재 키로는 resultCode 30(활용신청 필요) |
+| B. 단위 | 구별 운영 중 초·중·고등학교 수(개). 1차는 초·중·고 합산 1개 지표(`school_count`), 학교급별 수는 참고 표시 후보 |
+| C. 5개 구 매핑 | ① 도로명주소의 "창원시 ○○구" 문자열로 1:1(행정구 주소). ② 위도·경도가 있으면 기존 SGIS 경계 점-다각형 판정(`services/geo.py`, 버스정류장과 같은 방식)으로 교차검증 가능 |
+| D. 방향 | 높을수록 좋음 — 기존 3축과 같아 `scoring.py` 방향 플래그(OPEN-6) 불필요 |
+| E. 미확보·한계 | 5개 구 모두 값이 있을 때만 `확보`. 수집 실패·구 판정 불가 행은 제외 건수 기록. "학교 수"는 학군 수준·통학구역·학생 1인당 학교 수가 아니며 인구·면적 미보정(기존 CAVEATS와 동일) — "교육 여건" 단정 금지, "학교 수"로만 표현 |
+| F. 연결 | `data/region_indicators.csv`에 5행 추가(원본 집계 스크립트 신설, `scripts/ingest_*` 방식) → `scoring.CONDITION_TO_INDICATOR_CODE`에 "교육" 1줄 → `candidates.EVALUATION_AXES` "교육" 코드 연결 → `explanation_facts`·`feedback`·`app.py` 라벨 사전 항목 추가. 점수식·후보·Critic·피드백 로직은 그대로 재사용 |
+
+이주자 의미(INFERENCE): 자녀와 함께 옮기는 가구는 집 근처에 다닐 학교가 있는지가 정착 결정의 직접 조건이다. 단 자녀가 없는 사용자에게는 무의미하므로 지금처럼 사용자가 "교육"을 조건으로 고르고 가중치를 승인할 때만 점수에 들어가야 한다.
+
+**막힘**: 전체 목록 수집에는 키가 필요하다(NEIS 인증키 - 개방포털 회원가입 후 발급, 또는 data.go.kr 15021148 활용신청). 사용자 작업 → OPEN-8.
 
 ## 알려진 문제 / 공백
 

@@ -203,6 +203,25 @@
 - 범위·완료 조건: `CURRENT_STATE.md` G4 feasibility 표 C행.
 - 결과:
 
+## G5. 다음 평가축 결정 - 직장 접근성 vs 교육 (조사, 코드 변경 없음)
+- [x] 상태
+- 승인: 불필요 (조사·문서만)
+- 근거: DEC-17, EVAL_MATRIX 공백 6, R-EV-1·R-EV-5
+- 결과: 2026-10-04 · G4 inspect 재확인 resultCode 30 → BLOCKED 유지 · 직장 접근성은 구 단위 입력·이동시간 데이터 부재로 축 구현 불가(DEC-18) · 교육(구별 초·중·고 학교 수) 선택: NEIS schoolInfo 키 없이 호출 확인(경남 1,017교, 주소에 창원시 ○○구), 학교위치표준데이터 필드 확인 · 전체 수집은 키 필요(OPEN-8). 상세 A~F는 `CURRENT_STATE.md` "다음 평가축 조사".
+
+## G5-A. 교육 데이터 수집·구별 집계 (scoring 미연결)
+- [!] 상태
+- 승인: 필요 (OPEN-8 키 확보)
+- 범위: `scripts/ingest_school_counts.py`(신규) - 경남 학교 목록 수집 → 운영 중 초·중·고, 주소의 창원시 ○○구로 집계(좌표 있으면 SGIS 판정 교차검증) → 출처·기준일과 함께 `data/region_indicators.csv` 교육 5행 / 테스트 신규
+- 완료 조건: 5개 구 값·제외 건수·기준일 확인, 원본 수집 파일 보존, 전체 테스트 통과
+- 결과:
+
+## G5-B. 교육 평가축 연결
+- [ ] 상태
+- 승인: 필요 (`scoring.py` 매핑 1줄 - 계산식 불변, CLAUDE.md §4 보고 대상)
+- 범위: `CONDITION_TO_INDICATOR_CODE`·`EVALUATION_AXES`·`explanation_facts`·`feedback`·`app.py` 라벨, 기존 3축 결과 불변 회귀 테스트
+- 결과:
+
 ---
 
 ## 발견된 작업
