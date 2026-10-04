@@ -56,7 +56,8 @@ class PagesFirstRenderTest(unittest.TestCase):
         at = self._run("app.py")
         labels = {s.label: s.options for s in at.selectbox}
         region = next(opts for label, opts in labels.items() if label.startswith("비교 범위"))
-        self.assertEqual(region, ["창원시 5개 구", "경남 시 지역 (7곳)", "경남 군 지역 (10곳)"])
+        # 화면에는 표시 이름만 보인다(내부 값 "창원시 5개 구"는 그대로 저장 - ScopeDisplayTest)
+        self.assertEqual(region, ["경남 구 지역 (5곳)", "경남 시 지역 (7곳)", "경남 군 지역 (10곳)"])
         self.assertIn("선택 안 함", labels["직장 또는 학교 위치"])
         self.assertIn("경남 김해시", labels["직장 또는 학교 위치"])
         self.assertIn("월세 30~50만원", labels["주거비 예산"])
@@ -367,6 +368,81 @@ class PagesFirstRenderTest(unittest.TestCase):
             at = self._run("pages/user.py", {"search_center": SEARCH_CENTER,
                                              "location_agent_result": self._location_result(mode, final)})
             self.assertTrue(any("AI 답변" in s.value for s in at.success), mode)
+
+class ScopeDisplayTest(unittest.TestCase):
+    """비교 범위: 화면에는 '경남 구 지역 (5곳)', 내부 저장값은 '창원시 5개 구' 그대로."""
+    INTERNAL = "창원시 5개 구"
+    NO_QUESTIONS = {"message": {"content": '{"questions": [], "tool_calls": []}'}}
+
+    def _scope_text(self, at: AppTest) -> str:
+        # 실제 지명(창원시 의창구 등)은 남고, 범위 이름으로서의 "창원시 5개 구"만 없어야 한다.
+        # 선택박스의 value는 내부 값이라 화면 글자가 아니므로 options(표시 이름)만 본다.
+        parts = []
+        for kind in ("title", "header", "subheader", "markdown", "caption", "info", "warning", "success", "error"):
+            parts += [str(e.value) for e in getattr(at, kind)]
+        parts += [e.label for e in at.expander]
+        parts += [d.value.to_string() for d in at.dataframe]
+        parts += [f"{s.label} {s.options}" for s in at.selectbox]
+        return "\n".join(parts)
+
+    def test_gu_scope_keeps_internal_value_and_results_and_never_shows_old_name(self):
+        at = AppTest.from_file(os.path.join(PROJECT_ROOT, "app.py"), default_timeout=TIMEOUT_S).run()
+        self.assertEqual(at.selectbox[0].options, ["경남 구 지역 (5곳)", "경남 시 지역 (7곳)", "경남 군 지역 (10곳)"])
+        at.selectbox[0].select(self.INTERNAL)  # 선택 결과 내부 값은 기존 값
+        with mock.patch("ollama.chat", return_value=self.NO_QUESTIONS):
+            at.button[0].click().run()
+        self.assertEqual([e.value for e in at.exception], [])
+        self.assertEqual(at.session_state["initial_input"]["희망지역"], self.INTERNAL)
+        # 결과는 기존 5개 구 비교와 같다(같은 5개 구, 같은 후보)
+        result = at.session_state["initial_recommendation"]
+        self.assertEqual({r["region_id"][:3] for r in result["region_scores"]}, {"CW-"})
+        self.assertEqual(len(result["region_scores"]), 5)
+        markdown = " ".join(m.value for m in at.markdown)
+        for role in ("최적 · 마산합포구", "균형 · 의창구", "대안 · 진해구"):
+            self.assertIn(role, markdown)
+        text = self._scope_text(at)
+        self.assertIn("경남 구 지역 (5곳) 한눈에 비교", text)
+        self.assertIn("비교 범위: 경남 구 지역 (5곳)", text)
+        self.assertNotIn(self.INTERNAL, text)
+        self.assertIn("창원시 의창구", text)  # 실제 지명은 그대로(교육시설 참고 표)
+
+        # 피드백 재평가 뒤에도 범위 이름은 표시 이름
+        next(b for b in at.button if b.label == "다시 비교하기").click().run()
+        self.assertEqual([e.value for e in at.exception], [])
+        self.assertEqual(at.session_state["feedback_recommendation"]["status"], "ok")
+        self.assertEqual(len(at.session_state["feedback_recommendation"]["region_scores"]), 5)
+        self.assertNotIn(self.INTERNAL, self._scope_text(at))
+
+    def test_legacy_session_value_still_works_and_ai_prompt_gets_display_name(self):
+        """예전 세션 값("창원시 5개 구")으로 돌아와도 같은 선택지가 골라지고, AI 프롬프트에는 표시 이름만 간다."""
+        prompts = []
+
+        def fake(**kwargs):
+            prompts.append(" ".join(m["content"] for m in kwargs["messages"]))
+            return self.NO_QUESTIONS
+
+        at = AppTest.from_file(os.path.join(PROJECT_ROOT, "app.py"), default_timeout=TIMEOUT_S)
+        at.session_state["initial_input"] = {"희망지역": self.INTERNAL}
+        at.run()
+        self.assertEqual(at.selectbox[0].value, self.INTERNAL)
+        with mock.patch("ollama.chat", side_effect=fake):
+            at.button[0].click().run()
+        self.assertEqual(at.session_state["initial_input"]["희망지역"], self.INTERNAL)
+        self.assertTrue(prompts)
+        self.assertTrue(any("경남 구 지역 (5곳)" in p for p in prompts))
+        self.assertFalse(any(self.INTERNAL in p for p in prompts))
+
+    def test_government_page_uses_same_display_names(self):
+        at = AppTest.from_file(os.path.join(PROJECT_ROOT, "pages/government.py"), default_timeout=TIMEOUT_S).run()
+        scope = at.selectbox(key="gov_scope")
+        self.assertEqual(scope.options, ["경남 구 지역 (5곳)", "경남 시 지역 (7곳)", "경남 군 지역 (10곳)"])
+        self.assertEqual(scope.value, self.INTERNAL)
+        self.assertTrue(any("1. 경남 구 지역 (5곳) 시설 수 현황" in h.value for h in at.header))
+        self.assertNotIn(self.INTERNAL, self._scope_text(at))
+        at.selectbox(key="gov_scope").select("경남 시 지역 (7곳)").run()
+        self.assertEqual([e.value for e in at.exception], [])
+        self.assertTrue(any("1. 경남 시 지역 (7곳) 시설 수 현황" in h.value for h in at.header))
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -20,7 +20,7 @@ import streamlit as st
 from analysis import simulation
 from analysis.scoring import INDICATOR_CATEGORY
 from services import demand_log
-from services.region_data import REGION_SCOPES, get_all_regions
+from services.region_data import REGION_SCOPES, get_all_regions, scope_display
 
 CHART_ACCENT_COLOR = "#2a78d6"
 CATEGORIES = ["교통", "의료", "생활편의"]
@@ -160,8 +160,9 @@ _render_demand_overview()
 st.divider()
 
 # 비교 범위(같은 유형끼리)를 고른 뒤 그 유형 전체를 조회한다(점수 계산 없음, 원본 CSV를 그대로 읽기만 함).
-scope_label = st.selectbox("비교 범위", list(REGION_SCOPES), key="gov_scope")
-regions = get_all_regions(region_type=REGION_SCOPES[scope_label])
+scope_value = st.selectbox("비교 범위", list(REGION_SCOPES), key="gov_scope", format_func=scope_display)
+regions = get_all_regions(region_type=REGION_SCOPES[scope_value])
+scope_label = scope_display(scope_value)  # 화면 표시 이름(내부 값은 scope_value)
 
 # ---------------------------------------------------------------------------
 # 1. 비교 범위 전체 시설 수 현황

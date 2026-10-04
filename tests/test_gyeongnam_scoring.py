@@ -8,7 +8,7 @@ import unittest
 from analysis import feedback, scoring, simulation
 from analysis.candidates import strength_max_rank, weakness_min_rank
 from analysis.explanation_facts import judge
-from services.region_data import REGION_SCOPES, get_all_regions, region_type_for
+from services.region_data import REGION_SCOPE_DISPLAY, REGION_SCOPES, get_all_regions, region_type_for, scope_display
 from tests import changwon_fixture
 
 EQUAL = {"bus_stop_count": 1, "hospital_count": 1, "convenience_store_count": 1}
@@ -25,6 +25,17 @@ class RegionScopeTest(unittest.TestCase):
         self.assertEqual(region_type_for("창원시 의창구"), "구")  # 예전 희망지역 입력
         self.assertEqual(region_type_for("창원시 전체"), "구")
         self.assertEqual(region_type_for(""), "구")
+
+    def test_scope_display_names_keep_internal_values(self):
+        """내부 값은 그대로, 화면 표시 이름만 '경남 구 지역 (5곳)'. 표시 이름으로도 같은 유형을 찾는다."""
+        self.assertEqual(list(REGION_SCOPES), ["창원시 5개 구", "경남 시 지역 (7곳)", "경남 군 지역 (10곳)"])
+        self.assertEqual([scope_display(k) for k in REGION_SCOPES],
+                         ["경남 구 지역 (5곳)", "경남 시 지역 (7곳)", "경남 군 지역 (10곳)"])
+        self.assertEqual(set(REGION_SCOPE_DISPLAY), set(REGION_SCOPES))
+        self.assertEqual(scope_display(""), "경남 구 지역 (5곳)")
+        self.assertEqual(scope_display("창원시 의창구"), "창원시 의창구")  # 모르는 값은 그대로
+        for label, region_type in REGION_SCOPES.items():
+            self.assertEqual(region_type_for(scope_display(label)), region_type)
 
     def test_default_scoring_never_mixes_types(self):
         result = scoring.compute_region_scores_from_weights(EQUAL, 3)

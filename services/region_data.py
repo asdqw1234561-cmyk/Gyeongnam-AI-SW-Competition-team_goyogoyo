@@ -72,12 +72,28 @@ REGION_SCOPES: dict[str, str] = {
 }
 DEFAULT_REGION_TYPE = "구"
 
+# 화면 표시용 이름. 내부 저장값(REGION_SCOPES 키, 세션의 희망지역, 수요 기록 scope)은 그대로 두고
+# 사용자에게 보여줄 때만 바꾼다. 경남의 구 지역 5곳은 모두 창원시에 속한다.
+REGION_SCOPE_DISPLAY: dict[str, str] = {
+    "창원시 5개 구": "경남 구 지역 (5곳)",
+    "경남 시 지역 (7곳)": "경남 시 지역 (7곳)",
+    "경남 군 지역 (10곳)": "경남 군 지역 (10곳)",
+}
+
+
+def scope_display(label: str | None) -> str:
+    """비교 범위 내부 값 → 화면 표시 이름. 모르는 값은 그대로 돌려준다(빈 값은 기본 범위)."""
+    if not label:
+        return REGION_SCOPE_DISPLAY["창원시 5개 구"]
+    return REGION_SCOPE_DISPLAY.get(label, label)
+
 
 def region_type_for(region_text: str | None) -> str:
-    """희망지역(비교 범위) 문자열 → 비교할 지역 유형(구/시/군). 예전 입력("창원시 의창구" 등)은 구로 본다."""
+    """희망지역(비교 범위) 문자열 → 비교할 지역 유형(구/시/군). 예전 입력("창원시 의창구" 등)은 구로 본다.
+    내부 값("창원시 5개 구")과 화면 표시 이름("경남 구 지역 (5곳)") 모두 받는다."""
     text = region_text or ""
     for label, region_type in REGION_SCOPES.items():
-        if label in text:
+        if label in text or REGION_SCOPE_DISPLAY[label] in text:
             return region_type
     regions = _load_regions()
     for _, row in regions.iterrows():

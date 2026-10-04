@@ -12,7 +12,7 @@ from agent.planner import OLLAMA_MODEL as PLANNER_MODEL
 from agent.planner_loop import REVIEW_TOOL_LABELS, explain_candidates
 from analysis import feedback, scoring
 from analysis.candidates import build_candidate_set, strength_max_rank, weakness_min_rank
-from services.region_data import REGION_SCOPES, get_all_regions, is_supported_region, region_type_for
+from services.region_data import REGION_SCOPES, get_all_regions, is_supported_region, region_type_for, scope_display
 from services import demand_log
 from services.region_map import BOUNDARY_SOURCE, boundary_base_date, build_candidate_map_regions, map_component_key
 from services.schools import SCHOOL_REFERENCE_LIMITATIONS, SCHOOL_REFERENCE_TITLE, load_school_reference
@@ -293,9 +293,10 @@ def _current_view_result() -> dict | None:
 
 
 def _scope_label() -> str:
-    """지금 비교 중인 범위 이름(희망지역에서 고른 값). 예전 입력은 창원시 5개 구로 본다."""
+    """지금 비교 중인 범위의 화면 표시 이름. 내부 값(희망지역)은 그대로 두고 표시만 바꾼다.
+    예전 입력(범위 목록에 없는 값)은 기본 범위(구 지역)로 본다."""
     text = st.session_state.initial_input.get("희망지역", "")
-    return text if text in REGION_SCOPES else "창원시 5개 구"
+    return scope_display(text if text in REGION_SCOPES else None)
 
 
 def _scope_regions() -> list[dict]:
@@ -843,7 +844,7 @@ def render_detail_sections(result: dict) -> None:
 def _render_input_summary() -> None:
     """완료 화면 맨 위의 입력 요약 한 줄 + 전체 입력 내용(접힌 영역)."""
     inp = st.session_state.initial_input
-    parts = ["비교 범위: " + (inp.get("희망지역") or "창원시 5개 구"),
+    parts = ["비교 범위: " + _scope_label(),
              "중요 조건: " + (", ".join(inp.get("중요 생활조건") or []) or "선택 안 함(확보된 항목 전체)"),
              f"후보 {inp.get('원하는 후보 개수') or 3}곳"]
     st.caption("📝 입력: " + " · ".join(parts))
@@ -851,7 +852,8 @@ def _render_input_summary() -> None:
     with st.expander("입력 내용 전체 보기"):
         st.dataframe(
             pd.DataFrame([
-                {"항목": key, "입력": ", ".join(value) if isinstance(value, list) else (str(value) if value else "선택 안 함")}
+                {"항목": key, "입력": ", ".join(value) if isinstance(value, list) else (
+                    _scope_label() if key == "희망지역" else (str(value) if value else "선택 안 함"))}
                 for key, value in inp.items()
             ]),
             hide_index=True, width="stretch",
@@ -1282,7 +1284,7 @@ def _finalize_initial_recommendation(confirmed_weights: dict[str, float] | None 
         run_result = run_agent_plan(
             selected_conditions=st.session_state.initial_input.get("중요 생활조건") or [],
             confirmed_weights=confirmed_weights,
-            desired_region=st.session_state.initial_input.get("희망지역", ""),
+            desired_region=scope_display(st.session_state.initial_input.get("희망지역", "")),
             candidate_count=st.session_state.initial_input.get("원하는 후보 개수") or 3,
             unscored_inputs=_unscored_inputs(st.session_state.initial_input),
         )
@@ -1349,6 +1351,7 @@ if st.session_state.stage == "input":
             "비교 범위 (경상남도)",
             REGION_OPTIONS,
             index=_option_index(REGION_OPTIONS, prev.get("희망지역")),
+            format_func=scope_display,  # 화면엔 "경남 구 지역 (5곳)", 저장값은 내부 값 그대로
             help="경남 22개 지역 중 규모가 비슷한 같은 행정유형끼리만 비교합니다(구 지역끼리 / 시 지역끼리 / 군 지역끼리). 유형이 다른 "
                  "지역을 한 표에서 점수로 비교하면 큰 도시나 군 지역으로 결과가 크게 쏠리기 때문입니다.",
         )

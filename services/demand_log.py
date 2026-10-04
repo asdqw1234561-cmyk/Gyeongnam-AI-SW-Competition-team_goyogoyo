@@ -31,6 +31,8 @@ from collections import Counter
 from datetime import date
 from pathlib import Path
 
+from services.region_data import scope_display
+
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_LOG_PATH = PROJECT_ROOT / "data" / "demand" / "requests.jsonl"
 SCHEMA_VERSION = 1
@@ -118,7 +120,8 @@ def summarize(records: list[dict]) -> dict:
     total = len(records)
     if total == 0:
         return {"total": 0}
-    scopes = Counter(r.get("scope") for r in records)
+    # 저장값은 내부 값("창원시 5개 구")이고, 집계 화면에는 표시 이름으로 보여준다.
+    scopes = Counter(scope_display(r.get("scope")) for r in records)
     conditions = Counter(c for r in records for c in r.get("conditions") or [])
     no_condition = sum(1 for r in records if not r.get("conditions"))
     unmet = Counter(c for r in records for c in r.get("unscored_conditions") or [])
@@ -136,7 +139,7 @@ def summarize(records: list[dict]) -> dict:
     candidate_rows: Counter = Counter()
     for r in records:
         for c in r.get("candidates") or []:
-            candidate_rows[(r.get("scope"), c["region"], c["role"])] += 1
+            candidate_rows[(scope_display(r.get("scope")), c["region"], c["role"])] += 1
     dates = sorted(r.get("date") for r in records if r.get("date"))
     return {
         "total": total,

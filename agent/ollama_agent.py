@@ -9,6 +9,7 @@ from agent import llm  # LLM_BACKEND(.env)에 따라 Ollama 또는 Claude Code C
 
 from analysis.feedback import STRENGTH_FACTORS, axis_mentioned, resolve_axis
 from analysis.scoring import CONDITION_TO_INDICATOR_CODE
+from services.region_data import scope_display
 
 OLLAMA_MODEL = "qwen3.5:4b"
 
@@ -182,6 +183,8 @@ def _build_user_prompt(user_input: dict) -> str:
     for key, value in user_input.items():
         if value in (None, "", []):
             continue
+        if key == "희망지역":
+            value = scope_display(value)  # AI가 내부 값("창원시 5개 구")을 따라 쓰지 않게 표시 이름으로
         lines.append(f"- {key}: {value}")
     lines.append("")
     lines.append("위 정보를 바탕으로 추가 질문이 필요한지 판단하고 JSON으로 응답하세요.")

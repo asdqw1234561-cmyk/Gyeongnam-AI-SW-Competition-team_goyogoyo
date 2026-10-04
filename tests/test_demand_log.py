@@ -123,6 +123,12 @@ class SummarizeTest(unittest.TestCase):
         self.assertEqual(summary["period"], ("2026-10-04", "2026-10-04"))
         self.assertTrue(summary["candidates"])
 
+    def test_scope_is_stored_internally_and_shown_with_display_name(self):
+        """저장값은 내부 값("창원시 5개 구") 그대로, 집계 화면에는 표시 이름("경남 구 지역 (5곳)")."""
+        summary = demand_log.summarize([_record("a"), _record("b")])
+        self.assertEqual([row["항목"] for row in summary["scopes"]], ["경남 구 지역 (5곳)"])
+        self.assertEqual({row["비교 범위"] for row in summary["candidates"]}, {"경남 구 지역 (5곳)"})
+
 
 if __name__ == "__main__":
     unittest.main()
