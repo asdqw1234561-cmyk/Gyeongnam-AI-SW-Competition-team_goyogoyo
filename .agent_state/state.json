@@ -1,18 +1,18 @@
 {
   "steward_branch": "jhy-next",
   "submission_deadline": "2026-10-06T12:00",
-  "last_synced_commit": "260e31b",
+  "last_synced_commit": "5ca11b2",
   "last_synced_at": "2026-10-04",
   "last_test_result": "489 passed, 1 skipped (2026-10-04, G5-B 보정)",
   "last_loop": {
     "date": "2026-10-04",
-    "task": "GN-D 창원 전제 문구·문서 정리",
-    "result": "정부용 화면·시뮬레이션·프롬프트·README·CHARTER·EVAL_MATRIX 정리"
+    "task": "GN-E 참고 표·관심 지역 강조·전월세 수집 22개",
+    "result": "구현·테스트 506 통과. 전월세 실제 수집은 API 반영 대기"
   },
   "next_candidates": [
-    "유형 간 점수 없는 참고 표(22개 지역 실제 개수·1만 명당)",
-    "범위 안 특정 시·군 강조",
-    "전월세 수집 대상 22개로 확장(API 반영 후)"
+    "전월세 API 반영 시 G4-A 수집·분석(그룹별)",
+    "실제 브라우저 확인",
+    "제출물 작성(경남 버전)"
   ],
   "open_decisions": [
     "OPEN-1",

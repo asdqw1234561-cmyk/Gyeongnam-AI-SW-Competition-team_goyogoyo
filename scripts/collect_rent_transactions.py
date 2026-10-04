@@ -1,6 +1,6 @@
-# 국토교통부 전월세 실거래가 API -> 창원시 5개 구 임대차 거래 수집·정규화 (G4-A, 앱 미연결)
+# 국토교통부 전월세 실거래가 API -> 경남 22개 지역 임대차 거래 수집·정규화 (G4-A, 앱 미연결)
 """
-국토교통부 전월세 실거래가 OpenAPI 4종에서 창원시 5개 구의 임대차 거래를 받아 주택유형별로
+국토교통부 전월세 실거래가 OpenAPI 4종에서 경남 22개 지역(창원시 5개 구 + 시 7곳 + 군 10곳)의 임대차 거래를 받아 주택유형별로
 정규화한 스냅샷 CSV를 만든다. 주거비 점수는 만들지 않는다 - 분석은
 scripts/analyze_rent_transactions.py, 앱(app.py·Agent)은 이 데이터를 아직 읽지 않는다.
 
@@ -14,7 +14,7 @@ scripts/analyze_rent_transactions.py, 앱(app.py·Agent)은 이 데이터를 아
           (예: "50,000"처럼 쉼표 포함), 동·호 미제공, 결과코드 "000"=정상.
 
 [정규화 규칙]
-    - region_id: LAWD_CD 48121/48123/48125/48127/48129 -> 기존 region_id 5개(1:1). 응답 sggCd가 요청 코드와
+    - region_id: LAWD_CD(scripts/gyeongnam_regions.py의 lawd_cd 22개) -> region_id(1:1). 응답 sggCd가 요청 코드와
       다르면 그 행은 버리고 경고(코드 오매핑 방지).
     - rent_type: 기술문서는 contractType을 "계약구분"이라고만 하고 값 정의가 없다. 기술문서 응답 예시의 전세 거래가
       monthlyRent=0 이므로 **monthlyRent == 0 -> jeonse, > 0 -> monthly(반전세 포함)** 로 판정하되,
@@ -53,16 +53,20 @@ load_dotenv()
 API_ROOT = "https://apis.data.go.kr/1613000"
 SERVICE_KEY_ENVS = ("MOLIT_SERVICE_KEY", "HIRA_SERVICE_KEY")
 OUT_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "housing")
-TRANSACTIONS_CSV = "changwon_rent_transactions.csv"
+TRANSACTIONS_CSV = "gyeongnam_rent_transactions.csv"
 MANIFEST_JSON = "collection_manifest.json"
 PAGE_SIZE = 1000
 
-DISTRICTS: dict[str, tuple[str, str]] = {   # LAWD_CD -> (region_id, 구 이름)
-    "48121": ("CW-UICHANG", "의창구"),
-    "48123": ("CW-SEONGSAN", "성산구"),
-    "48125": ("CW-MASANHAPPO", "마산합포구"),
-    "48127": ("CW-MASANHOEWON", "마산회원구"),
-    "48129": ("CW-JINHAE", "진해구"),
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import gyeongnam_regions as _gn  # noqa: E402  (경남 22개 지역 마스터 - 코드 대응은 원본 파일로 확인된 값)
+
+# LAWD_CD -> (region_id, 지역 이름). 창원시 구는 운영 지표와 같은 짧은 이름(의창구 등)을 쓴다.
+DISTRICTS: dict[str, tuple[str, str]] = {
+    lawd: (region_id, name.removeprefix("창원시 ")) for region_id, name, _type, _sgis, lawd in _gn.REGIONS
+}
+# 지역 이름 -> 유형(구/시/군). 분석은 같은 유형끼리만 비교한다(점수 비교와 같은 원칙, DEC-21).
+REGION_TYPE_BY_NAME: dict[str, str] = {
+    name.removeprefix("창원시 "): region_type for _rid, name, region_type, _sgis, _lawd in _gn.REGIONS
 }
 
 HOUSING_TYPES: dict[str, dict] = {

@@ -8,7 +8,7 @@ from agent.planner import TOOL_LABELS, run_agent_plan
 from agent.planner import OLLAMA_MODEL as PLANNER_MODEL
 from agent.planner_loop import REVIEW_TOOL_LABELS, explain_candidates
 from analysis import feedback, scoring
-from analysis.candidates import build_candidate_set
+from analysis.candidates import build_candidate_set, strength_max_rank, weakness_min_rank
 from services.region_data import REGION_SCOPES, get_all_regions, is_supported_region, region_type_for
 from services.schools import SCHOOL_REFERENCE_LIMITATIONS, SCHOOL_REFERENCE_TITLE, load_school_reference
 
@@ -368,12 +368,47 @@ def _render_critic_highlights(candidate_set: dict) -> None:
         st.warning(check["message"])
 
 
-def _render_comparison_table(result: dict) -> None:
-    """비교 지역 종합점수와 항목별 실제 개수·인구 1만 명당 값·순위를 표 하나로 보여준다."""
+FOCUS_NONE = "강조 안 함"
+
+
+def _render_focus_summary(result: dict, focus: str, ranks: dict, candidate_set: dict | None) -> None:
+    """관심 지역 한 곳의 위치를 한 줄로: 종합 순위, 항목별 강점·약점(같은 판정 기준), 맡은 후보 역할. 표시 전용."""
+    row = next((r for r in result["region_scores"] if r["region_name"] == focus), None)
+    if row is None:
+        return
+    n = len(result["region_scores"])
+    strengths, weaknesses = [], []
+    for uc in result["used_conditions"]:
+        rank = ranks[uc["indicator_code"]][row["region_id"]]
+        axis = AXIS_SHORT_LABELS.get(uc["indicator_code"], uc["indicator_name"])
+        if rank <= strength_max_rank(n):
+            strengths.append(f"{axis}({rank}위)")
+        elif rank >= weakness_min_rank(n):
+            weaknesses.append(f"{axis}({rank}위)")
+    roles = [r["role_label"] for r in (candidate_set or {}).get("roles", [])
+             if r.get("status") == "ok" and r.get("region_name") == focus]
+    role_text = f" · 맡은 후보 역할: {', '.join(roles)}" if roles else " · 이번 후보 역할에는 들지 않음"
+    st.info(f"★ {focus}: 종합 {row['total_score']:.1f}점, {n}곳 중 {row['rank']}위 · "
+            f"강점 {', '.join(strengths) or '없음'} · 약점 {', '.join(weaknesses) or '없음'}{role_text}")
+
+
+def _render_comparison_table(result: dict, candidate_set: dict | None = None) -> None:
+    """비교 지역 종합점수와 항목별 실제 개수·인구 1만 명당 값·순위를 표 하나로 보여준다.
+    사용자가 고른 관심 지역은 ★로 강조하고 위치를 한 줄로 요약한다(점수·순위는 이미 계산된 값 그대로)."""
     ranks = _axis_value_ranks(result)
+    st.markdown(f"### 📊 {_scope_label()} 한눈에 비교")
+    names = [r["region_name"] for r in result["region_scores"]]
+    if st.session_state.get("focus_region") not in [FOCUS_NONE, *names]:
+        st.session_state["focus_region"] = FOCUS_NONE  # 범위가 바뀌어 예전 선택이 목록에 없으면 초기화
+    focus = st.selectbox("관심 지역 강조 (선택)", [FOCUS_NONE, *sorted(names)], key="focus_region",
+                         help="비교 범위 안에서 궁금한 지역을 고르면 표에서 ★로 표시하고 그 지역의 위치를 요약합니다. "
+                              "점수·순위·후보는 바뀌지 않습니다.")
+    if focus != FOCUS_NONE:
+        _render_focus_summary(result, focus, ranks, candidate_set)
     rows = []
     for r in result["region_scores"]:
-        row = {"순위": r["rank"], "지역": r["region_name"] + (" (동점)" if r["tied"] else ""),
+        mark = "★ " if r["region_name"] == focus else ""
+        row = {"순위": r["rank"], "지역": mark + r["region_name"] + (" (동점)" if r["tied"] else ""),
                "종합점수": round(r["total_score"], 1)}
         for uc in result["used_conditions"]:
             code = uc["indicator_code"]
@@ -383,7 +418,6 @@ def _render_comparison_table(result: dict) -> None:
         if r.get("population"):
             row["인구"] = f"{r['population']:,.0f}명"
         rows.append(row)
-    st.markdown(f"### 📊 {_scope_label()} 한눈에 비교")
     st.dataframe(pd.DataFrame(rows), hide_index=True, width="stretch")
     requested = [r["region_name"] for r in result.get("top_candidates", [])]
     st.caption(
@@ -486,7 +520,7 @@ def render_result_view() -> None:
                     hide_index=True, width="stretch",
                 )
                 st.caption("이 가정을 실제로 적용하려면 아래 '🔄 조건 바꿔서 다시 보기'에서 요청하고 승인하세요.")
-    _render_comparison_table(result)
+    _render_comparison_table(result, candidate_set)
 
 
 def _weight_source_text() -> str:
@@ -557,6 +591,48 @@ def _indicator_sources(codes: list[str]) -> list[dict]:
     return [found[c] for c in codes if c in found]
 
 
+REFERENCE_TYPE_ORDER = {"구": 0, "시": 1, "군": 2}
+REFERENCE_TYPE_LABELS = {"구": "창원시 구", "시": "시", "군": "군"}
+
+
+def _indicator_value(region: dict, category: str, code: str) -> float | None:
+    for indicator in region["categories"].get(category, []):
+        if indicator["indicator_code"] == code and indicator["data_status"] == "확보" and indicator["value"]:
+            return float(indicator["value"])
+    return None
+
+
+def _render_all_regions_reference() -> None:
+    """경남 22개 지역 참고 표 - 유형이 다른 지역도 실제 개수와 인구 1만 명당 값을 나란히 보되 점수·순위는 매기지 않는다
+    (DEC-21: 유형이 다른 지역을 점수로 비교하면 왜곡이 크다). 값은 data/region_indicators.csv 그대로, 1만 명당은 표시용 나눗셈."""
+    current_type = region_type_for(st.session_state.initial_input.get("희망지역", ""))
+    with st.expander("🗺️ 경남 22개 지역 참고 표 — 점수 없음 (유형이 다른 지역도 실제 값만 나란히)"):
+        rows = []
+        for region in sorted(get_all_regions(), key=lambda r: (REFERENCE_TYPE_ORDER.get(r.get("region_type"), 9),
+                                                               r["region_name"])):
+            population = _indicator_value(region, scoring.POPULATION_CATEGORY, scoring.POPULATION_CODE)
+            row = {"비교 범위": "● 지금 비교 중" if region.get("region_type") == current_type else "",
+                   "유형": REFERENCE_TYPE_LABELS.get(region.get("region_type"), "-"), "지역": region["region_name"],
+                   "인구": f"{population:,.0f}명" if population else "미확보"}
+            for code in REFERENCE_INDICATOR_ORDER:
+                value = _indicator_value(region, scoring.INDICATOR_CATEGORY[code], code)
+                label = FEEDBACK_INDICATOR_LABELS[code]
+                if value is None:
+                    row[label] = "미확보"
+                elif population:
+                    row[label] = f"{value:.0f}개 (1만 명당 {value / population * scoring.PER_CAPITA_UNIT:.1f})"
+                else:
+                    row[label] = f"{value:.0f}개"
+            rows.append(row)
+        st.dataframe(pd.DataFrame(rows), hide_index=True, width="stretch")
+        st.caption(
+            "이 표에는 점수·순위가 없습니다. 추천 점수는 규모가 비슷한 같은 유형 지역끼리만 계산합니다 - 유형이 다른 지역을 "
+            "한 점수로 비교하면 시설 수 그대로는 큰 시가, 인구 1만 명당은 넓게 흩어진 군이 늘 앞서는 왜곡이 생기기 때문입니다. "
+            "특히 군 지역의 1만 명당 버스정류장 수가 큰 것은 정류장이 넓게 흩어져 있어서이며 교통이 편하다는 뜻이 아닙니다. "
+            "출처·기준일은 '📋 데이터 출처와 한계'를 참고하세요."
+        )
+
+
 def render_detail_sections(result: dict) -> None:
     """완료 화면 하단의 접힌 영역들: Agent 실행 과정, 계산 근거, 데이터 출처·한계, 교육시설 참고정보."""
     st.divider()
@@ -624,6 +700,7 @@ def render_detail_sections(result: dict) -> None:
             for c in result["caveats"]:
                 st.caption(f"· {c}")
 
+    _render_all_regions_reference()
     _render_school_reference()
 
 
@@ -1044,6 +1121,7 @@ def reset_all():
     for key in FEEDBACK_SLIDER_KEYS.values():
         st.session_state.pop(key, None)
     st.session_state.pop("nl_feedback_input", None)
+    st.session_state.pop("focus_region", None)
 
 
 def _finalize_initial_recommendation(confirmed_weights: dict[str, float] | None = None) -> None:

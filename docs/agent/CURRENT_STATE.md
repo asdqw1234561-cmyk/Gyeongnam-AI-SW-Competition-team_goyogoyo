@@ -25,6 +25,7 @@
 | F12 | 교육시설 수 참고 정보: 결과 화면에 구별 초·중·고·총 학교 수·분교 수, 출처·기준일, 한계 표시. 추천 점수·후보·Critic·피드백에 쓰지 않음(DEC-19), 파일 없으면 "미확보" 안내 후 추천은 그대로 | `services/schools.py`, `app.py` `_render_school_reference` | 동작(단위·AppTest), 브라우저 미확인 |
 | F13 | 추천 결과 화면 재구성(U2): 결론(후보 요약) → Critic 확인할 점 → AI 설명 → 5개 구 비교표 → 조건 바꾸기 → 접힌 상세(Agent가 한 일·계산 근거·데이터 출처/한계·교육시설). 피드백 승인 시 맨 위 결과 교체 | `app.py` `render_result_view`·`render_feedback_section`·`render_detail_sections` | 동작(AppTest·서버 기동), 브라우저 미확인 |
 | F14 | 경남 22개 지역 확장: 비교 범위(창원시 5개 구 / 시 7곳 / 군 10곳) 선택, 같은 유형끼리 인구 1만 명당 비교(DEC-20·21). 위치 탐색은 창원만 | `services/region_data.py`, `analysis/scoring.py`, `app.py`, `pages/government.py`, `data/gyeongnam/` | 동작(단위·AppTest), 실제 Ollama 시 범위·Test Case 5건 확인, 브라우저 미확인. 위치 탐색도 경남 22개 지역(GN-C) |
+| F15 | 경남 22개 지역 참고 표(점수 없음)·관심 지역 강조(표시 전용) | `app.py` `_render_all_regions_reference`, `_render_focus_summary` | 동작(AppTest), 브라우저 미확인 |
 | F6 | 정부용 구별 시설 현황·가상 증감 시뮬레이션 | `pages/government.py`, `analysis/simulation.py` | 동작 (주제 연결은 OPEN-3) |
 
 공통: `agent/llm.py`(백엔드 선택·호출 수·입력 길이 제한), `agent/llm_json.py`(JSON 추출).
@@ -142,7 +143,7 @@
 - → 단독/다가구는 전용면적이 없어 면적 기준 비교에서 다른 유형과 같은 방식으로 다룰 수 없다.
 
 **구현한 것 (앱 미연결, `cae0f59`)**
-- `scripts/collect_rent_transactions.py`: 4개 유형 × 5개 구 × 월 수집(페이지·totalCount 일치 확인, 재시도, 일시 오류는 해당 칸만 "미확보", 키·승인 오류는 즉시 중단), 정규화 열 `region_id, legal_dong, contract_ym, contract_date, housing_type, housing_subtype, rent_type, deposit_manwon, monthly_rent_manwon, exclusive_area_m2, total_floor_area_m2, building_year, complex_key, contract_type_raw, renewal_right_used, source`, 동·호 미저장, 키와 키 포함 URL 미출력. `inspect` / `collect` / `collect --save`.
+- `scripts/collect_rent_transactions.py`: 4개 유형 × 22개 지역(2026-10-04 확장, 분석은 같은 유형 그룹별) × 월 수집(페이지·totalCount 일치 확인, 재시도, 일시 오류는 해당 칸만 "미확보", 키·승인 오류는 즉시 중단), 정규화 열 `region_id, legal_dong, contract_ym, contract_date, housing_type, housing_subtype, rent_type, deposit_manwon, monthly_rent_manwon, exclusive_area_m2, total_floor_area_m2, building_year, complex_key, contract_type_raw, renewal_right_used, source`, 동·호 미저장, 키와 키 포함 URL 미출력. `inspect` / `collect` / `collect --save`.
 - `scripts/analyze_rent_transactions.py`: 스냅샷 CSV만 읽음. 주택유형 × (전세 보증금 / 월세 금액 / 월세 보증금) × 구별 n·평균·중앙값·P25·P75·최소·최대·극단값(Tukey 3·IQR), 6/12개월 × 신고 지연 2개월 제외 여부 4가지 기간의 비교 가능 여부, 평균 vs 중앙값 순위 변화, 저가 월세(30만원 미만·신고 기준 미만) 비중, 아파트 vs 비아파트 시 전체 분포. `MIN_SAMPLE_SIZE`는 `--min-sample` 설정값(기본 30, 미확정).
 - `tests/test_rent_transactions.py` 18개(공식 문서 응답 예시 픽스처, 네트워크 모킹) · `.env.example`에 `MOLIT_SERVICE_KEY` 항목 · 전체 418개 통과(skip 1).
 

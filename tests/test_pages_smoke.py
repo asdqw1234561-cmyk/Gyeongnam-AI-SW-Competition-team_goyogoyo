@@ -105,6 +105,25 @@ class PagesFirstRenderTest(unittest.TestCase):
         warnings = " ".join(w.value for w in at.warning)
         self.assertIn("직장/학교 위치", warnings)  # coverage 점검이 반영 못 한 입력을 밝힘
 
+    def test_focus_region_highlight_and_all_regions_reference_table(self):
+        """관심 지역 강조는 표시만 바꾸고(점수·후보 불변), 22개 지역 참고 표는 점수 없이 실제 값만 보여준다."""
+        at = AppTest.from_file(os.path.join(PROJECT_ROOT, "app.py"), default_timeout=TIMEOUT_S).run()
+        at.selectbox[0].select("경남 군 지역 (10곳)")
+        with mock.patch("ollama.chat", return_value={"message": {"content": '{"questions": [], "tool_calls": []}'}}):
+            at.button[0].click().run()
+        before = [(r["region_name"], r["rank"]) for r in at.session_state["initial_recommendation"]["region_scores"]]
+        at.selectbox(key="focus_region").select("함안군").run()
+        self.assertEqual([e.value for e in at.exception], [])
+        self.assertTrue(any(i.value.startswith("★ 함안군:") and "10곳 중 10위" in i.value for i in at.info))
+        after = [(r["region_name"], r["rank"]) for r in at.session_state["initial_recommendation"]["region_scores"]]
+        self.assertEqual(before, after)
+        table = next(d.value for d in at.dataframe if "★ 함안군" in list(d.value.get("지역", [])))
+        self.assertEqual(len(table), 10)
+        reference = next(d.value for d in at.dataframe if "비교 범위" in d.value.columns)
+        self.assertEqual(len(reference), 22)
+        self.assertFalse(any("점수" in c or "순위" in c for c in reference.columns))
+        self.assertEqual((reference["비교 범위"] != "").sum(), 10)
+
     def test_directional_feedback_approve_reject_and_slider_share_one_path(self):
         """G3: '의료를 더 중요하게' → 규칙으로 계산한 가중치 제안 → 승인 시 재평가·기록 / 무시도 기록 /
         슬라이더 '다시 비교하기'도 같은 경로로 기록된다."""

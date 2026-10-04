@@ -1,4 +1,4 @@
-# 창원시 5개 구 임대차 거래 스냅샷 분석 (G4-A, 네트워크·앱 미사용)
+# 경남 22개 지역 임대차 거래 스냅샷 분석 (같은 유형끼리) (G4-A, 네트워크·앱 미사용)
 """
 scripts/collect_rent_transactions.py 가 저장한 data/housing/changwon_rent_transactions.csv 만 읽어
 주택유형 × 계약유형 × 구별 분포를 계산하고, 구 비교에 쓸 수 있는 기간을 판정한다. 점수는 만들지 않는다.
@@ -35,7 +35,8 @@ from collections import defaultdict
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 HOUSING_DIR = os.path.join(ROOT, "data", "housing")
 sys.path.insert(0, ROOT)
-from scripts.collect_rent_transactions import DISTRICTS, HOUSING_TYPES, MANIFEST_JSON, TRANSACTIONS_CSV, month_range  # noqa: E402
+from scripts.collect_rent_transactions import (DISTRICTS, HOUSING_TYPES, MANIFEST_JSON, REGION_TYPE_BY_NAME,
+                                               TRANSACTIONS_CSV, month_range)  # noqa: E402
 
 DEFAULT_MIN_SAMPLE_SIZE = 30      # 확정값 아님 - 실제 표본 수를 본 뒤 결정
 LAG_MONTHS = 2                    # 신고(계약 후 30일 이내) 지연을 고려해 빼는 최근 개월 수
@@ -45,6 +46,11 @@ REPORT_THRESHOLD_DEPOSIT = 6000       # 만원
 FAR_OUT_IQR = 3.0
 
 REGION_ORDER = [name for _, name in DISTRICTS.values()]
+# 같은 유형끼리 비교한다(점수 비교와 같은 원칙): 그룹마다 표본 충분성·순위를 따로 본다.
+REGION_GROUPS: dict[str, list[str]] = {
+    label: [name for name in REGION_ORDER if REGION_TYPE_BY_NAME[name] == region_type]
+    for label, region_type in (("창원시 5개 구", "구"), ("경남 시 지역", "시"), ("경남 군 지역", "군"))
+}
 RENT_TYPE_LABELS = {"jeonse": "전세", "monthly": "월세"}
 METRICS = (  # (계약유형, 금액 열, 표시 이름)
     ("jeonse", "deposit_manwon", "전세 보증금"),
@@ -96,8 +102,9 @@ def window_label(length: int, exclude_lag: bool) -> str:
     return f"{length}개월" + (f"(최근 {LAG_MONTHS}개월 제외)" if exclude_lag else "(제외 없음)")
 
 
-def group_stats(rows: list[dict], months: list[str]) -> dict:
-    """{(housing_type, metric_label): {구 이름: describe()}}"""
+def group_stats(rows: list[dict], months: list[str], region_names: list[str] | None = None) -> dict:
+    """{(housing_type, metric_label): {지역 이름: describe()}} - region_names(기본 22개 전체) 순서로."""
+    names = region_names or REGION_ORDER
     month_set = set(months)
     buckets: dict = defaultdict(lambda: defaultdict(list))
     for r in rows:
@@ -106,7 +113,7 @@ def group_stats(rows: list[dict], months: list[str]) -> dict:
         for rent_type, column, label in METRICS:
             if r["rent_type"] == rent_type:
                 buckets[(r["housing_type"], label)][r["region_name"]].append(r[column])
-    return {key: {name: describe(by_region.get(name, [])) for name in REGION_ORDER}
+    return {key: {name: describe(by_region.get(name, [])) for name in names}
             for key, by_region in buckets.items()}
 
 
@@ -116,7 +123,7 @@ def rank(values: dict[str, float]) -> dict[str, int]:
 
 
 def mean_vs_median_rank(stats_by_region: dict[str, dict]) -> dict | None:
-    """5개 구 모두 표본이 있을 때만 평균 순위와 중앙값 순위를 비교."""
+    """비교 지역 모두 표본이 있을 때만 평균 순위와 중앙값 순위를 비교."""
     if any(s["n"] == 0 for s in stats_by_region.values()):
         return None
     by_mean = rank({k: s["mean"] for k, s in stats_by_region.items()})
@@ -152,7 +159,7 @@ def low_price_monthly(rows: list[dict], months: list[str]) -> dict:
 
 
 def citywide_by_type(rows: list[dict], months: list[str]) -> dict:
-    """창원시 전체(5개 구 합) 주택유형별 분포 - 아파트 vs 비아파트 비교용(구 비교에는 쓰지 않음)."""
+    """비교 그룹 전체(합) 주택유형별 분포 - 아파트 vs 비아파트 비교용(지역 비교에는 쓰지 않음)."""
     month_set = set(months)
     out = {}
     for housing_type in HOUSING_TYPES:
@@ -163,11 +170,14 @@ def citywide_by_type(rows: list[dict], months: list[str]) -> dict:
     return out
 
 
-def analyze(rows: list[dict], end_ym: str, min_sample: int) -> dict:
+def analyze(rows: list[dict], end_ym: str, min_sample: int, region_names: list[str] | None = None) -> dict:
+    """region_names(같은 유형 그룹)만 비교한다. 생략하면 22개 전체."""
+    if region_names:
+        rows = [r for r in rows if r["region_name"] in set(region_names)]
     windows = {}
     for length, exclude_lag in WINDOWS:
         months = window_months(end_ym, length, exclude_lag)
-        stats = group_stats(rows, months)
+        stats = group_stats(rows, months, region_names)
         windows[window_label(length, exclude_lag)] = {
             "months": months, "stats": stats, "adequacy": window_adequacy(stats, min_sample),
             "rank_change": {key: mean_vs_median_rank(by_region) for key, by_region in stats.items()},
@@ -179,7 +189,7 @@ def analyze(rows: list[dict], end_ym: str, min_sample: int) -> dict:
 
 
 def recommend_window(result: dict) -> dict:
-    """주택유형·지표별로 5개 구 모두 n ≥ min_sample 인 가장 짧은 기간(지연 제외 기간 우선)."""
+    """주택유형·지표별로 비교 지역 모두 n ≥ min_sample 인 가장 짧은 기간(지연 제외 기간 우선)."""
     preference = [window_label(6, True), window_label(12, True), window_label(6, False), window_label(12, False)]
     keys = sorted({k for w in result["windows"].values() for k in w["stats"]})
     out = {}
@@ -194,12 +204,12 @@ def _fmt(x) -> str:
     return "-" if x is None else f"{x:,.0f}"
 
 
-def to_markdown(result: dict) -> str:
-    lines = [f"# 창원시 5개 구 임대차 실거래 분석 (G4-A)", "",
+def to_markdown(result: dict, title: str = "경남 22개 지역") -> str:
+    lines = [f"# {title} 임대차 실거래 분석 (G4-A)", "",
              f"- 기준 끝월: {result['end_ym']} · MIN_SAMPLE_SIZE(설정값, 미확정): {result['min_sample']} · 금액 단위: 만원",
              "- 주택유형·계약유형을 합치지 않았고 전세·월세를 환산하지 않았다. 점수 계산에는 쓰지 않는다.", ""]
     rec = recommend_window(result)
-    lines += ["## 1. 비교 가능한 기간 (5개 구 모두 n ≥ MIN_SAMPLE_SIZE)", "",
+    lines += ["## 1. 비교 가능한 기간 (비교 지역 모두 n ≥ MIN_SAMPLE_SIZE)", "",
               "| 주택유형 | 지표 | " + " | ".join(result["windows"]) + " | 권장 |",
               "|---|---|" + "---|" * len(result["windows"]) + "---|"]
     for key in sorted(rec):
@@ -210,11 +220,11 @@ def to_markdown(result: dict) -> str:
             cells.append("-" if a is None else f"최소 n={a['min_n']}" + (" ✅" if a["comparable"] else f" ❌({', '.join(a['short_regions'])})"))
         lines.append(f"| {HOUSING_TYPES[ht]['label']} | {label} | " + " | ".join(cells) + f" | {rec[key] or '비교 불가'} |")
     base = result["windows"][result["base_window"]]
-    lines += ["", f"## 2. 구별 분포 — {result['base_window']} ({base['months'][0]}~{base['months'][-1]})", ""]
+    lines += ["", f"## 2. 지역별 분포 — {result['base_window']} ({base['months'][0]}~{base['months'][-1]})", ""]
     for key in sorted(base["stats"]):
         ht, label = key
         lines += [f"### {HOUSING_TYPES[ht]['label']} · {label}", "",
-                  "| 구 | n | 평균 | 중앙값 | P25 | P75 | 최소 | 최대 | 극단값(고/저) |", "|---|---|---|---|---|---|---|---|---|"]
+                  "| 지역 | n | 평균 | 중앙값 | P25 | P75 | 최소 | 최대 | 극단값(고/저) |", "|---|---|---|---|---|---|---|---|---|"]
         for name, s in base["stats"][key].items():
             if s["n"] == 0:
                 lines.append(f"| {name} | 0 | - | - | - | - | - | - | - |")
@@ -223,7 +233,7 @@ def to_markdown(result: dict) -> str:
                              f"{_fmt(s['p75'])} | {_fmt(s['min'])} | {_fmt(s['max'])} | {s['extreme_high']}/{s['extreme_low']} |")
         rc = base["rank_change"].get(key)
         if rc is None:
-            lines.append("\n평균·중앙값 순위 비교: 표본 없는 구가 있어 생략")
+            lines.append("\n평균·중앙값 순위 비교: 표본 없는 지역이 있어 생략")
         else:
             order = lambda r: " < ".join(sorted(r, key=r.get))  # noqa: E731
             lines.append(f"\n평균 순위(저렴한 순): {order(rc['mean_rank'])} / 중앙값 순위: {order(rc['median_rank'])}"
@@ -235,7 +245,7 @@ def to_markdown(result: dict) -> str:
         pct = lambda v: "-" if v is None else f"{v * 100:.1f}%"  # noqa: E731
         lines.append(f"| {HOUSING_TYPES[ht]['label']} | {s['n_monthly']} | {s['rent_under_30']} ({pct(s['share_under_30'])}) | "
                      f"{s['below_report_threshold']} ({pct(s['share_below_report_threshold'])}) |")
-    lines += ["", "## 4. 아파트 vs 비아파트 (창원시 전체, 구 비교용 아님)", "",
+    lines += ["", "## 4. 아파트 vs 비아파트 (이 그룹 전체, 지역 비교용 아님)", "",
               "| 주택유형 | 지표 | n | 중앙값 | P25 | P75 |", "|---|---|---|---|---|---|"]
     for (ht, label), s in result["citywide"].items():
         if s["n"]:
@@ -267,14 +277,15 @@ def main(argv: list[str] | None = None) -> None:
         sys.exit("data/housing/ 에 수집 결과가 없습니다. 먼저 collect_rent_transactions.py collect --save 를 실행하세요.")
     with open(manifest_path, encoding="utf-8") as f:
         end_ym = json.load(f)["end_ym"]
-    result = analyze(load_rows(tx_path), end_ym, args.min_sample)
-    report = to_markdown(result)
+    rows = load_rows(tx_path)
+    results = {label: analyze(rows, end_ym, args.min_sample, names) for label, names in REGION_GROUPS.items()}
+    report = "\n".join(to_markdown(result, label) for label, result in results.items())
     print(report)
     if args.write:
         with open(os.path.join(HOUSING_DIR, "rent_analysis.md"), "w", encoding="utf-8") as f:
             f.write(report)
         with open(os.path.join(HOUSING_DIR, "rent_analysis.json"), "w", encoding="utf-8") as f:
-            json.dump(_jsonable(result), f, ensure_ascii=False, indent=2)
+            json.dump({label: _jsonable(r) for label, r in results.items()}, f, ensure_ascii=False, indent=2)
 
 
 if __name__ == "__main__":

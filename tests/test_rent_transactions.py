@@ -172,5 +172,23 @@ class AnalyzeTest(unittest.TestCase):
         self.assertIn("전세 보증금", report)
 
 
+class GyeongnamGroupTest(unittest.TestCase):
+    """경남 22개 지역: 수집 대상은 22개, 분석은 같은 유형 그룹(창원시 구 / 시 / 군) 안에서만 비교한다."""
+
+    def test_22_lawd_codes_with_changwon_ids_kept(self):
+        self.assertEqual(len(col.DISTRICTS), 22)
+        self.assertEqual(col.DISTRICTS["48121"], ("CW-UICHANG", "의창구"))
+        self.assertEqual(col.DISTRICTS["48250"], ("GN-GIMHAE", "김해시"))
+        self.assertEqual({k: len(v) for k, v in an.REGION_GROUPS.items()},
+                         {"창원시 5개 구": 5, "경남 시 지역": 7, "경남 군 지역": 10})
+
+    def test_group_analysis_only_compares_regions_in_the_group(self):
+        rows = [_row(name, "202601", "jeonse", 10000 + i) for name in an.REGION_ORDER for i in range(3)]
+        result = an.analyze(rows, "202603", 1, an.REGION_GROUPS["경남 군 지역"])
+        regions = {name for w in result["windows"].values() for by_region in w["stats"].values() for name in by_region}
+        self.assertEqual(regions, set(an.REGION_GROUPS["경남 군 지역"]))
+        self.assertIn("경남 군 지역", an.to_markdown(result, "경남 군 지역"))
+
+
 if __name__ == "__main__":
     unittest.main()
