@@ -1,4 +1,7 @@
 # Streamlit 실행 진입점
+import json
+import uuid
+
 import pandas as pd
 import streamlit as st
 
@@ -10,6 +13,8 @@ from agent.planner_loop import REVIEW_TOOL_LABELS, explain_candidates
 from analysis import feedback, scoring
 from analysis.candidates import build_candidate_set, strength_max_rank, weakness_min_rank
 from services.region_data import REGION_SCOPES, get_all_regions, is_supported_region, region_type_for
+from services import demand_log
+from services.region_map import BOUNDARY_SOURCE, boundary_base_date, build_candidate_map_regions
 from services.schools import SCHOOL_REFERENCE_LIMITATIONS, SCHOOL_REFERENCE_TITLE, load_school_reference
 
 MAX_CANDIDATE_COUNT = 5  # 가장 작은 비교 범위(창원시 5개 구) 수와 같게 맞춤
@@ -370,6 +375,101 @@ def _render_critic_highlights(candidate_set: dict) -> None:
 
 FOCUS_NONE = "강조 안 함"
 
+try:
+    import folium
+    from streamlit_folium import st_folium
+
+    _MAP_AVAILABLE = True
+except ImportError:  # 지도 라이브러리가 없어도 나머지 결과 화면은 그대로 동작해야 한다
+    _MAP_AVAILABLE = False
+
+MAP_ROLE_LEGEND = "🟦 최적 · 🟩 균형 · 🟧 대안 · ⬜ 비교했지만 후보 역할 없음"
+
+
+def _map_label_html(region: dict) -> str:
+    """지도 위 지역 이름표. 후보 지역은 역할을 함께, 나머지는 이름만 작게."""
+    name = region["region_name"]
+    if region["roles"]:
+        text = f"{name}<br><span style='font-weight:600'>{' · '.join(region['roles'])}</span>"
+        style = (f"background:{region['color']};color:#fff;font-size:12px;font-weight:700;"
+                 "padding:3px 7px;border-radius:6px;box-shadow:0 1px 3px rgba(0,0,0,.35);")
+    else:
+        text = name
+        style = "color:#4b5563;font-size:11px;font-weight:600;text-shadow:0 0 3px #fff,0 0 3px #fff;"
+    return (f"<div style='position:absolute;transform:translate(-50%,-50%);white-space:nowrap;"
+            f"text-align:center;line-height:1.25;{style}'>{text}</div>")
+
+
+def _build_candidate_map(map_data: dict, focus: str | None):
+    """비교 지역 경계 위에 후보 역할을 색으로 표시한 folium 지도(표시 전용 - 계산 없음)."""
+    fmap = folium.Map(tiles="OpenStreetMap", control_scale=True, zoom_control=True, zoom_snap=0.25)
+    for region in map_data["regions"]:
+        is_candidate = region["primary_role"] is not None
+        is_focus = focus is not None and region["region_name"] == focus
+        style = {
+            "fillColor": region["color"],
+            "color": region["color"] if is_candidate else "#6b7280",
+            "weight": 3 if is_candidate else 1,
+            "fillOpacity": 0.45 if is_candidate else 0.12,
+        }
+        if is_focus:
+            style.update({"weight": 4, "dashArray": "6 4", "color": "#111827"})
+        tooltip = f"{region['region_name']} · {region['rank']}위 · 종합 {region['total_score']:.1f}점"
+        if region["roles"]:
+            tooltip += f" · {', '.join(region['roles'])}"
+        folium.GeoJson(
+            {"type": "Feature", "geometry": region["geometry"], "properties": {}},
+            style_function=lambda _feature, style=style: style,
+            highlight_function=lambda _feature: {"weight": 4, "fillOpacity": 0.6},
+            tooltip=tooltip,
+        ).add_to(fmap)
+        folium.Marker(
+            location=region["label_point"],
+            icon=folium.DivIcon(html=_map_label_html(region), icon_size=(0, 0)),
+            tooltip=tooltip,
+        ).add_to(fmap)
+    if map_data["bounds"]:
+        fmap.fit_bounds(map_data["bounds"], padding=(12, 12))
+    return fmap
+
+
+def _render_candidate_map(result: dict, candidate_set: dict) -> None:
+    """
+    추천 후보 지역이 대략 어디인지 지도로 보여준다. 색은 이미 확정된 후보 역할(최적·균형·대안)이고,
+    점수·순위·역할을 새로 계산하지 않는다. 칠한 영역은 그 시·군·구 전체이며 특정 동네를 고른 것이 아니다.
+    """
+    st.markdown("### 🗺️ 후보 지역 위치")
+    if not _MAP_AVAILABLE:
+        st.caption("지도 라이브러리(folium/streamlit-folium)를 불러오지 못해 지도를 표시할 수 없습니다. "
+                   "아래 비교표는 그대로 이용할 수 있습니다.")
+        return
+    map_data = build_candidate_map_regions(result, candidate_set)
+    if not map_data["regions"]:
+        st.caption("행정구역 경계 파일을 찾지 못해 지도를 표시할 수 없습니다(data/raw/gyeongnam_boundaries.geojson).")
+        return
+    focus = st.session_state.get("focus_region")
+    focus = None if focus in (None, FOCUS_NONE) else focus
+    st.caption(MAP_ROLE_LEGEND + (" · 점선 = 강조한 관심 지역" if focus else ""))
+    try:
+        st_folium(
+            _build_candidate_map(map_data, focus),
+            height=440,
+            use_container_width=True,
+            key=f"candidate_map_{region_type_for(st.session_state.initial_input.get('희망지역', ''))}",
+            returned_objects=[],
+        )
+    except Exception as exc:  # 지도 컴포넌트 오류가 결과 화면 전체를 막지 않게 한다
+        st.warning(f"⚠️ 지도를 표시하는 중 문제가 발생했습니다: {exc}")
+        return
+    base_date = boundary_base_date()
+    base_text = f"{base_date[:4]}-{base_date[4:6]}-{base_date[6:]}" if base_date and len(base_date) == 8 else "기준일 미상"
+    missing = f" · 경계가 없어 표시하지 못한 지역: {', '.join(map_data['missing'])}" if map_data["missing"] else ""
+    st.caption(
+        "색칠한 영역은 해당 시·군·구 **전체**이며, 그 안의 특정 동네나 주거 단지를 추천한 것이 아닙니다"
+        "(행정동 단위 지표 미확보). 지역 위에 마우스를 올리면 순위·종합점수가 보입니다. "
+        f"경계: {BOUNDARY_SOURCE}({base_text}, 화면 표시용으로 단순화){missing}"
+    )
+
 
 def _render_focus_summary(result: dict, focus: str, ranks: dict, candidate_set: dict | None) -> None:
     """관심 지역 한 곳의 위치를 한 줄로: 종합 순위, 항목별 강점·약점(같은 판정 기준), 맡은 후보 역할. 표시 전용."""
@@ -505,6 +605,7 @@ def render_result_view() -> None:
         return
 
     _render_candidate_summary(candidate_set, result)
+    _render_candidate_map(result, candidate_set)
     _render_critic_highlights(candidate_set)
     if is_feedback:
         _render_change_summary(initial_result, result, candidate_set)
@@ -521,6 +622,38 @@ def render_result_view() -> None:
                 )
                 st.caption("이 가정을 실제로 적용하려면 아래 '🔄 조건 바꿔서 다시 보기'에서 요청하고 승인하세요.")
     _render_comparison_table(result, candidate_set)
+    _render_demand_consent(result, candidate_set)
+
+
+DEMAND_CONSENT_HELP = (
+    "체크하면 이번 검색의 선택값만 익명으로 저장해 지자체 화면의 '이주 희망자 수요' 통계에 씁니다: "
+    "비교 범위, 고른 생활조건, 적용 비율, 점수에 반영하지 못한 조건(주거비 예산 구간·직장/학교 구 등), "
+    "조건을 바꾼 방향, 후보로 나온 지역. 추가 요청사항 같은 자유 문장, 지도 좌표, 위치 질문은 저장하지 않습니다. "
+    "체크를 풀면 그 뒤로는 저장하지 않습니다."
+)
+
+
+def _render_demand_consent(result: dict, candidate_set: dict | None) -> None:
+    """익명 통계 제공 동의(기본 꺼짐). 동의했을 때만, 내용이 바뀔 때마다 한 줄을 남긴다(services.demand_log)."""
+    consent = st.checkbox("📊 익명 통계 제공에 동의 (선택)", key="demand_consent", help=DEMAND_CONSENT_HELP)
+    st.caption("지자체가 이주 희망자들이 어떤 조건을 찾는지 볼 수 있도록 선택값만 익명으로 모읍니다. "
+               "자유 문장·좌표·개인정보는 저장하지 않습니다.")
+    if not consent:
+        return
+    session_id = st.session_state.setdefault("demand_session_id", uuid.uuid4().hex[:12])
+    record = demand_log.build_record(
+        session_id, st.session_state.initial_input, result, candidate_set,
+        st.session_state.get("feedback_history"),
+    )
+    signature = json.dumps({k: v for k, v in record.items() if k != "date"}, ensure_ascii=False, sort_keys=True)
+    if st.session_state.get("demand_saved_signature") == signature:
+        return
+    try:
+        demand_log.append_record(record)
+    except OSError as exc:  # 저장 실패가 결과 화면을 막지 않게 한다
+        st.caption(f"⚠️ 익명 통계를 저장하지 못했습니다: {exc.__class__.__name__}")
+        return
+    st.session_state["demand_saved_signature"] = signature
 
 
 def _weight_source_text() -> str:
@@ -1102,6 +1235,9 @@ if "agent_execution_log" not in st.session_state:
 
 def reset_all():
     st.session_state.stage = "input"
+    # 새 검색은 새 익명 세션으로 센다(동의도 다시 받는다).
+    for key in ("demand_session_id", "demand_saved_signature", "demand_consent"):
+        st.session_state.pop(key, None)
     st.session_state.initial_input = {}
     st.session_state.followup_questions = []
     st.session_state.followup_answers = {}

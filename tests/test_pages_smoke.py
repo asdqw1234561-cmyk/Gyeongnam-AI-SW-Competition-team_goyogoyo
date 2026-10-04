@@ -104,6 +104,12 @@ class PagesFirstRenderTest(unittest.TestCase):
         self.assertIn("가성비** — 제공 안 함", captions)
         warnings = " ".join(w.value for w in at.warning)
         self.assertIn("직장/학교 위치", warnings)  # coverage 점검이 반영 못 한 입력을 밝힘
+        # 후보 지역 위치 지도: 표시 전용, 지역 전체 단위임과 경계 출처를 밝힌다
+        self.assertIn("후보 지역 위치", markdown)
+        self.assertIn("🟦 최적", captions)
+        self.assertIn("시·군·구 **전체**", captions)
+        self.assertIn("SGIS 시군구 경계", captions)
+        self.assertFalse(any("지도를 표시" in w.value for w in at.warning))
 
     def test_focus_region_highlight_and_all_regions_reference_table(self):
         """관심 지역 강조는 표시만 바꾸고(점수·후보 불변), 22개 지역 참고 표는 점수 없이 실제 값만 보여준다."""
@@ -292,6 +298,45 @@ class PagesFirstRenderTest(unittest.TestCase):
         self.assertTrue(any("시설 현황" in t.value for t in at.title))
         # 원본 지표 표와 가상 시뮬레이션 섹션이 모두 그려졌는지
         self.assertTrue(any("가상 시설 증감 시뮬레이션" in h.value for h in at.header))
+
+    # ---- 익명 수요 기록(동의 시에만) → 지자체 화면 수요 한눈에 보기 -------------------
+    def test_demand_consent_records_only_after_opt_in_and_government_overview(self):
+        import json
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmp:
+            log = os.path.join(tmp, "requests.jsonl")
+            with mock.patch.dict(os.environ, {"DEMAND_LOG_PATH": log}):
+                # 기록이 없으면 지자체 화면은 '없음'만 보여준다(예시 데이터 없음)
+                gov = self._run("pages/government.py")
+                self.assertTrue(any("이주 희망자 수요" in h.value for h in gov.header))
+                self.assertTrue(any("아직 모인 기록이 없습니다" in i.value for i in gov.info))
+
+                at = AppTest.from_file(os.path.join(PROJECT_ROOT, "app.py"), default_timeout=TIMEOUT_S).run()
+                at.selectbox[2].select("월세 30~50만원")  # 주거비 예산 - 점수에 반영 못 하는 입력
+                at.text_area[0].input("홍길동 010-1234-5678 상남동 원룸")
+                with mock.patch("ollama.chat", return_value={"message": {"content": '{"questions": [], "tool_calls": []}'}}):
+                    at.button[0].click().run()
+                self.assertEqual(at.session_state["stage"], "done")
+                self.assertFalse(os.path.exists(log), "동의 전에는 아무것도 저장하지 않는다")
+
+                at.checkbox(key="demand_consent").check().run()
+                self.assertEqual([e.value for e in at.exception], [])
+                with open(log, encoding="utf-8") as f:
+                    lines = [json.loads(line) for line in f if line.strip()]
+                self.assertEqual(len(lines), 1)
+                text = json.dumps(lines[0], ensure_ascii=False)
+                for secret in ("홍길동", "010-1234", "상남동"):
+                    self.assertNotIn(secret, text)
+                self.assertEqual(lines[0]["unscored_inputs"].get("주거비 예산"), "월세 30~50만원")
+
+                at.run()  # 같은 내용으로 다시 그려도 중복 저장하지 않는다
+                with open(log, encoding="utf-8") as f:
+                    self.assertEqual(sum(1 for line in f if line.strip()), 1)
+
+                gov = self._run("pages/government.py")
+                self.assertTrue(any(m.label == "기록된 검색" and m.value == "1건" for m in gov.metric))
+                self.assertFalse(any("아직 모인 기록이 없습니다" in i.value for i in gov.info))
 
     @staticmethod
     def _location_result(mode: str, final_answer: dict) -> dict:
