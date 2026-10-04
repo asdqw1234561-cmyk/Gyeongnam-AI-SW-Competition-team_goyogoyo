@@ -5,49 +5,73 @@
 > 상세 구조·규칙은 `CLAUDE.md`, 작업 이력은 `docs/backlog.md`.
 
 - 최종 확인: 2026-10-04
-- 브랜치: `jhy-next` · 기준 커밋: `f2bf6c8` ([docs] 공식 운영규정 V1.0 반영). F8~F11·G4-A 도구는 `cae0f59`로 커밋됨
+- 브랜치: `jhy-next` · 기준 커밋: `cabc379` ([GN-F] 경남 확장 마무리 점검) — 원격 `origin/jhy-next`와 같음
 - 제출 마감: 2026-10-06 12:00 (R-SCH-2, [규정] 제23조로 확정) — 확인일 기준 D-2
+- **개발 상태: 기능 동결(2026-10-04 사용자 지시).** 제출 전 안정화만 한다. 새 기능·새 평가축·새 Agent 기능·OPEN-7은 진행하지 않고, 코드 변경은 브라우저 E2E를 막는 명확한 버그일 때만 최소로 한다.
+- 비교 범위: **경상남도 22개 지역**(창원시 5개 구 + 시 7곳 + 군 10곳), 같은 유형끼리 인구 1만 명당 비교(DEC-20·21)
 
 ## 구현된 기능 (IMPLEMENTED)
 
 | # | 핵심기능 | 위치 | 상태 |
 |---|---|---|---|
-| F1 | 이주 조건 입력 → AI 추가질문 → 가중치 해석·승인 | `app.py`, `agent/ollama_agent.py` | 동작(모킹 테스트·AppTest 일부), 브라우저 클릭 흐름 수동 확인 필요 |
-| F2 | Agent Planner: AI 계획 → Python 검증 → 도구 실행 → 비교 범위(같은 유형) 인구 1만 명당 상대 비교 점수 | `agent/planner.py`, `analysis/scoring.py` | 동작 |
-| F3 | 결과 검토 루프: AI 설명 → 숫자 검증 → 실패 시 재작성/Python 요약, 자연어·슬라이더 피드백 재계산 | `agent/planner_loop.py`, `app.py` | 동작 |
-| F4 | 위치 기반 주변 시설 탐색(300m/500m/1km 직선거리, 버스정류장·편의점, 지도 클릭 승인) | `pages/user.py`, `services/bus_stops.py`, `services/convenience.py` | 동작 |
-| F5 | 위치 AI Agent: MCP 반복형(claude_cli) / 계획형+검토 루프(ollama) / 기본 절차 폴백, 답변 숫자 검증, 같은 위치 대화 기억 | `agent/location_agent.py`, `agent/location_mcp_server.py`, `agent/agent_loop.py`, `agent/agent_state.py` | 동작 |
-| F7 | 정착 후보군 + Critic: 최적·균형·대안(가성비는 주거비 미확보로 산출 불가), 6개 평가축 상태, Critic 점검·지배된 대안 수정 — 최초·피드백 결과 모두 | `analysis/candidates.py`, `agent/planner.py`(`candidate_review`), `app.py` `_render_candidate_set` | 동작(단위·AppTest), 실제 Ollama·브라우저 미확인 |
-| F8 | 방향성 피드백("의료를 더 중요하게") → LLM은 축·방향·강도 표현만 추출 → Python 규칙(×1.5/×1.25/×2.0 후 재정규화)으로 변경안 계산 → 승인 → 단일 재평가 경로(점수 → 후보·Critic) → `feedback_history`(Memory) 기록. 슬라이더·숫자 자연어·되돌리기도 같은 경로 | `analysis/feedback.py`, `agent/ollama_agent.py`, `app.py` `_apply_feedback` | 동작(단위·AppTest·실제 Ollama 8문장), 브라우저 미확인 |
-| F9 | 후보군·Critic을 AI 설명에 연결: 관찰 내용에 확정된 후보 역할·Critic 교체·한 축 의존·평가축 수·미확보 축·반영 못 한 조건·판단 한계 추가, 판단 범위 표시·과장·미확보 축 단정·역할 불일치를 결정적으로 거부, 피드백 재평가 뒤에도 같은 검증으로 설명(`explain_candidates`) | `agent/planner_loop.py`, `agent/planner.py`, `app.py` `_render_final_answer`, `analysis/candidates.py`(Critic `facts` 추가만) | 동작(단위·AppTest·실제 Ollama 최초·피드백 각 1회 ai_verified) |
-| F10 | AI 설명은 Python이 확정한 explanation_facts(구별 축 점수·순위·강점/약점/중립, 역할 구 비교 순서, 지배 관계, 6개 중 확보 3개)만 옮기고, 같은 사실로 결정적 검증(강약 뒤집기·최상/최하 표현·두 구 비교·지배 방향·숫자 귀속·역할 구문·미확보 축 강약 표현·N개 중 M개·계산 안 한 가정) | `analysis/explanation_facts.py`, `agent/planner_loop.py` | 동작(단위 456개·실제 Ollama) |
-| F11 | 설명 경로 통일: explanation_facts → Python 기본 설명(항상 사실) → AI 다듬기 1회 → 검증 → 실패 시 기본 설명. 최초 추천(AI 계획 실패 포함)·피드백 재평가 공용 | `agent/planner_loop.py` `explain_from_facts`, `analysis/explanation_facts.py` `render_explanation` | 동작(단위 468개·AppTest·실제 Ollama 4/4) |
-| F12 | 교육시설 수 참고 정보: 결과 화면에 구별 초·중·고·총 학교 수·분교 수, 출처·기준일, 한계 표시. 추천 점수·후보·Critic·피드백에 쓰지 않음(DEC-19), 파일 없으면 "미확보" 안내 후 추천은 그대로 | `services/schools.py`, `app.py` `_render_school_reference` | 동작(단위·AppTest), 브라우저 미확인 |
-| F13 | 추천 결과 화면 재구성(U2): 결론(후보 요약) → Critic 확인할 점 → AI 설명 → 5개 구 비교표 → 조건 바꾸기 → 접힌 상세(Agent가 한 일·계산 근거·데이터 출처/한계·교육시설). 피드백 승인 시 맨 위 결과 교체 | `app.py` `render_result_view`·`render_feedback_section`·`render_detail_sections` | 동작(AppTest·서버 기동), 브라우저 미확인 |
-| F14 | 경남 22개 지역 확장: 비교 범위(창원시 5개 구 / 시 7곳 / 군 10곳) 선택, 같은 유형끼리 인구 1만 명당 비교(DEC-20·21). 위치 탐색은 창원만 | `services/region_data.py`, `analysis/scoring.py`, `app.py`, `pages/government.py`, `data/gyeongnam/` | 동작(단위·AppTest), 실제 Ollama 시 범위·Test Case 5건 확인, 브라우저 미확인. 위치 탐색도 경남 22개 지역(GN-C) |
-| F15 | 경남 22개 지역 참고 표(점수 없음)·관심 지역 강조(표시 전용) | `app.py` `_render_all_regions_reference`, `_render_focus_summary` | 동작(AppTest), 브라우저 미확인 |
-| F6 | 정부용 구별 시설 현황·가상 증감 시뮬레이션 | `pages/government.py`, `analysis/simulation.py` | 동작 (주제 연결은 OPEN-3) |
+| F1 | 비교 범위 선택(창원시 5개 구 / 경남 시 7곳 / 경남 군 10곳) + 이주 조건 입력 → AI 추가질문 → 가중치 해석·승인 | `app.py`, `agent/ollama_agent.py` | 동작(모킹·AppTest), 브라우저 클릭 흐름 수동 확인 필요 |
+| F2 | Agent Planner: AI 계획 → Python 검증 → 도구 실행 → 같은 유형 비교 지역의 인구 1만 명당 상대 비교 점수 | `agent/planner.py`, `analysis/scoring.py` | 동작(단위·실제 Ollama) |
+| F3 | 결과 검토 루프: AI 설명 → 숫자·사실 검증 → 실패 시 Python 기본 설명, 자연어·슬라이더 피드백 재계산 | `agent/planner_loop.py`, `app.py` | 동작 |
+| F4 | 위치 기반 주변 시설 탐색(300m/500m/1km 직선거리, 버스정류장·편의점, 지도 클릭 승인) — **경남 22개 지역**(창원시는 창원시 정류소 원본, 그 외 17개 시·군은 `data/gyeongnam/`) | `pages/user.py`, `services/bus_stops.py`, `services/convenience.py` | 동작(단위·AppTest 김해시청) |
+| F5 | 위치 AI Agent: MCP 반복형(claude_cli) / 계획형+검토 루프(ollama) / 기본 절차 폴백, 답변 숫자 검증, 같은 위치 대화 기억 | `agent/location_agent.py`, `agent/location_mcp_server.py`, `agent/agent_loop.py`, `agent/agent_state.py` | 동작(실제 Ollama 김해시청 ai_verified, 2026-10-04). claude_cli 경로는 이번에 미확인 |
+| F6 | 정부용 시설 현황·지역 간 차이·가상 증감 시뮬레이션 — 비교 범위 선택 | `pages/government.py`, `analysis/simulation.py` | 동작(AppTest 군 지역 시뮬레이션), 주제 연결은 OPEN-3 |
+| F7 | 정착 후보군 + Critic: 최적·균형·대안(가성비는 주거비 미확보로 제공 안 함), 6개 평가축 상태, Critic 점검(근소차·한 축 의존·지배 관계·쏠림·커버리지)·지배된 대안 교체 — 최초·피드백 결과 모두. 강점·약점 기준은 비교 지역 수에 비례 | `analysis/candidates.py`, `app.py` `_render_candidate_summary`·`_render_critic_highlights` | 동작(단위·AppTest·실제 Ollama) |
+| F8 | 방향성 피드백("의료를 더 중요하게") → LLM은 축·방향·강도만 추출 → Python 규칙(×1.5/×1.25/×2.0 후 재정규화) → 승인 → 같은 비교 범위로 단일 재평가 경로 → `feedback_history`(Memory) | `analysis/feedback.py`, `agent/ollama_agent.py`, `app.py` `_apply_feedback` | 동작(단위·AppTest·실제 Ollama) |
+| F9~F11 | 설명: explanation_facts(확정 사실) → Python 기본 설명 → AI 다듬기 1회 → 검증(강약·대소·숫자·역할·미확보 축) → 실패 시 기본 설명. 최초·피드백 공용, 비교 지역 목록·순위 범위는 실제 비교 범위 기준 | `analysis/explanation_facts.py`, `agent/planner_loop.py` | 동작(실제 Ollama Test Case 5건 중 3건 다듬기 거부 → 기본 설명) |
+| F12 | 교육시설 수 참고정보(비교 범위 지역별 초·중·고·총·분교, 출처·기준일·한계). 점수·후보·피드백 미사용(DEC-19) | `services/schools.py`, `app.py` `_render_school_reference` | 동작(단위·AppTest) |
+| F13 | 추천 결과 화면: 결론(후보 요약) → Critic 확인할 점 → AI 설명 → 비교표 → 조건 바꾸기 → 접힌 상세. 피드백 승인 시 맨 위 결과 교체 | `app.py` `render_result_view`·`render_feedback_section`·`render_detail_sections` | 동작(AppTest), 브라우저 미확인 |
+| F14 | 경남 22개 지역 비교(같은 유형끼리, 인구 1만 명당) | `services/region_data.py` `REGION_SCOPES`, `analysis/scoring.py` `population_by_region`, `data/gyeongnam/` | 동작(단위·AppTest·실제 Ollama) |
+| F15 | 경남 22개 지역 참고 표(점수·순위 없음) · 관심 지역 강조(표시 전용) | `app.py` `_render_all_regions_reference`·`_render_focus_summary` | 동작(AppTest) |
 
-공통: `agent/llm.py`(백엔드 선택·호출 수·입력 길이 제한), `agent/llm_json.py`(JSON 추출).
+공통: `agent/llm.py`(백엔드 선택·호출 수·입력 길이 제한), `agent/llm_json.py`(JSON 추출), `scripts/secret_mask.py`(수집 스크립트 키 가림).
 
 ## 데이터
 
 | 구분 | 내용 |
 |---|---|
-| 확보(구별) | 버스정류장 수 2,926 / 의료기관 수 1,358 / 편의점 등록 업소 수 950 — `data/region_indicators.csv` |
-| 확보(위치) | 버스정류장(`data/raw/changwon_bus_stops.csv`), 편의점(`data/convenience/changwon_convenience_stores.csv`) |
-| 참고 정보(점수 미사용) | 구별 초·중·고 학교 수 226교(`data/schools/changwon_school_counts.csv`, 학교 목록 `changwon_schools.csv`) — 결과 화면 참고 표시만(F12, DEC-19) |
-| 미확보 | 통근·이동시간, 배차간격, 실시간 도착, 도보경로, 위치 기반 의료기관, 월세·전세, 범죄율·안전, 교육·자연·문화, 대형마트, 응급실, 종합 거주 적합도 |
+| 비교 단위 | 22개 지역: `data/regions.csv` (`scripts/gyeongnam_regions.py` 마스터, `scripts/build_gyeongnam_indicators.py`로 생성) |
+| 확보(점수 축) | 버스정류장 18,207 (국토교통부 전국 버스정류장 위치정보 2025-10-31, 자기 시·군 등록분 중 경계 안) · 의료기관 4,256 (HIRA 2026-10-04) · 편의점 등록 업소 3,305 (상가정보 2026-06) — `data/region_indicators.csv` |
+| 분모(점수 축 아님) | 주민등록 인구 3,191,645 (행정안전부 2026-08-31) |
+| 참고정보(점수 미사용) | 초·중·고 학교 986교 (전국초중등학교위치표준데이터 2026-03-20) — `data/gyeongnam/school_counts.csv` |
+| 위치 데이터 | 창원시: `data/raw/changwon_bus_stops.csv`(공식 2,926)·`data/convenience/changwon_convenience_stores.csv` / 그 외 17개 시·군: `data/gyeongnam/gyeongnam_bus_stops.csv`·`data/gyeongnam/convenience_stores.csv` |
+| 알려진 출처 차이 | 창원 버스정류장 수: 지역 비교 점수 2,918(전국 파일) vs 위치 탐색 2,926(창원시 원본). README·화면에 각각 출처 표시 |
+| 미확보 | 주거비(월세·전세 - G4 BLOCKED), 직장 접근성(DEC-18), 교육 점수 축(참고정보만), 통근·이동시간, 배차간격, 실시간 도착, 도보경로, 위치 기반 의료기관, 범죄율·안전, 자연·문화, 대형마트, 응급실, 종합 거주 적합도 |
 
 ## 테스트
 
-- 단위 테스트: `python -m unittest discover -s tests` → **468개 통과, skip 1** (2026-10-03 R6 반영 후 확인, 실제 AI 호출 없음)
-- 실제 Ollama(qwen3.5:4b) 피드백 해석 8문장 확인: 방향 4종·주거비·날씨·원래대로·숫자 비율 모두 기대 type (2026-10-02)
-- AppTest 스모크: 3개 화면 첫 렌더링 + 일부 흐름
-- 브라우저 E2E 자동 확인: 없음 (backlog N4)
-- 제출용 대표 Test Case 5건: `docs/test_cases.md` (2026-10-04, `9885a4b`, 실제 Ollama 1회 실행 + 대응 단위 테스트). 5건 모두 기대와 일치, AI 다듬기 2건 검증 거부 → 기본 설명
+- 단위 테스트: `python -m unittest discover -s tests` → **506개 통과, skip 1** (2026-10-04, `cabc379`, 실제 AI 호출 없음)
+- 실제 Ollama(qwen3.5:4b): 제출용 Test Case 5건(`docs/test_cases.md`, `b352c85`, 세 비교 범위) 기대와 일치 / 위치 AI Agent 김해시청 500m ai_verified (2026-10-04)
+- AppTest: 3개 화면 첫 렌더링, 최초 추천·피드백 승인·관심 지역 강조·참고 표·시 지역 7곳 비교·정부용 군 지역 시뮬레이션·위치 탐색 김해 예시 위치
+- **브라우저 E2E: 미실시** — 수동 확인 체크리스트 `docs/e2e_browser_checklist.md`
 
-## 추천 품질 분석 — "정착 후보군 탐색 Agent" 기준 차이 (2026-10-02, 기준 커밋 `78ec6e0`)
+## 막힘 (BLOCKED)
+
+- **G4 전월세(주거비)**: 국토교통부 전월세 API 4종(15126472~15126475) 승인 확인했으나 2026-10-04 여러 차례 `inspect` 모두 resultCode 30(같은 키가 병원정보서비스에서는 정상 → 게이트웨이 반영 대기 추정). 수집 코드는 22개 지역·그룹별 분석까지 준비됨. **외부 반영 전까지 건드리지 않는다**(OPEN-5).
+
+## 알려진 문제 / 공백
+
+- 브라우저 수동 E2E 미실시(체크리스트 작성됨) — 제출 전 필수
+- 제출물 5종·출처·AI 활용 신고서 미작성 — EVAL_MATRIX 공백 1 (사용자 지시로 자동 진행하지 않음)
+- AI 다듬기 품질(오탈자, 5건 중 3건 거부) — OPEN-7, 동결 기간 중 변경하지 않음
+- `LLM_BACKEND=claude_cli` 경로: 2026-10-03 `401 API key is invalid`(.env의 `ANTHROPIC_API_KEY`가 CLI 로그인보다 우선 적용 추정, 미확인). 시연을 Ollama로 하면 영향 없음
+- 비교 결과 → 위치 탐색 화면 자동 연결 없음(사용자가 사이드바로 이동) — EVAL_MATRIX 공백 3
+- 유형이 다른 지역 간 점수 비교 불가(설계, DEC-21) — 참고 표로 실제 값만 제공
+- 신청 지정주제 미기록 — DECISIONS OPEN-1
+
+## 팀 브랜치 (참고)
+
+`main`, `jhy`, `jhy-next`(이 Agent 작업 브랜치), `hwang`, `hwang2`, `hwang3`(팀원). 다른 팀원 브랜치는 수정하지 않는다.
+
+---
+
+## 이력 (작성 시점 기록 - 수치·상태는 당시 기준이며, 현재 상태는 위 표가 우선)
+
+### 추천 품질 분석 — "정착 후보군 탐색 Agent" 기준 차이 (2026-10-02, 기준 커밋 `78ec6e0`)
 
 현재 최우선 목표: 제출자료가 아니라 **핵심 Agent 추천 품질**(DEC-11). 목표는 "가장 좋은 구 하나"가 아니라 "사용자 조건에 따라 장단점이 다른 현실적인 정착 후보군 탐색"이다.
 
@@ -152,7 +176,7 @@
 
 R3 조사 단계에서 바뀐 코드: 없음(G4-A 도구는 위 참고, 앱 미연결). `가성비 산출 불가` 동작, `scoring.py` 3축 계산, 400개 테스트(네트워크 무관) 그대로.
 
-## 다음 평가축 조사 — 직장 접근성 vs 교육 (2026-10-04, backlog G5)
+### 다음 평가축 조사 — 직장 접근성 vs 교육 (2026-10-04, backlog G5)
 
 최우선 목표: Agent 구조 확장이 아니라 **Agent가 판단할 현실적인 정착 데이터 보강**(DEC-17). G4 주거비는 2026-10-04 `inspect` 재확인 결과 4개 API 모두 resultCode 30 → BLOCKED 유지(코드 수정 없음). 같은 날 일반 인증키 재발급·교체 후 다시 확인해도 4종 모두 resultCode 30(OPEN-5).
 
@@ -197,19 +221,3 @@ R3 조사 단계에서 바뀐 코드: 없음(G4-A 도구는 위 참고, 앱 미�
 3. **읍·면 학교가 수를 부풀린다.** 지번주소 기준 읍·면 소재 학교가 의창 21/50(동읍·북면·대산면), 마산회원 14/40(내서읍), 마산합포 12/44(진동·진전·구산면 등)이다. 시내에 사는 이주자에게 가까운 학교 수가 아니다.
 4. **학교 수 ≠ 교육 여건.** 학급·학생 수, 통학구역(초등 배정), 학업 성취·학군과 무관하고 인구·면적·학령인구 미보정이다.
 → 판단: 지금 `school_count`를 기존 3축과 같은 방식(min-max 가중합)으로 넣으면 "교육 여건 비교"로 오해될 위험이 크고, 작은 차이가 순위를 흔든다. 연결 방식은 사용자 결정(OPEN-9) → 2026-10-04 (b) 참고 정보만으로 결정(DEC-19), G5-B로 구현.
-
-## 알려진 문제 / 공백
-
-- 구 비교 결과 → 위치 탐색 화면 연결 없음(시연 흐름이 끊김) — EVAL_MATRIX 공백 3
-- 제출물 5종·출처 신고서 미작성 — EVAL_MATRIX 공백 1
-- 신청 지정주제 미기록 — DECISIONS OPEN-1
-- 버튼 클릭 흐름·실제 AI 시연은 브라우저 수동 확인 필요
-
-## 진행 중 / 대기 작업
-
-- `docs/backlog.md` N3(위치 Agent 경로 단순화 재평가), N4(브라우저 자동 확인 절차) — 대기
-- 다음 후보는 `/steward` 실행 시 EVAL_MATRIX 공백 기준으로 다시 우선순위를 정한다.
-
-## 팀 브랜치 (참고)
-
-`main`, `jhy`, `jhy-next`(이 Agent 작업 브랜치), `hwang`, `hwang2`, `hwang3`(팀원). 다른 팀원 브랜치는 수정하지 않는다.

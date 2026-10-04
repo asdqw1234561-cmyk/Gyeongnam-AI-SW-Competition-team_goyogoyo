@@ -1,18 +1,18 @@
 {
   "steward_branch": "jhy-next",
   "submission_deadline": "2026-10-06T12:00",
-  "last_synced_commit": "5ca11b2",
+  "last_synced_commit": "cabc379",
   "last_synced_at": "2026-10-04",
-  "last_test_result": "489 passed, 1 skipped (2026-10-04, G5-B 보정)",
+  "last_test_result": "506 passed, 1 skipped (2026-10-04, cabc379)",
   "last_loop": {
     "date": "2026-10-04",
-    "task": "GN-E 참고 표·관심 지역 강조·전월세 수집 22개",
-    "result": "구현·테스트 506 통과. 전월세 실제 수집은 API 반영 대기"
+    "task": "제출 전 안정화 - 상태 동기화 + 브라우저 E2E 체크리스트",
+    "result": "CURRENT_STATE·state.json을 cabc379 기준으로 동기화, docs/e2e_browser_checklist.md 작성, 코드 변경 없음"
   },
   "next_candidates": [
-    "전월세 API 반영 시 G4-A 수집·분석(그룹별)",
-    "실제 브라우저 확인",
-    "제출물 작성(경남 버전)"
+    "브라우저 E2E 체크리스트 수동 실행(사용자)",
+    "E2E 실패 항목만 최소 수정",
+    "제출물 작성(사용자 지시 시)"
   ],
   "open_decisions": [
     "OPEN-1",
@@ -22,5 +22,12 @@
     "OPEN-6",
     "OPEN-7"
   ],
-  "current_priority": "경남 확장 안정화 + 제출 증거 갱신"
+  "current_priority": "기능 동결 - 제출 전 안정화(브라우저 E2E)",
+  "freeze": {
+    "since": "2026-10-04",
+    "rule": "새 기능·새 평가축·새 Agent 기능·OPEN-7 금지, E2E를 막는 명확한 버그만 최소 수정",
+    "blocked": [
+      "G4 전월세 API(OPEN-5)"
+    ]
+  }
 }
