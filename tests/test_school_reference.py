@@ -1,5 +1,5 @@
 """
-G5-B 교육시설 수 참고 정보 테스트 (DEC-19 / OPEN-9 (b)).
+G5-B 교육시설 수 참고정보 테스트 (DEC-19 / OPEN-9 (b)).
 
 - 표시 값이 G5-A 집계와 같은지
 - 교육이 점수·가중치·후보 계산에 들어가지 않는지
@@ -78,15 +78,13 @@ class EducationNotScoredTest(unittest.TestCase):
 
 
 class ResultScreenTest(unittest.TestCase):
-    def _done_screen(self, school_reference: dict | None = None) -> AppTest:
+    def _done_screen(self, school_counts_csv: Path | None = None) -> AppTest:
         at = AppTest.from_file(os.path.join(PROJECT_ROOT, "app.py"), default_timeout=120).run()
         no_questions = {"message": {"content": '{"questions": [], "tool_calls": []}'}}
         with contextlib.ExitStack() as stack:
             stack.enter_context(mock.patch("ollama.chat", return_value=no_questions))
-            if school_reference is not None:
-                stack.enter_context(
-                    mock.patch("services.schools.load_school_reference", return_value=school_reference)
-                )
+            if school_counts_csv is not None:  # 실제 파일 경로를 없는 파일로 바꿔 "파일 없음"을 재현
+                stack.enter_context(mock.patch.object(schools, "SCHOOL_COUNTS_CSV", school_counts_csv))
             at.button[0].click().run()
         self.assertEqual([e.value for e in at.exception], [])
         self.assertEqual(at.session_state["stage"], "done")
@@ -97,7 +95,7 @@ class ResultScreenTest(unittest.TestCase):
         result = at.session_state["initial_recommendation"]
         review = at.session_state["agent_execution_log"]["candidate_review"]
         return (
-            [(r["region_id"], round(r["total_score"], 6), r["rank"]) for r in result["region_scores"]],
+            result["region_scores"],  # 점수·순위·축별 점수 전체를 반올림 없이 비교
             [(c["role"], c.get("region_id"), c["status"]) for c in review["roles"]],
             review["critic"],
         )
@@ -108,11 +106,15 @@ class ResultScreenTest(unittest.TestCase):
         self.assertIn("2026-03-20", captions)
         self.assertIn("학군 수준이나 교육의 질을 뜻하지 않습니다", captions)
         expander_labels = " ".join(e.label for e in with_data.expander)
-        self.assertIn("교육시설 수 참고 정보", expander_labels)
+        self.assertIn("교육시설 수 참고정보", expander_labels)
+        self.assertIn("실제 접근성", captions)
+        self.assertIn("읍·면 지역", captions)
         for word in EXAGGERATION_WORDS:
             self.assertNotIn(word, captions + expander_labels)
 
-        without_data = self._done_screen(schools._unavailable("테스트: 파일 없음."))
+        missing = Path(tempfile.gettempdir()) / "no_such_dir_g5b" / "changwon_school_counts.csv"
+        self.assertFalse(missing.exists())
+        without_data = self._done_screen(missing)
         infos = " ".join(i.value for i in without_data.info)
         self.assertIn("교육시설 수: 미확보", infos)
 

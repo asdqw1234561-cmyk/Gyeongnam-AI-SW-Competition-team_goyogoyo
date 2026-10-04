@@ -177,7 +177,7 @@ REFERENCE_INDICATOR_ORDER = ["hospital_count", "bus_stop_count", "convenience_st
 UNAVAILABLE_DATA_NOTICE = (
     "실제 대중교통 소요시간, 월세·전세 가격, 응급실 운영 병원 수, 대형마트 수, "
     "교육·안전·자연환경·문화시설 지표는 아직 확보되지 않아 추천 계산에 사용되지 않습니다. "
-    "(구별 초·중·고 학교 수는 결과 아래 '교육시설 수 참고 정보'로만 보여 주며 점수에는 쓰지 않습니다.)"
+    "(구별 초·중·고 학교 수는 결과 아래 '교육시설 수 참고정보'로만 보여 주며 점수에는 쓰지 않습니다.)"
 )
 
 RELATIVE_SCORE_CAVEAT = (
@@ -188,7 +188,7 @@ RELATIVE_SCORE_CAVEAT = (
 
 
 def _render_school_reference() -> None:
-    """구별 초·중·고 학교 수 참고 정보. 추천 점수·후보·Critic과 무관하게 읽기만 한다(DEC-19)."""
+    """구별 초·중·고 학교 수 참고정보. 추천 점수·후보·Critic과 무관하게 읽기만 한다(DEC-19)."""
     reference = load_school_reference()
     with st.expander(f"📚 {SCHOOL_REFERENCE_TITLE}"):
         if reference["status"] != "확보":

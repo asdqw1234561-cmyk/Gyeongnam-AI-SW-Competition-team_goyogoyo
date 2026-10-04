@@ -1,16 +1,15 @@
 {
   "steward_branch": "jhy-next",
   "submission_deadline": "2026-10-06T12:00",
-  "last_synced_commit": "f2bf6c8",
+  "last_synced_commit": "f30a0f6",
   "last_synced_at": "2026-10-04",
-  "last_test_result": "479 passed, 1 skipped (2026-10-04, G5-B)",
+  "last_test_result": "489 passed, 1 skipped (2026-10-04, G5-B 보정)",
   "last_loop": {
     "date": "2026-10-04",
-    "task": "보안·개인정보 점검 (jhy-next 전체)",
-    "result": "HIGH 0, MEDIUM 1(편의점 수집 스크립트 예외에 serviceKey URL), LOW 7. 코드 변경 없음, docs/security_review.md·backlog S1. 사용자 지시로 정지"
+    "task": "G5-B 요구사항 재확인·보정 (교육시설 수 참고정보)",
+    "result": "963ef4e에 이미 구현됨. 문구(참고정보·실제 접근성)와 테스트(실제 파일 없음·점수 완전 동일) 보정. 보안 작업 종료(S-L3~L7 권고 유지). 사용자 지시로 정지"
   },
   "next_candidates": [
-    "S1 보안 후속 조치(S-M1·S-L2 최소 수정, 승인 필요)",
     "제출용 대표 Test Case 5건 기록 (R-MVP-2⑦, 마감 D-2)",
     "G4-A 재개 (OPEN-5 해제 시)"
   ],

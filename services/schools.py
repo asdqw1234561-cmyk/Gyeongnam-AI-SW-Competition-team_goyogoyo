@@ -1,6 +1,6 @@
-# 교육시설 수 참고 정보 (추천 점수에 쓰지 않음)
+# 교육시설 수 참고정보 (추천 점수에 쓰지 않음)
 """
-창원시 5개 구 초·중·고등학교 수를 "참고 정보"로 읽는다 (G5-B, DEC-19 / OPEN-9 (b)).
+창원시 5개 구 초·중·고등학교 수를 "참고정보"로 읽는다 (G5-B, DEC-19 / OPEN-9 (b)).
 
 - 원본은 scripts/ingest_school_counts.py가 data/raw/전국초중등학교위치표준데이터.csv에서
   집계해 둔 data/schools/changwon_school_counts.csv다. 여기서는 그 결과를 읽기만 한다.
@@ -23,13 +23,13 @@ COUNT_FIELDS = (
     "school_count", "branch_school_count",
 )
 
-SCHOOL_REFERENCE_TITLE = "교육시설 수 참고 정보 (추천 점수에 사용하지 않음)"
+SCHOOL_REFERENCE_TITLE = "교육시설 수 참고정보 (추천 점수에 사용하지 않음)"
 SCHOOL_REFERENCE_LIMITATIONS: tuple[str, ...] = (
     "학교 수는 학군 수준이나 교육의 질을 뜻하지 않습니다.",
     "학생 수·인구·면적을 보정하지 않은 단순 개수입니다.",
     "통학구역·배정학교를 반영하지 않습니다.",
     "읍·면 지역(예: 의창구 동읍·북면, 마산회원구 내서읍)의 학교도 포함됩니다.",
-    "특정 주소에서 실제로 가까운 학교 수를 뜻하지 않습니다.",
+    "특정 주소에서 실제로 가까운 학교 수나 통학 거리·실제 접근성을 뜻하지 않습니다.",
     "추천 점수·후보 선정에는 쓰지 않으며, 점수 기준의 교육 평가축은 계속 '미확보'입니다.",
 )
 
@@ -38,8 +38,9 @@ def _unavailable(reason: str) -> dict:
     return {"status": "미확보", "reason": reason, "rows": [], "source": None, "reference_date": None}
 
 
-def load_school_reference(path: Path = SCHOOL_COUNTS_CSV) -> dict:
+def load_school_reference(path: Path | None = None) -> dict:
     """구별 학교 수 참고 정보. 실패해도 예외를 던지지 않는다."""
+    path = SCHOOL_COUNTS_CSV if path is None else path
     try:
         with open(path, encoding="utf-8-sig", newline="") as f:
             raw_rows = list(csv.DictReader(f))
